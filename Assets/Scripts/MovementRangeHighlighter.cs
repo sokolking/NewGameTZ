@@ -4,7 +4,7 @@ using UnityEngine;
 /// <summary>
 /// Подсвечивает достижимые за текущие ОД гексы.
 /// Серые — все клетки в радиусе оставшихся ОД.
-/// Красные — круги на 90% и 100% от МАКСИМАЛЬНЫХ ОД (если ещё достижимы по текущим ОД). Альфа 10%.
+/// Красные — предпоследний и последний шаг при максимальных ОД (если достижимы). Альфа 10%.
 /// </summary>
 public class MovementRangeHighlighter : MonoBehaviour
 {
@@ -46,17 +46,29 @@ public class MovementRangeHighlighter : MonoBehaviour
             cell.SetApMask(false, Color.clear);
     }
 
+    private int GetMaxReachableSteps(int stepsAlready)
+    {
+        int maxSteps = 0;
+        for (int L = 1; ; L++)
+        {
+            if (_player.GetMoveCost(stepsAlready, L) > _player.CurrentAp)
+                break;
+            maxSteps = L;
+        }
+        return maxSteps;
+    }
+
     private void RebuildMask()
     {
         // Сброс маски на всех
         foreach (HexCell cell in _grid.GetComponentsInChildren<HexCell>())
             cell.SetApMask(false, Color.clear);
 
-        // Радиус достижимых гексов считаем по ОСТАВШИМСЯ ОД.
-        int maxSteps = _player.StepCostPerHex > 0
-            ? _player.CurrentAp / _player.StepCostPerHex
-            : 0;
+        int stepsAlready = _player.StepsTakenThisTurn;
+        int maxSteps = GetMaxReachableSteps(stepsAlready);
         if (maxSteps <= 0) return;
+
+        _player.GetPenaltyStepCosts(out int prelastCost, out int lastCost);
 
         var visited = new HashSet<(int col, int row)>();
         var queue = new Queue<(int col, int row, int dist)>();
@@ -71,22 +83,9 @@ public class MovementRangeHighlighter : MonoBehaviour
             HexCell cell = _grid.GetCell(col, row);
             if (cell != null)
             {
-                int costPerHex = _player.StepCostPerHex;
-                int maxAp = _player.MaxAp;
-                int ringAp = costPerHex > 0 ? costPerHex * dist : 0;
-
-                int threshold90 = Mathf.RoundToInt(maxAp * 0.9f);
-                int threshold100 = maxAp; // 100%
-
-                // Сколько всего ОД будет потрачено за ход, если добежать до этого кольца.
-                int totalApIfGoHere = _player.ApSpentThisTurn + ringAp;
-
-                // Кольцо считается штрафным, если суммарная трата за ход
-                // попадает в диапазон [90%; 100%] от максимума ОД.
+                int totalApIfGoHere = _player.GetStepCost(stepsAlready + dist);
                 bool reachableNow = dist <= maxSteps;
-                bool isPenaltyRing = reachableNow &&
-                                     totalApIfGoHere >= threshold90 &&
-                                     totalApIfGoHere <= threshold100;
+                bool isPenaltyRing = reachableNow && (totalApIfGoHere == prelastCost || totalApIfGoHere == lastCost);
 
                 Color c = isPenaltyRing ? _farColor : _nearColor;
                 c.a = 0.1f;

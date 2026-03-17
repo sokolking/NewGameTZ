@@ -51,8 +51,8 @@ public class HexInputManager : MonoBehaviour
             if (_player != null)
             {
                 int steps = HexGrid.GetDistance(_player.CurrentCol, _player.CurrentRow, cell.Col, cell.Row);
-                int cost = steps * _player.StepCostPerHex;
-                cell.SetCostLabel(cost);
+                int stepCost = _player.GetMoveCost(_player.StepsTakenThisTurn, steps);
+                cell.SetCostLabel(stepCost);
             }
         }
     }

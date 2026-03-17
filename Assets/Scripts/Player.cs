@@ -15,10 +15,13 @@ public class Player : MonoBehaviour
 
     [Header("Очки действия")]
     [SerializeField] private int _maxAp = 100;
-    [SerializeField] private int _apPerStep = 10;
 
     [Header("Таймер хода, сек")]
     [SerializeField] private float _turnDurationSeconds = 10f;
+
+    private const float PrelastPenaltyFraction = 0.05f;  // штраф за предпоследний шаг при макс. ОД
+    private const float LastPenaltyFraction = 0.08f;      // штраф за последний шаг при макс. ОД
+    private const float RecoveryFraction = 0.05f;         // восстановление при завершении хода не на штрафном гексе
 
     private int _currentCol;
     private int _currentRow;
@@ -28,8 +31,10 @@ public class Player : MonoBehaviour
 
     // Накопленный штраф в долях от MaxAp (0–1): 0 = нет штрафа, 0.1 = -10% от MaxAp.
     private float _penaltyFraction;
-    // Сколько ОД уже потрачено в текущем ходу (используется только для расчёта штрафа).
+    // Сколько ОД уже потрачено в текущем ходу (используется для штрафа и подсчёта шагов).
     private int _apSpentThisTurn;
+    // Сколько "шагов" уже совершено в этом ходу (независимо от направления).
+    private int _stepsTakenThisTurn;
     // Эффективный максимум ОД в начале текущего хода (до трат в этом ходу).
     private int _turnStartMaxAp;
     // Полный путь за текущий ход (все переходы по гексам, в порядке кликов).
@@ -45,7 +50,6 @@ public class Player : MonoBehaviour
     public int MaxAp => _maxAp;
     /// <summary>Текущие ОД.</summary>
     public int CurrentAp => _currentAp;
-    public int StepCostPerHex => _apPerStep;
     public int TurnCount => _turnCount;
     /// <summary>Сколько ОД уже потрачено в текущем ходу.</summary>
     public int ApSpentThisTurn => _apSpentThisTurn;
@@ -55,6 +59,8 @@ public class Player : MonoBehaviour
     public float TurnDurationSeconds => _turnDurationSeconds;
     /// <summary>Истёк ли таймер хода.</summary>
     public bool TurnTimeExpired => _turnTimeExpired;
+    /// <summary>Сколько "шагов" уже совершено в этом ходу.</summary>
+    public int StepsTakenThisTurn => _stepsTakenThisTurn;
 
     public delegate void PlayerMovedHandler(HexCell cell);
     /// <summary>Событие: игрок завершил перемещение в новую ячейку (после MoveAlongPath, телепорта или анимации).</summary>
@@ -64,6 +70,7 @@ public class Player : MonoBehaviour
     {
         _penaltyFraction = 0f;
         _apSpentThisTurn = 0;
+        _stepsTakenThisTurn = 0;
         _turnStartMaxAp = GetEffectiveMaxAp();
         _currentAp = _turnStartMaxAp;
         _turnTimeLeft = _turnDurationSeconds;
@@ -108,37 +115,32 @@ public class Player : MonoBehaviour
         Object.Destroy(cap.GetComponent<Collider>());
     }
 
-    /// <summary>Запускает движение по пути (список (col, row)), ограничивая длину по ОД. animate=false – телепорт.</summary>
+    /// <summary>Запускает движение по пути (список (col, row)), ограничивая длину по ОД. animate=false – телепорт.
+    /// Стоимость перехода на L клеток при уже сделанных K шагах = GetStepCost(K+L) − GetStepCost(K).</summary>
     public void MoveAlongPath(List<(int col, int row)> path, bool animate)
     {
         if (path == null || path.Count < 2 || _isMoving || _grid == null) return;
 
-        int steps = path.Count - 1;
-        int maxStepsByAp = _apPerStep > 0 ? _currentAp / _apPerStep : steps;
-        int allowedSteps = Mathf.Min(steps, maxStepsByAp);
+        int stepsToMove = path.Count - 1;
+        if (stepsToMove <= 0) return;
+
+        int stepsAlready = _stepsTakenThisTurn;
+        int allowedSteps = GetAllowedSteps(stepsAlready, stepsToMove, _currentAp);
         if (allowedSteps <= 0) return;
 
-        // Сколько ОД потратим этим движением
-        int moveAp = allowedSteps * _apPerStep;
+        int moveCost = GetMoveCost(stepsAlready, allowedSteps);
         int prevSpent = _apSpentThisTurn;
-        int newSpent = prevSpent + moveAp;
+        int newSpent = prevSpent + moveCost;
 
-        // Пороги 90% и 100% считаем от БАЗОВОГО максимума ОД (_maxAp), а не от урезанного.
-        int threshold90 = Mathf.RoundToInt(_maxAp * 0.9f);
-        int threshold100 = _maxAp;
-
-        // Штраф начисляется только за трату ОД >= 90% от максимума:
-        // если за ход добежали до 100% или больше — штраф 10%, иначе, если хотя бы до 90% — штраф 7%.
-        if (prevSpent < threshold90 && newSpent >= threshold100)
-        {
-            AddPenalty(0.10f);
-        }
-        else if (prevSpent < threshold90 && newSpent >= threshold90)
-        {
-            AddPenalty(0.07f);
-        }
+        GetPenaltyStepCosts(out int prelastCost, out int lastCost);
+        if (prelastCost > 0 && newSpent == prelastCost)
+            AddPenalty(PrelastPenaltyFraction);
+        if (lastCost > 0 && prevSpent < lastCost && newSpent >= lastCost)
+            AddPenalty(LastPenaltyFraction);
 
         _apSpentThisTurn = newSpent;
+        _stepsTakenThisTurn = stepsAlready + allowedSteps;
+        _currentAp -= moveCost;
 
         var subPath = path.GetRange(0, allowedSteps + 1);
 
@@ -150,8 +152,6 @@ public class Player : MonoBehaviour
             _turnPath.Add((_currentCol, _currentRow));
         for (int i = 1; i < subPath.Count; i++)
             _turnPath.Add(subPath[i]);
-
-        _currentAp -= moveAp;
 
         if (!animate)
         {
@@ -206,23 +206,20 @@ public class Player : MonoBehaviour
 
     /// <summary>
     /// Закончить ход.
-    /// - Если за ход потрачено &gt;= 90% от максимума ОД этого хода — ход считается штрафным (финиш на штрафном гексе).
-    /// - Если ход НЕ штрафной — штраф уменьшается на 5% (игрок \"отдохнул\").
-    /// - В любом случае новый ход начинается с EffectiveMaxAp ОД.
+    /// Штрафный ход — финиш на предпоследнем или последнем шаге при макс. ОД.
+    /// Если ход не штрафной — восстановление усталости на 5%. Новый ход начинается с EffectiveMaxAp ОД.
     /// </summary>
     public void EndTurn()
     {
-        // Проверяем, был ли ход штрафным: суммарно потратили >= 90% от БАЗОВОГО максимума ОД.
-        int threshold90 = Mathf.RoundToInt(_maxAp * 0.9f);
-        bool endedOnPenaltyHex = _apSpentThisTurn >= threshold90;
+        // Штрафный ход — закончили на предпоследнем или последнем шаге при макс. ОД.
+        GetPenaltyStepCosts(out int prelastCost, out int lastCost);
+        bool endedOnPenaltyHex = _apSpentThisTurn == prelastCost || _apSpentThisTurn == lastCost;
 
-        // Если ход НЕ штрафной — уменьшаем накопленный штраф на 5% (игрок отдохнул).
         if (!endedOnPenaltyHex)
-        {
-            AddPenalty(-0.05f);
-        }
+            AddPenalty(-RecoveryFraction);
 
         _apSpentThisTurn = 0;
+        _stepsTakenThisTurn = 0;
 
         // Новый эффективный максимум на следующий ход с учётом изменённого штрафа.
         int newTurnMaxAp = GetEffectiveMaxAp();
@@ -233,6 +230,51 @@ public class Player : MonoBehaviour
         _turnCount++;
         _turnTimeLeft = _turnDurationSeconds;
         _turnTimeExpired = false;
+    }
+
+    /// <summary>Стоимость n-го шага в рамках одного перемещения.</summary>
+    public int GetStepCost(int stepIndex)
+    {
+        if (stepIndex <= 0) return 0;
+        float n = stepIndex;
+        float val = (5f * n * n - 8f * n + 21f) / 3f;
+        return Mathf.Max(1, Mathf.RoundToInt(val));
+    }
+
+    /// <summary>Стоимость перехода на steps шагов, если уже сделано fromStepIndex шагов в этом ходу.</summary>
+    public int GetMoveCost(int fromStepIndex, int steps)
+    {
+        if (steps <= 0) return 0;
+        return GetStepCost(fromStepIndex + steps) - GetStepCost(fromStepIndex);
+    }
+
+    /// <summary>При максимальных ОД — стоимость предпоследнего и последнего достижимого шага (для штрафных гексов).</summary>
+    public void GetPenaltyStepCosts(out int prelastCost, out int lastCost)
+    {
+        int N = 0;
+        while (GetStepCost(N + 1) <= _maxAp)
+            N++;
+        if (N <= 0)
+        {
+            prelastCost = 0;
+            lastCost = 0;
+            return;
+        }
+        lastCost = GetStepCost(N);
+        prelastCost = N >= 2 ? GetStepCost(N - 1) : 0;
+    }
+
+    /// <summary>Максимум шагов, которые можно пройти при текущих ОД (уже сделано stepsAlready, лимит stepsLimit).</summary>
+    private int GetAllowedSteps(int stepsAlready, int stepsLimit, int currentAp)
+    {
+        int allowed = 0;
+        for (int L = 1; L <= stepsLimit; L++)
+        {
+            if (GetMoveCost(stepsAlready, L) > currentAp)
+                break;
+            allowed = L;
+        }
+        return allowed;
     }
 
     /// <summary>Текущий максимальный ОД с учётом накопленного штрафа.</summary>
