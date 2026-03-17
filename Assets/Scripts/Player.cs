@@ -32,8 +32,8 @@ public class Player : MonoBehaviour
     private int _apSpentThisTurn;
     // Эффективный максимум ОД в начале текущего хода (до трат в этом ходу).
     private int _turnStartMaxAp;
-    // Последний путь за этот ход (для анимации при завершении хода).
-    private List<(int col, int row)> _lastMovePath;
+    // Полный путь за текущий ход (все переходы по гексам, в порядке кликов).
+    private List<(int col, int row)> _turnPath;
     // Остаток времени текущего хода (сек).
     private float _turnTimeLeft;
     // Флаг, что таймер хода уже истёк (для внешней логики автозавершения).
@@ -68,6 +68,7 @@ public class Player : MonoBehaviour
         _currentAp = _turnStartMaxAp;
         _turnTimeLeft = _turnDurationSeconds;
         _turnTimeExpired = false;
+        _turnPath = new List<(int col, int row)>();
     }
 
     private void Start()
@@ -140,7 +141,16 @@ public class Player : MonoBehaviour
         _apSpentThisTurn = newSpent;
 
         var subPath = path.GetRange(0, allowedSteps + 1);
-        _lastMovePath = subPath;
+
+        // Накопить полный путь за ход:
+        // при первом перемещении добавляем стартовую клетку, далее — только новые шаги.
+        if (_turnPath == null)
+            _turnPath = new List<(int col, int row)>();
+        if (_turnPath.Count == 0)
+            _turnPath.Add((_currentCol, _currentRow));
+        for (int i = 1; i < subPath.Count; i++)
+            _turnPath.Add(subPath[i]);
+
         _currentAp -= moveAp;
 
         if (!animate)
@@ -219,7 +229,7 @@ public class Player : MonoBehaviour
         _turnStartMaxAp = newTurnMaxAp;
         _currentAp = newTurnMaxAp;
 
-        _lastMovePath = null;
+        _turnPath.Clear();
         _turnCount++;
         _turnTimeLeft = _turnDurationSeconds;
         _turnTimeExpired = false;
@@ -238,20 +248,20 @@ public class Player : MonoBehaviour
         _penaltyFraction = Mathf.Clamp(_penaltyFraction + deltaFraction, 0f, 0.9f);
     }
 
-    /// <summary>Проиграть анимацию последнего перемещения (без изменения ОД и координат), используется при завершении хода с анимацией.</summary>
+    /// <summary>Проиграть анимацию всего пути за ход (без изменения ОД и штрафов), используется при завершении хода с анимацией.</summary>
     public IEnumerator PlayLastMoveAnimation()
     {
-        if (_grid == null || _lastMovePath == null || _lastMovePath.Count < 2) yield break;
+        if (_grid == null || _turnPath == null || _turnPath.Count < 2) yield break;
 
         _isMoving = true;
 
-        // Стартуем с исходной клетки пути.
-        Vector3 startPos = _grid.GetCellWorldPosition(_lastMovePath[0].col, _lastMovePath[0].row);
+        // Стартуем с исходной клетки хода.
+        Vector3 startPos = _grid.GetCellWorldPosition(_turnPath[0].col, _turnPath[0].row);
         transform.position = startPos;
 
-        for (int i = 1; i < _lastMovePath.Count; i++)
+        for (int i = 1; i < _turnPath.Count; i++)
         {
-            var step = _lastMovePath[i];
+            var step = _turnPath[i];
             Vector3 target = _grid.GetCellWorldPosition(step.col, step.row);
             float elapsed = 0f;
 

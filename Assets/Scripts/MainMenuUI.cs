@@ -108,10 +108,11 @@ public class MainMenuUI : MonoBehaviour
         _availableResolutions = Screen.resolutions;
         if (_availableResolutions == null || _availableResolutions.Length == 0)
         {
+            // Fallback без задания частоты обновления, чтобы не трогать устаревший refreshRate.
             _availableResolutions = new[]
             {
-                new Resolution { width = 1280, height = 720, refreshRate = 60 },
-                new Resolution { width = 1920, height = 1080, refreshRate = 60 },
+                new Resolution { width = 1280, height = 720 },
+                new Resolution { width = 1920, height = 1080 },
             };
         }
 
@@ -160,7 +161,8 @@ public class MainMenuUI : MonoBehaviour
     {
         if (_availableResolutions == null || _availableResolutions.Length == 0) return;
         Resolution r = _availableResolutions[_currentResolutionIndex];
-        Screen.SetResolution(r.width, r.height, Screen.fullScreenMode, r.refreshRate);
+        // Используем overload без частоты кадров, чтобы не обращаться к устаревшему refreshRate.
+        Screen.SetResolution(r.width, r.height, Screen.fullScreenMode);
     }
 
     public void OnNewGameClicked()
