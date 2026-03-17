@@ -1,0 +1,51 @@
+# Unity / C# project gitignore
+
+# OS-specific
+.DS_Store
+Thumbs.db
+
+# Unity generated folders
+Library/
+Temp/
+Obj/
+Build/
+Builds/
+Logs/
+MemoryCaptures/
+UserSettings/
+
+# Rider / VS / VSCode / JetBrains
+.vs/
+.vscode/
+*.csproj
+*.sln
+*.suo
+*.user
+*.userprefs
+*.unityproj
+*.pidb
+*.booproj
+*.svd
+
+# Packages cache
+Packages/com.unity.collab-proxy/
+
+# Burst
+.burst/
+
+# Visual Studio Code workspace history
+.history/
+
+# Crash / debug reports
+sysinfo.txt
+
+# TextMesh Pro
+Assets/TextMesh Pro/Resources/*.asset
+
+# Addressables
+AddressablesBuildData/*
+Assets/AddressableAssetsData/*/*.bin*
+
+# IDE misc
+*.DotSettings.user
+
