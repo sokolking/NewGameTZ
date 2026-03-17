@@ -15,6 +15,9 @@ public class ActionPointsUI : MonoBehaviour
     [SerializeField] private int _maxLogLines = 50;
     [SerializeField] private ScrollRect _logScrollRect;
 
+    [Header("Онлайн (сервер)")]
+    [SerializeField] private GameSession _gameSession;
+
     // Чтобы не запускать завершение хода дважды (через D, E, кнопку или таймер).
     private bool _endTurnInProgress;
     private readonly System.Collections.Generic.Queue<string> _logLines = new System.Collections.Generic.Queue<string>();
@@ -103,6 +106,7 @@ public class ActionPointsUI : MonoBehaviour
     private void EndTurnImmediate()
     {
         if (_player == null) return;
+        SubmitTurnIfOnline();
         AppendLog("Ход завершён без анимации.");
         _player.EndTurn();
         AppendLog($"Ход {_player.TurnCount + 1} начат. ОД: {_player.CurrentAp}.");
@@ -116,10 +120,19 @@ public class ActionPointsUI : MonoBehaviour
         // Сначала проигрываем анимацию последнего перемещения (с исходного гекса до выбранного).
         yield return _player.PlayLastMoveAnimation();
 
+        SubmitTurnIfOnline();
         AppendLog("Ход завершён с анимацией.");
         _player.EndTurn();
         AppendLog($"Ход {_player.TurnCount + 1} начат. ОД: {_player.CurrentAp}.");
         _endTurnInProgress = false;
+    }
+
+    /// <summary>Отправить данные хода на сервер (или в заглушку), если включён онлайн-режим. Вызывать до _player.EndTurn().</summary>
+    private void SubmitTurnIfOnline()
+    {
+        if (_player == null || _gameSession == null || !_gameSession.IsOnlineMode) return;
+        var path = _player.GetTurnPathCopy();
+        _gameSession.SubmitTurnLocal(path, _player.ApSpentThisTurn, _player.StepsTakenThisTurn, _player.TurnCount);
     }
 
     private void HandlePlayerMoved(HexCell cell)

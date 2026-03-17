@@ -248,6 +248,13 @@ public class Player : MonoBehaviour
         return GetStepCost(fromStepIndex + steps) - GetStepCost(fromStepIndex);
     }
 
+    /// <summary>Копия пути за текущий ход (для отправки на сервер). Вызывать до EndTurn().</summary>
+    public List<(int col, int row)> GetTurnPathCopy()
+    {
+        if (_turnPath == null) return new List<(int col, int row)>();
+        return new List<(int col, int row)>(_turnPath);
+    }
+
     /// <summary>При максимальных ОД — стоимость предпоследнего и последнего достижимого шага (для штрафных гексов).</summary>
     public void GetPenaltyStepCosts(out int prelastCost, out int lastCost)
     {
