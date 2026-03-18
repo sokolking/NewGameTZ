@@ -60,9 +60,15 @@ public class HexInputManager : MonoBehaviour
 
             if (_player != null)
             {
-                int steps = HexGrid.GetDistance(_player.CurrentCol, _player.CurrentRow, cell.Col, cell.Row);
-                int stepCost = _player.GetMoveCost(_player.StepsTakenThisTurn, steps);
-                cell.SetCostLabel(stepCost);
+                List<(int col, int row)> path = HexPathfinding.FindPath(_grid, _player.CurrentCol, _player.CurrentRow, cell.Col, cell.Row);
+                if (path != null && path.Count > 1)
+                {
+                    int steps = path.Count - 1;
+                    int stepCost = _player.GetMoveCost(_player.StepsTakenThisTurn, steps);
+                    cell.SetCostLabel(stepCost);
+                }
+                else
+                    cell.SetCostLabel(-1);
             }
         }
     }

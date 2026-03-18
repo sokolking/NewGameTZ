@@ -14,6 +14,9 @@ public static class HexPathfinding
         if (grid == null || !grid.IsInBounds(startCol, startRow) || !grid.IsInBounds(endCol, endRow))
             return null;
 
+        if (GameSession.Active != null && GameSession.Active.IsObstacleCell(endCol, endRow))
+            return null;
+
         if (startCol == endCol && startRow == endRow)
             return new List<(int, int)> { (startCol, startRow) };
 
@@ -50,6 +53,7 @@ public static class HexPathfinding
             {
                 HexGrid.GetNeighbor(curCol, curRow, dir, out int nCol, out int nRow);
                 if (!grid.IsInBounds(nCol, nRow)) continue;
+                if (GameSession.Active != null && GameSession.Active.IsObstacleCell(nCol, nRow)) continue;
 
                 var neighbor = (nCol, nRow);
                 if (closed.Contains(neighbor)) continue;

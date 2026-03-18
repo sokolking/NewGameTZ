@@ -105,4 +105,6 @@ public class BattleStartedPayloadDto
     public string[]? SpawnPlayerIds { get; set; }
     public int[]? SpawnCols { get; set; }
     public int[]? SpawnRows { get; set; }
+    public int[]? ObstacleCols { get; set; }
+    public int[]? ObstacleRows { get; set; }
 }

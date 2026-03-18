@@ -9,6 +9,7 @@ public class BattleRoom
     public const float RoundDuration = 30f;
     public const int MaxAp = 100;
     public const int MobMaxAp = 75;
+    public const int MaxObstacleChains = 10;
     public int RoundIndex { get; set; }
     public float RoundTimeLeft { get; set; }
     public long RoundDeadlineUtcMs { get; set; }
@@ -46,6 +47,9 @@ public class BattleRoom
 
     /// <summary>Кто в этом раунде завершил ход досрочно (пока таймер не истёк).</summary>
     public Dictionary<string, bool> EndedTurnEarlyThisRound { get; } = new();
+    public HashSet<(int col, int row)> Obstacles { get; } = new();
+
+    private readonly Random _rng;
 
     /// <summary>Стоимость n-го шага (формула как в Unity Player.GetStepCost).</summary>
     public static int GetStepCost(int stepIndex)
@@ -82,6 +86,15 @@ public class BattleRoom
         return maxSteps;
     }
 
+    private static string FormatPath(HexPositionDto[]? path)
+    {
+        if (path == null || path.Length == 0) return "[]";
+        return "[" + string.Join(" -> ", path.Select(p => $"({p.Col},{p.Row})")) + "]";
+    }
+
+    private static bool AreAdjacent((int col, int row) a, (int col, int row) b) =>
+        HexSpawn.HexDistance(a.col, a.row, b.col, b.row) == 1;
+
     private static IEnumerable<(int col, int row)> EnumerateNeighbors(int col, int row)
     {
         for (int dir = 0; dir < 6; dir++)
@@ -93,7 +106,7 @@ public class BattleRoom
         }
     }
 
-    private static List<((int col, int row) pos, int targetIndex)> BuildPursuitTargets(HexPositionDto[] targetPath)
+    private List<((int col, int row) pos, int targetIndex)> BuildPursuitTargets(HexPositionDto[] targetPath)
     {
         var targets = new List<((int col, int row), int)>();
         var seen = new HashSet<(int col, int row)>();
@@ -110,6 +123,7 @@ public class BattleRoom
         var finalPos = (targetPath[^1].Col, targetPath[^1].Row);
         foreach (var neighbor in EnumerateNeighbors(finalPos.Item1, finalPos.Item2))
         {
+            if (Obstacles.Contains(neighbor)) continue;
             if (seen.Add(neighbor))
                 targets.Add((neighbor, targetPath.Length - 1));
         }
@@ -119,6 +133,7 @@ public class BattleRoom
         {
             foreach (var neighbor in EnumerateNeighbors(finalPos.Item1, finalPos.Item2))
             {
+                if (Obstacles.Contains(neighbor)) continue;
                 if (seen.Add(neighbor))
                     targets.Add((neighbor, targetPath.Length - 1));
             }
@@ -127,59 +142,131 @@ public class BattleRoom
         return targets;
     }
 
-    private static ((int col, int row) endCell, Dictionary<(int col, int row), (int col, int row)> prev)? FindBestReachablePursuitCell(
-        UnitStateDto mob,
-        HexPositionDto[] targetPath)
+    private List<(int col, int row)>? FindShortestPathAvoidingBlocked((int col, int row) start, (int col, int row) end, HashSet<(int col, int row)> blocked)
     {
-        var pursuitTargets = BuildPursuitTargets(targetPath);
-        if (pursuitTargets.Count == 0)
-            return null;
-
-        int maxSteps = GetMaxReachableSteps(mob.CurrentAp);
-        var start = (mob.Col, mob.Row);
-        var queue = new Queue<((int col, int row) pos, int steps)>();
+        var queue = new Queue<(int col, int row)>();
         var visited = new HashSet<(int col, int row)> { start };
         var prev = new Dictionary<(int col, int row), (int col, int row)>();
-
-        queue.Enqueue((start, 0));
-
-        (int distanceToTarget, int targetIndex, int stepsUsed)? bestScore = null;
-        (int col, int row) bestCell = start;
+        queue.Enqueue(start);
 
         while (queue.Count > 0)
         {
-            var (cell, stepsUsed) = queue.Dequeue();
-
-            foreach (var target in pursuitTargets)
+            var cell = queue.Dequeue();
+            if (cell == end)
             {
-                int distance = HexSpawn.HexDistance(cell.col, cell.row, target.pos.col, target.pos.row);
-                var score = (distance, target.targetIndex, stepsUsed);
-                if (bestScore == null
-                    || score.distance < bestScore.Value.distanceToTarget
-                    || (score.distance == bestScore.Value.distanceToTarget && score.targetIndex > bestScore.Value.targetIndex)
-                    || (score.distance == bestScore.Value.distanceToTarget && score.targetIndex == bestScore.Value.targetIndex && score.stepsUsed < bestScore.Value.stepsUsed))
+                var reverse = new List<(int col, int row)> { end };
+                var cursor = end;
+                while (cursor != start)
                 {
-                    bestScore = score;
-                    bestCell = cell;
+                    if (!prev.TryGetValue(cursor, out cursor))
+                        break;
+                    reverse.Add(cursor);
                 }
+                reverse.Reverse();
+                return reverse;
             }
 
-            if (stepsUsed >= maxSteps)
+            foreach (var neighbor in EnumerateNeighbors(cell.col, cell.row))
+            {
+                if (blocked.Contains(neighbor) && neighbor != end)
+                    continue;
+                if (!visited.Add(neighbor))
+                    continue;
+                prev[neighbor] = cell;
+                queue.Enqueue(neighbor);
+            }
+        }
+
+        return null;
+    }
+
+    private List<(int col, int row)> FindBestReachablePathTowardTarget(
+        (int col, int row) start,
+        (int col, int row) target,
+        HashSet<(int col, int row)> blocked,
+        int maxSteps)
+    {
+        var queue = new Queue<((int col, int row) pos, int steps)>();
+        var visited = new HashSet<(int col, int row)> { start };
+        var prev = new Dictionary<(int col, int row), (int col, int row)>();
+        queue.Enqueue((start, 0));
+
+        (int distance, int steps)? bestScore = null;
+        var bestCell = start;
+
+        while (queue.Count > 0)
+        {
+            var (cell, steps) = queue.Dequeue();
+            int distance = HexSpawn.HexDistance(cell.col, cell.row, target.col, target.row);
+            var score = (distance, steps);
+            if (bestScore == null
+                || score.distance < bestScore.Value.distance
+                || (score.distance == bestScore.Value.distance && score.steps > bestScore.Value.steps))
+            {
+                bestScore = score;
+                bestCell = cell;
+            }
+
+            if (steps >= maxSteps)
                 continue;
 
             foreach (var neighbor in EnumerateNeighbors(cell.col, cell.row))
             {
+                if (blocked.Contains(neighbor))
+                    continue;
                 if (!visited.Add(neighbor))
                     continue;
                 prev[neighbor] = cell;
-                queue.Enqueue((neighbor, stepsUsed + 1));
+                queue.Enqueue((neighbor, steps + 1));
             }
         }
 
-        return (bestCell, prev);
+        var reverse = new List<(int col, int row)> { bestCell };
+        var cursor = bestCell;
+        while (cursor != start)
+        {
+            if (!prev.TryGetValue(cursor, out cursor))
+                break;
+            reverse.Add(cursor);
+        }
+        reverse.Reverse();
+        return reverse;
     }
 
-    private static HexPositionDto[] BuildMobChasePath(UnitStateDto mob, HexPositionDto[] targetPath)
+    private List<(int col, int row)> BuildTrailingTargetsForStep(HexPositionDto[] targetPath, int targetIndex)
+    {
+        var targets = new List<(int col, int row)>();
+        var seen = new HashSet<(int col, int row)>();
+        if (targetPath == null || targetPath.Length == 0)
+            return targets;
+
+        int idx = Math.Clamp(targetIndex, 0, targetPath.Length - 1);
+        var projected = (targetPath[idx].Col, targetPath[idx].Row);
+        foreach (var neighbor in EnumerateNeighbors(projected.Item1, projected.Item2))
+        {
+            if (Obstacles.Contains(neighbor)) continue;
+            if (seen.Add(neighbor))
+                targets.Add(neighbor);
+        }
+
+        if (idx > 0)
+        {
+            var prev = (targetPath[idx - 1].Col, targetPath[idx - 1].Row);
+            if (!Obstacles.Contains(prev) && seen.Add(prev))
+                targets.Add(prev);
+        }
+
+        if (targets.Count == 0 && idx < targetPath.Length)
+        {
+            var fallback = (targetPath[idx].Col, targetPath[idx].Row);
+            if (!Obstacles.Contains(fallback))
+                targets.Add(fallback);
+        }
+
+        return targets;
+    }
+
+    private HexPositionDto[] BuildMobChasePath(UnitStateDto mob, HexPositionDto[] targetPath)
     {
         var path = new List<HexPositionDto>
         {
@@ -189,26 +276,50 @@ public class BattleRoom
         if (targetPath == null || targetPath.Length == 0)
             return path.ToArray();
 
-        var pursuit = FindBestReachablePursuitCell(mob, targetPath);
-        if (pursuit == null)
+        int maxSteps = GetMaxReachableSteps(mob.CurrentAp);
+        if (maxSteps <= 0)
             return path.ToArray();
 
-        var (endCell, prev) = pursuit.Value;
-        if (endCell.col == mob.Col && endCell.row == mob.Row)
-            return path.ToArray();
+        var current = (mob.Col, mob.Row);
+        var staticBlocked = new HashSet<(int col, int row)>(Obstacles);
 
-        var reverse = new List<(int col, int row)>();
-        var cursor = endCell;
-        while (cursor != (mob.Col, mob.Row))
+        for (int step = 1; step <= maxSteps; step++)
         {
-            reverse.Add(cursor);
-            if (!prev.TryGetValue(cursor, out cursor))
-                break;
-        }
+            int targetIndex = Math.Min(step, targetPath.Length - 1);
+            var trailingTargets = BuildTrailingTargetsForStep(targetPath, targetIndex);
+            List<(int col, int row)>? bestRoute = null;
+            int bestRouteLen = int.MaxValue;
+            int bestDirectDist = int.MaxValue;
 
-        reverse.Reverse();
-        foreach (var step in reverse)
-            path.Add(new HexPositionDto { Col = step.col, Row = step.row });
+            foreach (var target in trailingTargets)
+            {
+                var route = FindShortestPathAvoidingBlocked(current, target, staticBlocked);
+                if (route == null || route.Count <= 1)
+                    continue;
+
+                int routeLen = route.Count - 1;
+                int directDist = HexSpawn.HexDistance(route[1].col, route[1].row, targetPath[targetIndex].Col, targetPath[targetIndex].Row);
+                if (routeLen < bestRouteLen || (routeLen == bestRouteLen && directDist < bestDirectDist))
+                {
+                    bestRouteLen = routeLen;
+                    bestDirectDist = directDist;
+                    bestRoute = route;
+                }
+            }
+
+            if (bestRoute == null)
+            {
+                var fallbackTarget = (targetPath[targetIndex].Col, targetPath[targetIndex].Row);
+                bestRoute = FindBestReachablePathTowardTarget(current, fallbackTarget, staticBlocked, 1);
+            }
+
+            if (bestRoute == null || bestRoute.Count <= 1)
+                break;
+
+            var next = bestRoute[1];
+            path.Add(new HexPositionDto { Col = next.col, Row = next.row });
+            current = next;
+        }
 
         return path.ToArray();
     }
@@ -232,9 +343,41 @@ public class BattleRoom
         return limited.ToArray();
     }
 
+    private HexPositionDto[] NormalizePath(UnitStateDto unit, HexPositionDto[]? rawPath)
+    {
+        var start = new HexPositionDto { Col = unit.Col, Row = unit.Row };
+        if (rawPath == null || rawPath.Length == 0)
+            return new[] { start };
+
+        var limited = new List<HexPositionDto> { start };
+        int maxSteps = GetMaxReachableSteps(unit.CurrentAp);
+        int stepsAdded = 0;
+        var current = (unit.Col, unit.Row);
+
+        for (int i = 1; i < rawPath.Length && stepsAdded < maxSteps; i++)
+        {
+            var next = (rawPath[i].Col, rawPath[i].Row);
+            if (next == current)
+                continue;
+            if (next.Item1 < 0 || next.Item2 < 0 || next.Item1 >= HexSpawn.DefaultGridWidth || next.Item2 >= HexSpawn.DefaultGridLength)
+                break;
+            if (Obstacles.Contains(next))
+                break;
+            if (!AreAdjacent(current, next))
+                break;
+
+            limited.Add(new HexPositionDto { Col = next.Item1, Row = next.Item2 });
+            current = next;
+            stepsAdded++;
+        }
+
+        return limited.ToArray();
+    }
+
     public BattleRoom(string battleId)
     {
         BattleId = battleId;
+        _rng = new Random(Guid.NewGuid().GetHashCode());
     }
 
     private static long GetUtcNowMs() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
@@ -274,11 +417,14 @@ public class BattleRoom
 
             HexPositionDto[] targetPath;
             if (UnitCommands.TryGetValue(target.UnitId, out var targetCommand) && targetCommand.Path != null && targetCommand.Path.Length > 0)
-                targetPath = LimitPathByAvailableAp(target, targetCommand.Path);
+                targetPath = NormalizePath(target, targetCommand.Path);
             else
                 targetPath = new[] { new HexPositionDto { Col = target.Col, Row = target.Row } };
 
             var path = BuildMobChasePath(mob, targetPath);
+            Console.WriteLine(
+                $"[mobAI] battleId={BattleId} mob={mob.UnitId} mobPos=({mob.Col},{mob.Row}) ap={mob.CurrentAp} " +
+                $"target={target.UnitId} targetPos=({target.Col},{target.Row}) targetPath={FormatPath(targetPath)} mobPath={FormatPath(path)}");
 
             UnitCommands[mob.UnitId] = new UnitCommandDto
             {
@@ -286,6 +432,63 @@ public class BattleRoom
                 CommandType = "Move",
                 Path = path
             };
+        }
+    }
+
+    private void GenerateObstaclesIfNeeded()
+    {
+        if (Obstacles.Count > 0) return;
+
+        int targetChains = _rng.Next(6, MaxObstacleChains + 1);
+        int attempts = 0;
+        int chainsPlaced = 0;
+        var reserved = new HashSet<(int col, int row)>();
+        foreach (var unit in Units.Values)
+        {
+            var origin = (col: unit.Col, row: unit.Row);
+            reserved.Add(origin);
+            for (int col = 0; col < HexSpawn.DefaultGridWidth; col++)
+            {
+                for (int row = 0; row < HexSpawn.DefaultGridLength; row++)
+                {
+                    if (HexSpawn.HexDistance(origin.col, origin.row, col, row) <= 2)
+                        reserved.Add((col, row));
+                }
+            }
+        }
+
+        while (chainsPlaced < targetChains && attempts < 300)
+        {
+            attempts++;
+            int length = _rng.Next(1, 4);
+            int dir = _rng.Next(0, 6);
+            int startCol = _rng.Next(0, HexSpawn.DefaultGridWidth);
+            int startRow = _rng.Next(0, HexSpawn.DefaultGridLength);
+
+            var chain = new List<(int col, int row)>();
+            int col = startCol;
+            int row = startRow;
+            bool ok = true;
+
+            for (int i = 0; i < length; i++)
+            {
+                var cell = (col, row);
+                if (col < 0 || row < 0 || col >= HexSpawn.DefaultGridWidth || row >= HexSpawn.DefaultGridLength
+                    || Obstacles.Contains(cell) || reserved.Contains(cell))
+                {
+                    ok = false;
+                    break;
+                }
+
+                chain.Add(cell);
+                HexSpawn.GetNeighbor(col, row, dir, out col, out row);
+            }
+
+            if (!ok) continue;
+
+            foreach (var cell in chain)
+                Obstacles.Add(cell);
+            chainsPlaced++;
         }
     }
 
@@ -338,6 +541,8 @@ public class BattleRoom
                 };
             }
         }
+
+        GenerateObstaclesIfNeeded();
     }
 
     public void StartFirstRound()
@@ -427,6 +632,8 @@ public class BattleRoom
             Row = p.Value.row
         }).ToArray();
         FillSpawnArrays(out var sid, out var sc, out var sr);
+        var obstacleCols = Obstacles.Select(x => x.col).ToArray();
+        var obstacleRows = Obstacles.Select(x => x.row).ToArray();
         return new BattleStartedPayloadDto
         {
             BattleId = BattleId,
@@ -436,7 +643,9 @@ public class BattleRoom
             RoundDeadlineUtcMs = RoundDeadlineUtcMs,
             SpawnPlayerIds = sid,
             SpawnCols = sc,
-            SpawnRows = sr
+            SpawnRows = sr,
+            ObstacleCols = obstacleCols,
+            ObstacleRows = obstacleRows
         };
     }
 
@@ -540,7 +749,9 @@ public class BattleRoom
 
             if (UnitCommands.TryGetValue(uid, out var cmd) && cmd.Path != null && cmd.Path.Length > 0)
             {
-                paths[uid] = LimitPathByAvailableAp(us, cmd.Path);
+                paths[uid] = NormalizePath(us, cmd.Path);
+                if (us.UnitType == UnitType.Mob)
+                    Console.WriteLine($"[mobAI] normalizedPath mob={uid} path={FormatPath(paths[uid])}");
             }
             else
             {
@@ -605,6 +816,14 @@ public class BattleRoom
 
                 if (targetCell == current)
                     continue;
+
+                if (Obstacles.Contains(targetCell))
+                {
+                    actualPaths[uid].Add(new HexPositionDto { Col = current.col, Row = current.row });
+                    accepted[uid] = false;
+                    rejectedReason[uid] = $"Target hex ({target.Col},{target.Row}) blocked by obstacle";
+                    continue;
+                }
 
                 if (occupied.Contains(targetCell))
                 {
@@ -702,6 +921,9 @@ public class BattleRoom
                 ApSpentThisTurn = apSpent,
                 RejectedReason = rejectedReason.TryGetValue(uid, out var rr) ? rr : null
             });
+
+            if (us.UnitType == UnitType.Mob)
+                Console.WriteLine($"[mobAI] result mob={uid} actualPath={FormatPath(actualPath)} final=({final.col},{final.row}) rejected={rejectedReason.GetValueOrDefault(uid) ?? "none"}");
         }
 
         LastTurnResult = new TurnResultPayloadDto

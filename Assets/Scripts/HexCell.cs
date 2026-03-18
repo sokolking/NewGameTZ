@@ -8,6 +8,7 @@ public class HexCell : MonoBehaviour
     private static readonly int BaseColorId = Shader.PropertyToID("_BaseColor");
     private static readonly int ColorId = Shader.PropertyToID("_Color");
     private static readonly Color HoverColor = new Color(0.5f, 0.5f, 0.5f, 0.6f);
+    private static readonly Color ObstacleColor = new Color(0.28f, 0.28f, 0.28f, 1f);
 
     [SerializeField] private int _col;
     [SerializeField] private int _row;
@@ -20,6 +21,7 @@ public class HexCell : MonoBehaviour
 
     private bool _hovered;
     private bool _apMaskActive;
+    private bool _isObstacle;
     private Color _apMaskColor;
     private TextMesh _costLabel;
 
@@ -82,9 +84,17 @@ public class HexCell : MonoBehaviour
         ApplyCurrentColor();
     }
 
+    public void SetObstacle(bool active)
+    {
+        _isObstacle = active;
+        ApplyCurrentColor();
+    }
+
+    public bool IsObstacle => _isObstacle;
+
     private void ApplyCurrentColor()
     {
-        Color color = _defaultColor;
+        Color color = _isObstacle ? ObstacleColor : _defaultColor;
         if (_apMaskActive) color = _apMaskColor;
         if (_hovered) color = HoverColor;
         ApplyColor(color);

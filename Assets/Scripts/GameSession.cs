@@ -32,6 +32,7 @@ public class GameSession : MonoBehaviour
 
     // Ключ: идентификатор сущности в сети (для игроков — playerId, для мобов — unitId сервера).
     private readonly Dictionary<string, RemoteBattleUnitView> _remoteUnits = new();
+    private readonly HashSet<(int col, int row)> _obstacleCells = new();
 
     private bool _waitingForServerRoundResolve;
     private bool _animateResolvedRoundForPendingSubmit = true;
@@ -47,6 +48,7 @@ public class GameSession : MonoBehaviour
     public int ServerRoundIndexForSubmit => _serverRoundIndex;
 
     public bool IsInBattleWithServer() => _serverConnection != null && _serverConnection.IsInBattle;
+    public bool IsObstacleCell(int col, int row) => _obstacleCells.Contains((col, row));
 
     public void RegisterProcessedTurnResult(int roundIndex)
     {
@@ -293,6 +295,7 @@ public class GameSession : MonoBehaviour
         Player local = _localPlayer != null ? _localPlayer : FindFirstObjectByType<Player>();
         HexGrid grid = local != null && local.Grid != null ? local.Grid : FindFirstObjectByType<HexGrid>();
         float moveDur = local != null ? local.MoveDurationPerHex : 0.2f;
+        ApplyObstacleMap(payload, grid);
 
         var spawnList = BuildSpawnListFromPayload(payload);
         if (spawnList == null || spawnList.Count == 0)
@@ -317,6 +320,31 @@ public class GameSession : MonoBehaviour
         }
 
         FindFirstObjectByType<HexGridCamera>()?.RefocusOnLocalPlayer();
+    }
+
+    private void ApplyObstacleMap(BattleStartedPayload payload, HexGrid grid)
+    {
+        _obstacleCells.Clear();
+        if (grid == null) return;
+
+        foreach (HexCell cell in grid.GetComponentsInChildren<HexCell>())
+            cell.SetObstacle(false);
+
+        if (payload == null || payload.obstacleCols == null || payload.obstacleRows == null)
+            return;
+        if (payload.obstacleCols.Length != payload.obstacleRows.Length)
+            return;
+
+        for (int i = 0; i < payload.obstacleCols.Length; i++)
+        {
+            int col = payload.obstacleCols[i];
+            int row = payload.obstacleRows[i];
+            if (!grid.IsInBounds(col, row)) continue;
+            _obstacleCells.Add((col, row));
+            HexCell cell = grid.GetCell(col, row);
+            if (cell != null)
+                cell.SetObstacle(true);
+        }
     }
 
     private static List<(string pid, int col, int row)> BuildSpawnListFromPayload(BattleStartedPayload payload)

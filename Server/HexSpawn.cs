@@ -26,6 +26,12 @@ public static class HexSpawn
         y = -x - z;
     }
 
+    private static void CubeToOffset(int x, int z, out int col, out int row)
+    {
+        col = x;
+        row = z + (x - (x & 1)) / 2;
+    }
+
     /// <summary>Клетка на поле, максимально далеко от (p1Col, p1Row), но не ближе minDist шагов.</summary>
     public static (int col, int row) FindOpponentSpawn(int p1Col, int p1Row, int width, int length, int minDist)
     {
@@ -67,23 +73,18 @@ public static class HexSpawn
     /// <summary>Соседняя клетка по направлению 0..5 (flat-top odd-r).</summary>
     public static void GetNeighbor(int col, int row, int direction, out int outCol, out int outRow)
     {
-        // Используем те же правила odd-r, что и в Unity HexGrid/HexCubeOffset.
-        // Для упрощения здесь дублируем базовую логику соседей.
-        int parity = col & 1;
-        int[,] offsetsEven = { { +1, 0 }, { 0, -1 }, { -1, -1 }, { -1, 0 }, { -1, +1 }, { 0, +1 } };
-        int[,] offsetsOdd  = { { +1, 0 }, { +1, -1 }, { 0, -1 }, { -1, 0 }, { 0, +1 }, { +1, +1 } };
-        int dc, dr;
-        if (parity == 0)
-        {
-            dc = offsetsEven[direction % 6, 0];
-            dr = offsetsEven[direction % 6, 1];
-        }
-        else
-        {
-            dc = offsetsOdd[direction % 6, 0];
-            dr = offsetsOdd[direction % 6, 1];
-        }
-        outCol = col + dc;
-        outRow = row + dr;
+        OffsetToCube(col, row, out int x, out _, out int z);
+        int d = ((direction % 6) + 6) % 6;
+        ReadOnlySpan<(int dx, int dz)> dirs =
+        [
+            (1, -1),  // Right
+            (1, 0),   // BottomRight
+            (0, 1),   // BottomLeft
+            (-1, 1),  // Left
+            (-1, 0),  // UpperLeft
+            (0, -1),  // UpperRight
+        ];
+        var (dx, dz) = dirs[d];
+        CubeToOffset(x + dx, z + dz, out outCol, out outRow);
     }
 }

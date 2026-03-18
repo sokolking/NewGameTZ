@@ -103,7 +103,7 @@ public class MovementRangeHighlighter : MonoBehaviour
             var (col, row, dist) = queue.Dequeue();
 
             HexCell cell = _grid.GetCell(col, row);
-            if (cell != null)
+            if (cell != null && !cell.IsObstacle)
             {
                 int totalApIfGoHere = _player.GetStepCost(stepsAlready + dist);
                 bool reachableNow = dist <= maxSteps;
@@ -120,7 +120,8 @@ public class MovementRangeHighlighter : MonoBehaviour
             {
                 HexGrid.GetNeighbor(col, row, dir, out int nc, out int nr);
                 var key = (nc, nr);
-                if (!visited.Contains(key) && _grid.IsInBounds(nc, nr))
+                HexCell nextCell = _grid.GetCell(nc, nr);
+                if (!visited.Contains(key) && _grid.IsInBounds(nc, nr) && (nextCell == null || !nextCell.IsObstacle))
                 {
                     visited.Add(key);
                     queue.Enqueue((nc, nr, dist + 1));

@@ -123,4 +123,6 @@ public class BattleStartedPayload
     public string[] spawnPlayerIds;
     public int[] spawnCols;
     public int[] spawnRows;
+    public int[] obstacleCols;
+    public int[] obstacleRows;
 }
