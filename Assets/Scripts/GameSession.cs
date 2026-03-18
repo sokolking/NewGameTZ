@@ -49,6 +49,18 @@ public class GameSession : MonoBehaviour
 
     public bool IsInBattleWithServer() => _serverConnection != null && _serverConnection.IsInBattle;
     public bool IsObstacleCell(int col, int row) => _obstacleCells.Contains((col, row));
+    public Player LocalPlayer => _localPlayer != null ? _localPlayer : FindFirstObjectByType<Player>();
+
+    public List<RemoteBattleUnitView> GetRemoteUnitsSnapshot()
+    {
+        var list = new List<RemoteBattleUnitView>();
+        foreach (var unit in _remoteUnits.Values)
+        {
+            if (unit != null)
+                list.Add(unit);
+        }
+        return list;
+    }
 
     public void RegisterProcessedTurnResult(int roundIndex)
     {

@@ -71,6 +71,21 @@ public class HexGridCamera : MonoBehaviour
         ClampPositionToGrid();
     }
 
+    public void FocusOnGroundPoint(Vector3 groundPoint)
+    {
+        if (_cam == null)
+        {
+            _cam = GetComponent<Camera>();
+            if (_cam == null) _cam = Camera.main;
+        }
+        if (_cam == null) return;
+
+        Vector3 currentFocus = GetFocusPointOnGround(_cam.transform.position);
+        Vector3 delta = new Vector3(groundPoint.x - currentFocus.x, 0f, groundPoint.z - currentFocus.z);
+        _cam.transform.position += delta;
+        ClampPositionToGrid();
+    }
+
     private System.Collections.IEnumerator FocusOnPlayerWhenReady()
     {
         for (int i = 0; i < 8; i++)

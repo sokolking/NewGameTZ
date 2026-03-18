@@ -1,5 +1,6 @@
 using System.Collections;
 using UnityEngine;
+using System;
 
 /// <summary>
 /// Визуал удалённого игрока на сетке (Этап 4): позиция и анимация по actualPath с сервера.
@@ -14,6 +15,7 @@ public class RemoteBattleUnitView : MonoBehaviour
 
     public string NetworkPlayerId { get; private set; }
     public bool IsMoving => _isMoving;
+    public bool IsMob => !string.IsNullOrEmpty(NetworkPlayerId) && NetworkPlayerId.StartsWith("MOB_", StringComparison.OrdinalIgnoreCase);
 
     public void Initialize(string playerId, HexGrid grid, int startCol, int startRow, float moveDurationPerHex = -1f)
     {
@@ -35,7 +37,7 @@ public class RemoteBattleUnitView : MonoBehaviour
         cap.transform.localScale = new Vector3(0.8f, 0.5f, 0.8f);
         var r = cap.GetComponent<Renderer>();
         if (r != null) r.material.color = new Color(0.85f, 0.35f, 0.25f, 1f);
-        Object.Destroy(cap.GetComponent<Collider>());
+        UnityEngine.Object.Destroy(cap.GetComponent<Collider>());
     }
 
     public void ApplyServerTurnResult(HexPosition finalPosition, HexPosition[] actualPath, int currentAp, float penaltyFraction, bool prepareForAnimation = true)
