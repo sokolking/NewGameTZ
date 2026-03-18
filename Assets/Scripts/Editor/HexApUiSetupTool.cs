@@ -166,5 +166,110 @@ public static class HexApUiSetupTool
         Selection.activeGameObject = canvasGo;
         Debug.Log("Hex Grid: AP UI создан (Canvas + AP Text + End Turn Button + Log ScrollView).");
     }
+
+    private const string RoundWaitMenu = "Tools/Hex Grid/Add Round Wait Overlay to AP UI";
+
+    [MenuItem(RoundWaitMenu)]
+    public static void AddRoundWaitOverlay()
+    {
+#if UNITY_2023_1_OR_NEWER
+        var apUi = Object.FindFirstObjectByType<ActionPointsUI>();
+#else
+        var apUi = Object.FindObjectOfType<ActionPointsUI>();
+#endif
+        if (apUi == null)
+        {
+            Debug.LogError("Hex Grid: не найден ActionPointsUI. Сначала Setup AP UI.");
+            return;
+        }
+
+        Transform canvas = apUi.transform;
+        while (canvas != null && canvas.GetComponent<Canvas>() == null)
+            canvas = canvas.parent;
+        if (canvas == null)
+        {
+            Debug.LogError("Hex Grid: нет Canvas.");
+            return;
+        }
+
+        Transform old = canvas.Find("RoundWaitPanel");
+        if (old != null) Object.DestroyImmediate(old.gameObject);
+
+        GameObject panel = new GameObject("RoundWaitPanel", typeof(RectTransform), typeof(Image));
+        panel.transform.SetParent(canvas, false);
+        RectTransform prt = panel.GetComponent<RectTransform>();
+        prt.anchorMin = Vector2.zero;
+        prt.anchorMax = Vector2.one;
+        prt.offsetMin = Vector2.zero;
+        prt.offsetMax = Vector2.zero;
+        Image pimg = panel.GetComponent<Image>();
+        pimg.color = new Color(0f, 0f, 0f, 0.65f);
+        pimg.raycastTarget = true;
+
+        GameObject labelGo = new GameObject("Label", typeof(RectTransform), typeof(Text));
+        labelGo.transform.SetParent(panel.transform, false);
+        RectTransform lr = labelGo.GetComponent<RectTransform>();
+        lr.anchorMin = new Vector2(0.5f, 0.55f);
+        lr.anchorMax = new Vector2(0.5f, 0.55f);
+        lr.sizeDelta = new Vector2(480f, 40f);
+        Text lt = labelGo.GetComponent<Text>();
+        lt.text = "Ожидание результата раунда…";
+        lt.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+        lt.fontSize = 20;
+        lt.alignment = TextAnchor.MiddleCenter;
+        lt.color = Color.white;
+
+        GameObject sliderGo = new GameObject("WaitSlider", typeof(RectTransform), typeof(Slider));
+        sliderGo.transform.SetParent(panel.transform, false);
+        RectTransform sr = sliderGo.GetComponent<RectTransform>();
+        sr.anchorMin = new Vector2(0.5f, 0.45f);
+        sr.anchorMax = new Vector2(0.5f, 0.45f);
+        sr.sizeDelta = new Vector2(400f, 24f);
+        Slider slider = sliderGo.GetComponent<Slider>();
+        slider.minValue = 0f;
+        slider.maxValue = 1f;
+        slider.value = 0.5f;
+        slider.interactable = false;
+        slider.transition = Selectable.Transition.None;
+
+        GameObject bg = new GameObject("Background", typeof(RectTransform), typeof(Image));
+        bg.transform.SetParent(sliderGo.transform, false);
+        RectTransform bgr = bg.GetComponent<RectTransform>();
+        bgr.anchorMin = Vector2.zero;
+        bgr.anchorMax = Vector2.one;
+        bgr.offsetMin = Vector2.zero;
+        bgr.offsetMax = Vector2.zero;
+        bg.GetComponent<Image>().color = new Color(0.2f, 0.2f, 0.25f, 1f);
+
+        GameObject fillArea = new GameObject("Fill Area", typeof(RectTransform));
+        fillArea.transform.SetParent(sliderGo.transform, false);
+        RectTransform far = fillArea.GetComponent<RectTransform>();
+        far.anchorMin = Vector2.zero;
+        far.anchorMax = Vector2.one;
+        far.offsetMin = new Vector2(8f, 6f);
+        far.offsetMax = new Vector2(-8f, -6f);
+
+        GameObject fill = new GameObject("Fill", typeof(RectTransform), typeof(Image));
+        fill.transform.SetParent(fillArea.transform, false);
+        RectTransform fr = fill.GetComponent<RectTransform>();
+        fr.anchorMin = Vector2.zero;
+        fr.anchorMax = new Vector2(0.5f, 1f);
+        fr.offsetMin = Vector2.zero;
+        fr.offsetMax = Vector2.zero;
+        Image fim = fill.GetComponent<Image>();
+        fim.color = new Color(0.35f, 0.65f, 0.95f, 1f);
+        slider.fillRect = fr;
+        slider.targetGraphic = fim;
+
+        panel.SetActive(false);
+
+        SerializedObject so = new SerializedObject(apUi);
+        so.FindProperty("_roundWaitPanel").objectReferenceValue = panel;
+        so.FindProperty("_roundWaitSlider").objectReferenceValue = slider;
+        so.ApplyModifiedPropertiesWithoutUndo();
+
+        Selection.activeGameObject = panel;
+        Debug.Log("Hex Grid: RoundWaitPanel добавлен (последний дочерний у Canvas — поверх UI). Перемести в конец иерархии Canvas при необходимости.");
+    }
 }
 

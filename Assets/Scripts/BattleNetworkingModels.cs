@@ -36,6 +36,8 @@ public class SubmitTurnPayload
 [Serializable]
 public class PlayerTurnResult
 {
+    public string unitId;
+    public int unitType; // 0 = Player, 1 = Mob (совместимо с серверным UnitType)
     public string playerId;
     public bool accepted;
     public HexPosition finalPosition;
@@ -46,6 +48,39 @@ public class PlayerTurnResult
     public string rejectedReason;
 }
 
+/// <summary>Клиент → сервер: ход по WebSocket.</summary>
+[Serializable]
+public class WsClientSubmitTurn
+{
+    public string type;
+    public string battleId;
+    public string playerId;
+    public int roundIndex;
+    public HexPosition[] path;
+    public int apSpentThisTurn;
+    public int stepsTakenThisTurn;
+}
+
+/// <summary>Сервер → клиент: квитанция на submitTurn.</summary>
+[Serializable]
+public class WsSubmitAckMsg
+{
+    public string type;
+    public bool ok;
+    public string error;
+    public int expectedRound;
+}
+
+/// <summary>Пуш по WebSocket после закрытия раунда (turnResult + новый roundIndex/timeLeft).</summary>
+[Serializable]
+public class BattleRoundWsPush
+{
+    public string type;
+    public TurnResultPayload turnResult;
+    public int roundIndex;
+    public float roundTimeLeft;
+}
+
 /// <summary>Ответ сервера (Server → Client): TurnResult.</summary>
 [Serializable]
 public class TurnResultPayload
@@ -53,6 +88,8 @@ public class TurnResultPayload
     public string battleId;
     public int roundIndex;
     public PlayerTurnResult[] results;
+    /// <summary>Сервер: allSubmitted | timerExpired</summary>
+    public string roundResolveReason;
 }
 
 /// <summary>Старт раунда (Server → Client): RoundStarted — один раз в начале раунда.</summary>
@@ -81,4 +118,8 @@ public class BattleStartedPayload
     public string playerId;
     public BattlePlayerInfo[] players;
     public float roundDuration;
+    /// <summary>Спавн для JsonUtility (параллельные массивы).</summary>
+    public string[] spawnPlayerIds;
+    public int[] spawnCols;
+    public int[] spawnRows;
 }

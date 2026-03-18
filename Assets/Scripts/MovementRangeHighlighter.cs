@@ -22,6 +22,11 @@ public class MovementRangeHighlighter : MonoBehaviour
     private void Update()
     {
         if (_grid == null || _player == null) return;
+        if (GameSession.Active != null && GameSession.Active.BlockPlayerInput)
+        {
+            ClearMask();
+            return;
+        }
 
         if (_player.IsMoving)
         {

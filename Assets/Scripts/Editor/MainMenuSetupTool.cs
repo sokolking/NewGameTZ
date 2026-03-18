@@ -101,9 +101,30 @@ public static class MainMenuSetupTool
             return btnGo.GetComponent<Button>();
         }
 
-        Button newGameBtn = CreateButton("Button_NewGame", "New Game", 40f);
+        Button findGameBtn = CreateButton("Button_FindGame", "Find Game", 40f);
         Button settingsBtn = CreateButton("Button_Settings", "Settings", 0f);
         Button quitBtn = CreateButton("Button_Quit", "Quit", -40f);
+
+        // Текст статуса матчмейкинга («Searching for opponent...»)
+        GameObject statusGo = new GameObject("StatusText", typeof(RectTransform), typeof(Text));
+        statusGo.transform.SetParent(menuRoot.transform, false);
+        RectTransform statusRt = statusGo.GetComponent<RectTransform>();
+        statusRt.anchorMin = new Vector2(0.5f, 0.5f);
+        statusRt.anchorMax = new Vector2(0.5f, 0.5f);
+        statusRt.pivot = new Vector2(0.5f, 0.5f);
+        statusRt.anchoredPosition = new Vector2(0f, -90f);
+        statusRt.sizeDelta = new Vector2(320f, 28f);
+        Text statusTxt = statusGo.GetComponent<Text>();
+        statusTxt.text = "";
+        statusTxt.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+        statusTxt.alignment = TextAnchor.MiddleCenter;
+        statusTxt.color = new Color(0.8f, 0.8f, 0.8f, 1f);
+
+        var matchmaking = menuRoot.AddComponent<MainMenuMatchmaking>();
+        var soMatchmaking = new SerializedObject(matchmaking);
+        soMatchmaking.FindProperty("_statusText").objectReferenceValue = statusTxt;
+        soMatchmaking.FindProperty("_gameSceneName").stringValue = "MainScene";
+        soMatchmaking.ApplyModifiedPropertiesWithoutUndo();
 
         // Панель настроек
         GameObject settingsPanel = new GameObject("SettingsPanel", typeof(RectTransform), typeof(Image));
@@ -226,10 +247,11 @@ public static class MainMenuSetupTool
         SerializedObject so = new SerializedObject(mm);
         so.FindProperty("_settingsPanel").objectReferenceValue = settingsPanel;
         so.FindProperty("_resolutionText").objectReferenceValue = resText;
+        so.FindProperty("_matchmaking").objectReferenceValue = matchmaking;
         so.ApplyModifiedPropertiesWithoutUndo();
 
         // Привязка кнопок к методам MainMenuUI
-        newGameBtn.onClick.AddListener(mm.OnNewGameClicked);
+        findGameBtn.onClick.AddListener(mm.OnFindGameClicked);
         settingsBtn.onClick.AddListener(mm.OnSettingsClicked);
         quitBtn.onClick.AddListener(mm.OnQuitClicked);
         closeBtn.onClick.AddListener(mm.OnCloseSettingsClicked);
@@ -241,7 +263,7 @@ public static class MainMenuSetupTool
         settingsPanel.SetActive(false);
 
         Selection.activeGameObject = menuRoot;
-        Debug.Log("Hex Grid: Main Menu UI пересоздан (фон, New Game / Settings / Quit, панель настроек).");
+        Debug.Log("Hex Grid: Main Menu UI пересоздан (фон, Find Game / Settings / Quit, панель настроек).");
     }
 }
 

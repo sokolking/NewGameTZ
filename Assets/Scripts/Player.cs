@@ -17,7 +17,7 @@ public class Player : MonoBehaviour
     [SerializeField] private int _maxAp = 100;
 
     [Header("Таймер хода, сек")]
-    [SerializeField] private float _turnDurationSeconds = 10f;
+    [SerializeField] private float _turnDurationSeconds = 30f;
 
     private const float PrelastPenaltyFraction = 0.05f;  // штраф за предпоследний шаг при макс. ОД
     private const float LastPenaltyFraction = 0.08f;      // штраф за последний шаг при макс. ОД
@@ -43,6 +43,7 @@ public class Player : MonoBehaviour
     private float _turnTimeLeft;
     // Флаг, что таймер хода уже истёк (для внешней логики автозавершения).
     private bool _turnTimeExpired;
+    private bool _turnTimerPaused;
 
     public int CurrentCol => _currentCol;
     public int CurrentRow => _currentRow;
@@ -57,10 +58,13 @@ public class Player : MonoBehaviour
     public float TurnTimeLeft => _turnTimeLeft;
     /// <summary>Длительность хода (сек).</summary>
     public float TurnDurationSeconds => _turnDurationSeconds;
+    public bool IsTurnTimerPaused => _turnTimerPaused;
     /// <summary>Истёк ли таймер хода.</summary>
     public bool TurnTimeExpired => _turnTimeExpired;
     /// <summary>Сколько "шагов" уже совершено в этом ходу.</summary>
     public int StepsTakenThisTurn => _stepsTakenThisTurn;
+    public HexGrid Grid => _grid;
+    public float MoveDurationPerHex => _moveDurationPerHex;
 
     public delegate void PlayerMovedHandler(HexCell cell);
     /// <summary>Событие: игрок завершил перемещение в новую ячейку (после MoveAlongPath, телепорта или анимации).</summary>
@@ -83,6 +87,9 @@ public class Player : MonoBehaviour
         if (GetComponentInChildren<MeshFilter>() == null && GetComponentInChildren<MeshRenderer>() == null)
             CreateDefaultVisual();
 
+        // В онлайн-бою позицию задаёт сервер (ApplyBattleStarted); иначе Player.Start перезапишет спавн в (0,0).
+        if (GameSession.Active != null && GameSession.Active.IsInBattleWithServer())
+            return;
         if (_grid != null && _grid.GetCell(0, 0) != null)
         {
             _currentCol = 0;
@@ -94,7 +101,7 @@ public class Player : MonoBehaviour
     private void Update()
     {
         // Таймер хода: считаем только время, авто-завершение делает UI (чтобы можно было показать анимацию).
-        if (_turnTimeLeft > 0f)
+        if (!_turnTimerPaused && _turnTimeLeft > 0f)
         {
             _turnTimeLeft -= Time.deltaTime;
             if (_turnTimeLeft <= 0f)
@@ -295,6 +302,77 @@ public class Player : MonoBehaviour
     private void AddPenalty(float deltaFraction)
     {
         _penaltyFraction = Mathf.Clamp(_penaltyFraction + deltaFraction, 0f, 0.9f);
+    }
+
+    /// <summary>Установить штраф с сервера (доля 0–0.9).</summary>
+    public void SetPenaltyFraction(float value)
+    {
+        _penaltyFraction = Mathf.Clamp(value, 0f, 0.9f);
+    }
+
+    /// <summary>Пауза таймера хода (ожидание сервера после «Завершить ход»).</summary>
+    public void SetTurnTimerPaused(bool paused)
+    {
+        _turnTimerPaused = paused;
+        if (paused) _turnTimeExpired = false;
+    }
+
+    /// <summary>Синхронизировать номер раунда и таймер с сервером (RoundStarted).</summary>
+    public void SetRoundState(int roundIndex, float timeLeftSeconds)
+    {
+        _turnCount = roundIndex;
+        _turnTimeLeft = Mathf.Max(0f, timeLeftSeconds);
+        _turnTimeExpired = _turnTimeLeft <= 0f;
+    }
+
+    /// <summary>Применить результат хода с сервера: ОД, штраф, финальная позиция; визуал ставится в начало пути для последующей анимации.</summary>
+    public void ApplyServerTurnResult(HexPosition finalPosition, HexPosition[] actualPath, int currentAp, float penaltyFraction)
+    {
+        _currentAp = currentAp;
+        SetPenaltyFraction(penaltyFraction);
+        _currentCol = finalPosition != null ? finalPosition.col : _currentCol;
+        _currentRow = finalPosition != null ? finalPosition.row : _currentRow;
+        _apSpentThisTurn = 0;
+        _stepsTakenThisTurn = 0;
+        if (_turnPath != null) _turnPath.Clear();
+
+        if (_grid != null && actualPath != null && actualPath.Length > 0)
+            transform.position = _grid.GetCellWorldPosition(actualPath[0].col, actualPath[0].row);
+        else if (_grid != null)
+            transform.position = _grid.GetCellWorldPosition(_currentCol, _currentRow);
+    }
+
+    /// <summary>Проиграть анимацию движения по пути с сервера (actualPath). Запускать после ApplyServerTurnResult. Не меняет состояние.</summary>
+    public IEnumerator PlayPathAnimation(HexPosition[] path)
+    {
+        if (_grid == null || path == null || path.Length < 2)
+        {
+            if (_grid != null && path != null && path.Length == 1)
+                transform.position = _grid.GetCellWorldPosition(path[0].col, path[0].row);
+            yield break;
+        }
+
+        _isMoving = true;
+        transform.position = _grid.GetCellWorldPosition(path[0].col, path[0].row);
+
+        for (int i = 1; i < path.Length; i++)
+        {
+            var step = path[i];
+            Vector3 target = _grid.GetCellWorldPosition(step.col, step.row);
+            float elapsed = 0f;
+
+            while (elapsed < _moveDurationPerHex)
+            {
+                elapsed += Time.deltaTime;
+                float t = Mathf.Clamp01(elapsed / _moveDurationPerHex);
+                transform.position = Vector3.Lerp(transform.position, target, t);
+                yield return null;
+            }
+
+            transform.position = target;
+        }
+
+        _isMoving = false;
     }
 
     /// <summary>Проиграть анимацию всего пути за ход (без изменения ОД и штрафов), используется при завершении хода с анимацией.</summary>

@@ -27,6 +27,16 @@ public class HexInputManager : MonoBehaviour
         if (_camera == null) _camera = Camera.main;
         if (_camera == null) return;
         if (Mouse.current == null) return;
+        if (GameSession.Active != null && GameSession.Active.BlockPlayerInput)
+        {
+            if (_lastHoveredCell != null)
+            {
+                _lastHoveredCell.SetHighlight(false);
+                _lastHoveredCell.SetCostLabel(-1);
+                _lastHoveredCell = null;
+            }
+            return;
+        }
 
         UpdateHover();
         UpdateDoubleClick();

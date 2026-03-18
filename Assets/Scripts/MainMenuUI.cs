@@ -16,8 +16,15 @@ public class MainMenuUI : MonoBehaviour
     [Header("Разрешение экрана")]
     [SerializeField] private Text _resolutionText;
 
-    // Кнопки меню (находим по имени, чтобы не настраивать вручную в инспекторе).
-    private Button _btnNewGame;
+    [Header("Матчмейкинг")]
+    [SerializeField] private MainMenuMatchmaking _matchmaking;
+
+    [Header("Режим игры")]
+    [Tooltip("Если включено — одиночная игра против ИИ, без сервера.")]
+    [SerializeField] private Toggle _singlePlayerToggle;
+
+    // Кнопки меню (находим по имени).
+    private Button _btnFindGame;
     private Button _btnSettings;
     private Button _btnQuit;
     private Button _btnCloseSettings;
@@ -40,7 +47,8 @@ public class MainMenuUI : MonoBehaviour
 
     private void CacheButtons()
     {
-        _btnNewGame = transform.Find("Button_NewGame")?.GetComponent<Button>();
+        _btnFindGame = transform.Find("Button_FindGame")?.GetComponent<Button>();
+        if (_btnFindGame == null) _btnFindGame = transform.Find("Button_NewGame")?.GetComponent<Button>();
         _btnSettings = transform.Find("Button_Settings")?.GetComponent<Button>();
         _btnQuit = transform.Find("Button_Quit")?.GetComponent<Button>();
 
@@ -62,14 +70,20 @@ public class MainMenuUI : MonoBehaviour
                 _resolutionText = _settingsPanel.transform.Find("ResolutionText")?.GetComponent<Text>();
             }
         }
+
+        // Попробовать найти чекбокс одиночной игры по имени (опционально, можно проставить в инспекторе).
+        if (_singlePlayerToggle == null)
+        {
+            _singlePlayerToggle = transform.Find("Toggle_SinglePlayer")?.GetComponent<Toggle>();
+        }
     }
 
     private void WireButtonEvents()
     {
-        if (_btnNewGame != null)
+        if (_btnFindGame != null)
         {
-            _btnNewGame.onClick.RemoveAllListeners();
-            _btnNewGame.onClick.AddListener(OnNewGameClicked);
+            _btnFindGame.onClick.RemoveAllListeners();
+            _btnFindGame.onClick.AddListener(OnFindGameClicked);
         }
         if (_btnSettings != null)
         {
@@ -165,8 +179,33 @@ public class MainMenuUI : MonoBehaviour
         Screen.SetResolution(r.width, r.height, Screen.fullScreenMode);
     }
 
-    public void OnNewGameClicked()
+    /// <summary>Find Game: встать в очередь на сервере; при старте боя загружается игровая сцена.</summary>
+    public void OnFindGameClicked()
     {
+        bool singlePlayer = _singlePlayerToggle != null && _singlePlayerToggle.isOn;
+        
+        GameModeState.SetSinglePlayer(singlePlayer);
+
+        if (singlePlayer)
+        {
+            // Одиночный режим теперь тоже использует серверный бой (1 игрок + серверный моб),
+            // чтобы логика боя была общей с онлайн-режимом.
+            if (_matchmaking != null)
+            {
+                _matchmaking.StartSinglePlayerServerBattle();
+                return;
+            }
+            // Fallback: если матчмейкинг не настроен, старое поведение — просто загрузить сцену.
+            if (!string.IsNullOrEmpty(_gameSceneName))
+                SceneManager.LoadScene(_gameSceneName);
+            return;
+        }
+
+        if (_matchmaking != null)
+        {
+            _matchmaking.FindGame();
+            return;
+        }
         if (!string.IsNullOrEmpty(_gameSceneName))
             SceneManager.LoadScene(_gameSceneName);
     }

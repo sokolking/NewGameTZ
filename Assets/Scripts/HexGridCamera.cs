@@ -11,12 +11,16 @@ public class HexGridCamera : MonoBehaviour
     [SerializeField] private float _padding = 2f;
 
     [Header("Изначальная позиция и поворот")]
-    [Tooltip("Если включено — в Start() задаются Position и Rotation ниже; иначе считается от центра сетки.")]
+    [Tooltip("Смотреть на локального игрока (любой спавн). Имеет приоритет над фикс. позицией и центром сетки.")]
+    [SerializeField] private bool _focusLocalPlayerOnStart = true;
+    [Tooltip("Явная ссылка на игрока; если пусто — ищется Player в сцене.")]
+    [SerializeField] private Player _playerTarget;
+    [Tooltip("Если включено — в Start() задаются Position и Rotation ниже (только если выключен фокус на игрока).")]
     [SerializeField] private bool _useFixedInitialTransform = true;
     [SerializeField] private Vector3 _initialPosition = new Vector3(32f, 10f, 20f);
     [SerializeField] private Vector3 _initialRotationEuler = new Vector3(90f, 100f, 160f);
 
-    [Header("Вид сбоку (если не используется фиксированный трансформ)")]
+    [Header("Вид сбоку (только если фокус на игроке выключен — центр сетки)")]
     [Tooltip("0 = строго сверху, 90 = с горизонта. Например 35–50 — вид сбоку сверху.")]
     [SerializeField] [Range(0f, 89f)] private float _elevationDegrees = 45f;
     [Tooltip("Градусы вокруг поля: 0 = с одной стороны, 180 = с противоположной.")]
@@ -31,6 +35,11 @@ public class HexGridCamera : MonoBehaviour
     [SerializeField] private float _boundsInset = 0f;
 
     private Camera _cam;
+    [Header("Карта гекса → позиция камеры")]
+    [Tooltip("Позиция камеры, когда игрок в A0 (col=0,row=0).")]
+    [SerializeField] private Vector3 _cameraAtMinCell = new Vector3(19f, 20f, 13f);
+    [Tooltip("Позиция камеры, когда игрок в Y40 (col=Width-1,row=Length-1).")]
+    [SerializeField] private Vector3 _cameraAtMaxCell = new Vector3(46f, 20f, 28f);
 
     private void Start()
     {
@@ -38,8 +47,73 @@ public class HexGridCamera : MonoBehaviour
         if (_cam == null) _cam = Camera.main;
         if (_cam == null) return;
 
-        ApplyInitialPosition();
+        if (_focusLocalPlayerOnStart)
+            StartCoroutine(FocusOnPlayerWhenReady());
+        else
+        {
+            ApplyInitialPosition();
+            ClampPositionToGrid();
+        }
+    }
+
+    /// <summary>После спавна с сервера и т.п. — снова навести камеру на локального игрока.</summary>
+    public void RefocusOnLocalPlayer()
+    {
+        if (_cam == null)
+        {
+            _cam = GetComponent<Camera>();
+            if (_cam == null) _cam = Camera.main;
+        }
+        if (_cam == null) return;
+        var player = ResolvePlayer();
+        if (player == null) return;
+        ApplyPlayerCameraMapping(player);
         ClampPositionToGrid();
+    }
+
+    private System.Collections.IEnumerator FocusOnPlayerWhenReady()
+    {
+        for (int i = 0; i < 8; i++)
+            yield return null;
+        ApplyInitialPosition();
+        var player = ResolvePlayer();
+        if (player != null)
+            ApplyPlayerCameraMapping(player);
+        ClampPositionToGrid();
+    }
+
+    private Player ResolvePlayer()
+    {
+        if (_playerTarget != null) return _playerTarget;
+        return FindFirstObjectByType<Player>();
+    }
+
+    private static Vector3 GetFocusPointOnGround(Vector3 world)
+    {
+        return new Vector3(world.x, 0f, world.z);
+    }
+
+    /// <summary>
+    /// Камера как функция координат гекса: A0 → _cameraAtMinCell, Y40 → _cameraAtMaxCell.
+    /// Для промежуточных гексов — линейная интерполяция по col (по X) и по row (по Z), Y берётся от A0.
+    /// </summary>
+    private void ApplyPlayerCameraMapping(Player player)
+    {
+        if (_cam == null || player == null) return;
+
+        int col = Mathf.Max(0, player.CurrentCol);
+        int row = Mathf.Max(0, player.CurrentRow);
+        int maxCol = _grid != null ? Mathf.Max(1, _grid.Width - 1) : 24;
+        int maxRow = _grid != null ? Mathf.Max(1, _grid.Length - 1) : 39;
+
+        float tCol = Mathf.Clamp01(col / (float)maxCol);
+        float tRow = Mathf.Clamp01(row / (float)maxRow);
+
+        float x = Mathf.Lerp(_cameraAtMinCell.x, _cameraAtMaxCell.x, tCol);
+        float y = _cameraAtMinCell.y; // в примере одинаковое (20)
+        float z = Mathf.Lerp(_cameraAtMinCell.z, _cameraAtMaxCell.z, tRow);
+
+        _cam.transform.position = new Vector3(x, y, z);
     }
 
     private void Update()
