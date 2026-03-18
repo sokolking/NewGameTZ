@@ -38,7 +38,7 @@ public class RemoteBattleUnitView : MonoBehaviour
         Object.Destroy(cap.GetComponent<Collider>());
     }
 
-    public void ApplyServerTurnResult(HexPosition finalPosition, HexPosition[] actualPath, int currentAp, float penaltyFraction)
+    public void ApplyServerTurnResult(HexPosition finalPosition, HexPosition[] actualPath, int currentAp, float penaltyFraction, bool prepareForAnimation = true)
     {
         if (_grid == null || actualPath == null || actualPath.Length == 0)
         {
@@ -46,7 +46,8 @@ public class RemoteBattleUnitView : MonoBehaviour
                 transform.position = _grid.GetCellWorldPosition(finalPosition.col, finalPosition.row);
             return;
         }
-        transform.position = _grid.GetCellWorldPosition(actualPath[0].col, actualPath[0].row);
+        var pos = prepareForAnimation ? actualPath[0] : actualPath[actualPath.Length - 1];
+        transform.position = _grid.GetCellWorldPosition(pos.col, pos.row);
     }
 
     public IEnumerator PlayPathAnimation(HexPosition[] path)

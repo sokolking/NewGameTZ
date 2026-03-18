@@ -41,6 +41,8 @@ public class Player : MonoBehaviour
     private List<(int col, int row)> _turnPath;
     // Остаток времени текущего хода (сек).
     private float _turnTimeLeft;
+    // Абсолютный момент окончания хода по UTC timestamp от сервера.
+    private long _turnDeadlineUtcMs;
     // Флаг, что таймер хода уже истёк (для внешней логики автозавершения).
     private bool _turnTimeExpired;
     private bool _turnTimerPaused;
@@ -78,6 +80,7 @@ public class Player : MonoBehaviour
         _turnStartMaxAp = GetEffectiveMaxAp();
         _currentAp = _turnStartMaxAp;
         _turnTimeLeft = _turnDurationSeconds;
+        _turnDeadlineUtcMs = BuildRoundDeadlineUtcMs(_turnDurationSeconds);
         _turnTimeExpired = false;
         _turnPath = new List<(int col, int row)>();
     }
@@ -103,7 +106,7 @@ public class Player : MonoBehaviour
         // Таймер хода: считаем только время, авто-завершение делает UI (чтобы можно было показать анимацию).
         if (!_turnTimerPaused && _turnTimeLeft > 0f)
         {
-            _turnTimeLeft -= Time.deltaTime;
+            _turnTimeLeft = GetRemainingTimeFromDeadline();
             if (_turnTimeLeft <= 0f)
             {
                 _turnTimeLeft = 0f;
@@ -235,7 +238,8 @@ public class Player : MonoBehaviour
 
         _turnPath.Clear();
         _turnCount++;
-        _turnTimeLeft = _turnDurationSeconds;
+        _turnDeadlineUtcMs = BuildRoundDeadlineUtcMs(_turnDurationSeconds);
+        _turnTimeLeft = GetRemainingTimeFromDeadline();
         _turnTimeExpired = false;
     }
 
@@ -313,20 +317,43 @@ public class Player : MonoBehaviour
     /// <summary>Пауза таймера хода (ожидание сервера после «Завершить ход»).</summary>
     public void SetTurnTimerPaused(bool paused)
     {
+        if (_turnTimerPaused == paused) return;
+
+        if (paused)
+            _turnTimeLeft = GetRemainingTimeFromDeadline();
+        else if (!_turnTimeExpired)
+            _turnDeadlineUtcMs = BuildRoundDeadlineUtcMs(_turnTimeLeft);
+
         _turnTimerPaused = paused;
         if (paused) _turnTimeExpired = false;
     }
 
-    /// <summary>Синхронизировать номер раунда и таймер с сервером (RoundStarted).</summary>
-    public void SetRoundState(int roundIndex, float timeLeftSeconds)
+    /// <summary>Синхронизировать номер раунда и дедлайн таймера с сервером.</summary>
+    public void SetRoundState(int roundIndex, long roundDeadlineUtcMs)
     {
         _turnCount = roundIndex;
-        _turnTimeLeft = Mathf.Max(0f, timeLeftSeconds);
+        _turnDeadlineUtcMs = roundDeadlineUtcMs > 0 ? roundDeadlineUtcMs : BuildRoundDeadlineUtcMs(_turnDurationSeconds);
+        _turnTimeLeft = GetRemainingTimeFromDeadline();
         _turnTimeExpired = _turnTimeLeft <= 0f;
     }
 
+    public static long BuildRoundDeadlineUtcMs(float durationSeconds)
+    {
+        long durationMs = (long)Mathf.Round(Mathf.Max(0f, durationSeconds) * 1000f);
+        return System.DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + durationMs;
+    }
+
+    private float GetRemainingTimeFromDeadline()
+    {
+        if (_turnDeadlineUtcMs <= 0)
+            return Mathf.Max(0f, _turnTimeLeft);
+
+        long remainingMs = _turnDeadlineUtcMs - System.DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        return Mathf.Max(0f, remainingMs / 1000f);
+    }
+
     /// <summary>Применить результат хода с сервера: ОД, штраф, финальная позиция; визуал ставится в начало пути для последующей анимации.</summary>
-    public void ApplyServerTurnResult(HexPosition finalPosition, HexPosition[] actualPath, int currentAp, float penaltyFraction)
+    public void ApplyServerTurnResult(HexPosition finalPosition, HexPosition[] actualPath, int currentAp, float penaltyFraction, bool prepareForAnimation = true)
     {
         _currentAp = currentAp;
         SetPenaltyFraction(penaltyFraction);
@@ -337,7 +364,10 @@ public class Player : MonoBehaviour
         if (_turnPath != null) _turnPath.Clear();
 
         if (_grid != null && actualPath != null && actualPath.Length > 0)
-            transform.position = _grid.GetCellWorldPosition(actualPath[0].col, actualPath[0].row);
+        {
+            var pos = prepareForAnimation ? actualPath[0] : actualPath[actualPath.Length - 1];
+            transform.position = _grid.GetCellWorldPosition(pos.col, pos.row);
+        }
         else if (_grid != null)
             transform.position = _grid.GetCellWorldPosition(_currentCol, _currentRow);
     }

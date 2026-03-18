@@ -100,6 +100,7 @@ public class BattleStartedPayloadDto
     public string PlayerId { get; set; } = "";
     public BattlePlayerInfoDto[]? Players { get; set; }
     public float RoundDuration { get; set; }
+    public long RoundDeadlineUtcMs { get; set; }
     /// <summary>Дублирование спавна для Unity JsonUtility (массив объектов в JSON часто не парсится).</summary>
     public string[]? SpawnPlayerIds { get; set; }
     public int[]? SpawnCols { get; set; }

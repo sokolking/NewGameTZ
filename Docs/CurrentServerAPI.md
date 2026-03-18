@@ -122,7 +122,7 @@
 |--------|------------|
 | `submitAck` | `{ "ok": true }` или `{ "ok": false, "error": "...", "expectedRound": n }` |
 | `leaveAck` | `{ "ok": true }` |
-| `roundResolved` | Итог раунда: `turnResult`, `roundIndex` (следующий), `roundTimeLeft` |
+| `roundResolved` | Итог раунда: `turnResult`, `roundIndex` (следующий), `roundDeadlineUtcMs` |
 
 При **отключении** сокета сервер вызывает тот же сценарий, что и при выходе игрока (`PlayerLeft`).
 
@@ -145,6 +145,7 @@
   "roundIndex": 1,          // текущий раунд (уже следующий, если прошлый только что завершился)
   "roundDuration": 30.0,
   "roundTimeLeft": 27.2,
+  "roundDeadlineUtcMs": 1773858123456,
 
   "turnResult": {           // может быть null, если раунд ещё не завершился
     "battleId": "abcd1234",
@@ -193,6 +194,8 @@
   "spawnRows": [ 0, 39 ]
 }
 ```
+
+`roundDeadlineUtcMs` — абсолютный UTC timestamp окончания текущего раунда. Клиент должен вычислять остаток времени как `deadline - now`, а не заново запускать локальные `30` секунд после показа анимаций.
 
 Замечание: `participants` и `allSubmittedThisRound` относятся **к текущему раунду** (`roundIndex`), а `turnResult` — к **предыдущему завершённому раунду**.
 

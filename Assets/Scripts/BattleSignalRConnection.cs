@@ -308,11 +308,11 @@ public class BattleSignalRConnection : MonoBehaviour
 
         _gameSession.RegisterProcessedTurnResult(resolvedRound);
         if (_gameSession.IsWaitingForServerRoundResolve)
-            _gameSession.ApplyTurnResultThenRoundState(push.turnResult, push.roundIndex, push.roundTimeLeft);
+            _gameSession.ApplyTurnResultThenRoundState(push.turnResult, push.roundIndex, push.roundDeadlineUtcMs);
         else
         {
             _gameSession.ApplyTurnResult(push.turnResult);
-            _gameSession.ApplyRoundState(push.roundIndex, push.roundTimeLeft);
+            _gameSession.ApplyRoundState(push.roundIndex, push.roundDeadlineUtcMs);
         }
     }
 

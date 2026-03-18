@@ -18,20 +18,37 @@ public class MovementRangeHighlighter : MonoBehaviour
     private int _lastCol = int.MinValue;
     private int _lastRow = int.MinValue;
     private int _lastAp = int.MinValue;
+    private bool _wasBlocked;
+    private bool _wasMoving;
 
     private void Update()
     {
         if (_grid == null || _player == null) return;
-        if (GameSession.Active != null && GameSession.Active.BlockPlayerInput)
+        bool isBlocked = GameSession.Active != null && GameSession.Active.BlockPlayerInput;
+        if (isBlocked)
         {
             ClearMask();
+            _wasBlocked = true;
             return;
         }
+        // Сняли блокировку ввода — нужно восстановить подсветку даже если ОД/позиция не менялись.
+        if (_wasBlocked)
+        {
+            _wasBlocked = false;
+            RebuildMask();
+        }
 
-        if (_player.IsMoving)
+        bool isMoving = _player.IsMoving;
+        if (isMoving)
         {
             ClearMask();
+            _wasMoving = true;
             return;
+        }
+        if (_wasMoving)
+        {
+            _wasMoving = false;
+            RebuildMask();
         }
 
         if (_player.CurrentCol != _lastCol ||

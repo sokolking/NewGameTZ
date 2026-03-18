@@ -4,7 +4,8 @@ using UnityEngine.InputSystem;
 
 /// <summary>
 /// UI для отображения очков действия и кнопки \"Закончить ход\".
-/// Онлайн: бар после успешного POST submit; снимается при пуше по WebSocket.
+/// Онлайн: полноэкранный бар и блокировка UI сразу после «конец хода» до submitAck по сокету;
+/// панель остаётся до roundResolved по WebSocket.
 /// </summary>
 public class ActionPointsUI : MonoBehaviour
 {
@@ -23,6 +24,8 @@ public class ActionPointsUI : MonoBehaviour
     [Tooltip("Панель на весь экран: Image с Raycast Target, дочерний Slider (опционально).")]
     [SerializeField] private GameObject _roundWaitPanel;
     [SerializeField] private Slider _roundWaitSlider;
+    [Tooltip("Секунды на один цикл заполнения бара (неопределённый прогресс).")]
+    [SerializeField] private float _roundWaitBarCycleSeconds = 1.25f;
 
     private bool _endTurnInProgress;
     private bool _roundWaitVisible;
@@ -32,6 +35,9 @@ public class ActionPointsUI : MonoBehaviour
     {
         if (_endTurnButton != null)
             _endTurnButton.onClick.AddListener(OnEndTurnClicked);
+
+        if (_roundWaitBarCycleSeconds <= 0.05f)
+            _roundWaitBarCycleSeconds = 1.25f;
 
         if (_player != null)
             _player.OnMovedToCell += HandlePlayerMoved;
@@ -61,8 +67,11 @@ public class ActionPointsUI : MonoBehaviour
 
     private void Update()
     {
-        if (_roundWaitVisible && _roundWaitSlider != null)
-            _roundWaitSlider.normalizedValue = 0.5f + 0.45f * Mathf.Sin(Time.unscaledTime * 2.5f);
+        if (_roundWaitVisible && _roundWaitSlider != null && _roundWaitBarCycleSeconds > 0.05f)
+        {
+            float t = Mathf.Repeat(Time.unscaledTime / _roundWaitBarCycleSeconds, 1f);
+            _roundWaitSlider.normalizedValue = t;
+        }
 
         if (_player == null || _apText == null) return;
         // Пока ждём ответ сервера после досрочного «Закончить ход» — не показывать замороженный таймер (T 22),
@@ -97,6 +106,7 @@ public class ActionPointsUI : MonoBehaviour
         if (_player.IsMoving) return;
         if (_gameSession != null && _gameSession.IsBattleAnimationPlaying) return;
         if (_roundWaitVisible) return;
+        if (_gameSession != null && _gameSession.IsWaitingForServerRoundResolve) return;
 
         _endTurnInProgress = true;
 
@@ -115,7 +125,8 @@ public class ActionPointsUI : MonoBehaviour
 
         if (IsOnlineSubmitFlow)
         {
-            _gameSession.BeginWaitingForServerRoundResolve();
+            _gameSession.BeginWaitingForServerRoundResolve(animateResolvedRound: false);
+            ShowRoundWaitPanel();
             SubmitTurnIfOnline();
             AppendLog("Отправка хода на сервер…");
             _endTurnInProgress = false;
@@ -132,11 +143,10 @@ public class ActionPointsUI : MonoBehaviour
     {
         if (_player == null) yield break;
 
-        yield return _player.PlayLastMoveAnimation();
-
         if (IsOnlineSubmitFlow)
         {
-            _gameSession.BeginWaitingForServerRoundResolve();
+            _gameSession.BeginWaitingForServerRoundResolve(animateResolvedRound: true);
+            ShowRoundWaitPanel();
             SubmitTurnIfOnline();
             AppendLog("Отправка хода на сервер…");
             _endTurnInProgress = false;
@@ -165,14 +175,10 @@ public class ActionPointsUI : MonoBehaviour
 
     private void ShowRoundWaitAfterSubmitDelivered()
     {
-        if (FindFirstObjectByType<BattleSignalRConnection>() == null)
-        {
-            AppendLog("Ход принят сервером. Добавьте BattleSignalRConnection в сцену для бара до ответа по сокету.");
-            return;
-        }
-
-        ShowRoundWaitPanel();
-        AppendLog("Ход принят. Ожидание результата по сокету…");
+        // Панель уже показана при нажатии «конец хода»; здесь только подтверждение по сокету.
+        if (!_roundWaitVisible)
+            ShowRoundWaitPanel();
+        AppendLog("Ход принят сервером. Ожидание результата раунда…");
     }
 
     private void SubmitTurnIfOnline()

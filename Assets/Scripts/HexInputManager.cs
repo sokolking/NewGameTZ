@@ -99,7 +99,7 @@ public class HexInputManager : MonoBehaviour
             cell.Col, cell.Row);
 
         if (path != null && path.Count > 0)
-            _player.MoveAlongPath(path, animate: false); // телепорт без анимации
+            _player.MoveAlongPath(path, animate: true);
     }
 
     private HexCell GetHexUnderCursor()

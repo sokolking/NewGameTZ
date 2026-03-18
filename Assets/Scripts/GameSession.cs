@@ -34,6 +34,7 @@ public class GameSession : MonoBehaviour
     private readonly Dictionary<string, RemoteBattleUnitView> _remoteUnits = new();
 
     private bool _waitingForServerRoundResolve;
+    private bool _animateResolvedRoundForPendingSubmit = true;
     private int _lastProcessedTurnResultRound = -1;
     /// <summary>Индекс раунда с сервера — только его слать в submit (TurnCount локально может отличаться).</summary>
     private int _serverRoundIndex;
@@ -92,9 +93,10 @@ public class GameSession : MonoBehaviour
 
     // Локальный ChasingAiController больше не используется: серверный моб управляется на стороне сервера.
 
-    public void BeginWaitingForServerRoundResolve()
+    public void BeginWaitingForServerRoundResolve(bool animateResolvedRound)
     {
         _waitingForServerRoundResolve = true;
+        _animateResolvedRoundForPendingSubmit = animateResolvedRound;
         var p = _localPlayer != null ? _localPlayer : FindFirstObjectByType<Player>();
         p?.SetTurnTimerPaused(true);
     }
@@ -103,6 +105,7 @@ public class GameSession : MonoBehaviour
     {
         bool was = _waitingForServerRoundResolve;
         _waitingForServerRoundResolve = false;
+        _animateResolvedRoundForPendingSubmit = true;
         var p = _localPlayer != null ? _localPlayer : FindFirstObjectByType<Player>();
         p?.SetTurnTimerPaused(false);
         if (was) OnServerRoundWaitCancelled?.Invoke();
@@ -152,20 +155,22 @@ public class GameSession : MonoBehaviour
     public void ApplyTurnResult(TurnResultPayload result)
     {
         if (result == null || result.results == null) return;
-        var animJobs = BuildTurnResultAnimationJobs(result);
+        var animJobs = BuildTurnResultAnimationJobs(result, prepareForAnimation: true);
         if (animJobs.Count > 0)
             StartCoroutine(PlayAllTurnAnimationsParallel(animJobs));
     }
 
     /// <summary>Ожидали свой сабмит: скрыть бар → анимация → новый раунд и снятие блокировки.</summary>
-    public void ApplyTurnResultThenRoundState(TurnResultPayload result, int nextRoundIndex, float roundTimeLeft)
+    public void ApplyTurnResultThenRoundState(TurnResultPayload result, int nextRoundIndex, long roundDeadlineUtcMs)
     {
         if (result == null || result.results == null) return;
-        var animJobs = BuildTurnResultAnimationJobs(result);
-        StartCoroutine(DeferredRoundAfterAnimations(animJobs, nextRoundIndex, roundTimeLeft));
+        bool animateResolvedRound = _animateResolvedRoundForPendingSubmit;
+        _animateResolvedRoundForPendingSubmit = true;
+        var animJobs = BuildTurnResultAnimationJobs(result, animateResolvedRound);
+        StartCoroutine(DeferredRoundAfterAnimations(animJobs, nextRoundIndex, roundDeadlineUtcMs));
     }
 
-    private List<(object unit, bool isLocal, HexPosition[] path)> BuildTurnResultAnimationJobs(TurnResultPayload result)
+    private List<(object unit, bool isLocal, HexPosition[] path)> BuildTurnResultAnimationJobs(TurnResultPayload result, bool prepareForAnimation)
     {
         var animJobs = new List<(object unit, bool isLocal, HexPosition[] path)>();
         Player local = _localPlayer != null ? _localPlayer : FindFirstObjectByType<Player>();
@@ -185,8 +190,9 @@ public class GameSession : MonoBehaviour
                 else if (!r.accepted)
                     OnNetworkMessage?.Invoke("Клетка занята, ход частично отменён.");
 
-                local.ApplyServerTurnResult(r.finalPosition, r.actualPath, r.currentAp, r.penaltyFraction);
-                animJobs.Add((local, true, r.actualPath));
+                local.ApplyServerTurnResult(r.finalPosition, r.actualPath, r.currentAp, r.penaltyFraction, prepareForAnimation);
+                if (prepareForAnimation)
+                    animJobs.Add((local, true, r.actualPath));
                 continue;
             }
 
@@ -206,19 +212,20 @@ public class GameSession : MonoBehaviour
 
             if (remote != null)
             {
-                remote.ApplyServerTurnResult(r.finalPosition, r.actualPath, r.currentAp, r.penaltyFraction);
-                animJobs.Add((remote, false, r.actualPath));
+                remote.ApplyServerTurnResult(r.finalPosition, r.actualPath, r.currentAp, r.penaltyFraction, prepareForAnimation);
+                if (prepareForAnimation)
+                    animJobs.Add((remote, false, r.actualPath));
             }
         }
 
         return animJobs;
     }
 
-    private IEnumerator DeferredRoundAfterAnimations(List<(object unit, bool isLocal, HexPosition[] path)> jobs, int nextRoundIndex, float roundTimeLeft)
+    private IEnumerator DeferredRoundAfterAnimations(List<(object unit, bool isLocal, HexPosition[] path)> jobs, int nextRoundIndex, long roundDeadlineUtcMs)
     {
         if (jobs.Count > 0)
             yield return PlayAllTurnAnimationsParallel(jobs);
-        ApplyRoundState(nextRoundIndex, roundTimeLeft);
+        ApplyRoundState(nextRoundIndex, roundDeadlineUtcMs);
         var p = _localPlayer != null ? _localPlayer : FindFirstObjectByType<Player>();
         p?.SetTurnTimerPaused(false);
         _waitingForServerRoundResolve = false;
@@ -251,12 +258,12 @@ public class GameSession : MonoBehaviour
             yield return c;
     }
 
-    /// <summary>Синхронизировать раунд и таймер с сервером (RoundStarted / poll state).</summary>
-    public void ApplyRoundState(int roundIndex, float roundTimeLeftSeconds)
+    /// <summary>Синхронизировать раунд и UTC deadline таймера с сервером.</summary>
+    public void ApplyRoundState(int roundIndex, long roundDeadlineUtcMs)
     {
         _serverRoundIndex = roundIndex;
         Player local = _localPlayer != null ? _localPlayer : FindFirstObjectByType<Player>();
-        local?.SetRoundState(roundIndex, roundTimeLeftSeconds);
+        local?.SetRoundState(roundIndex, roundDeadlineUtcMs);
     }
 
     /// <summary>Применить старт боя: локальный и удалённые юниты на позициях с сервера.</summary>
@@ -275,8 +282,13 @@ public class GameSession : MonoBehaviour
         _serverRoundIndex = 0;
         CancelWaitingForServerRoundResolve();
 
-        float duration = payload.roundDuration > 0 ? payload.roundDuration : 30f;
-        ApplyRoundState(0, duration);
+        long deadlineUtcMs = payload.roundDeadlineUtcMs;
+        if (deadlineUtcMs <= 0)
+        {
+            float duration = payload.roundDuration > 0 ? payload.roundDuration : 30f;
+            deadlineUtcMs = Player.BuildRoundDeadlineUtcMs(duration);
+        }
+        ApplyRoundState(0, deadlineUtcMs);
 
         Player local = _localPlayer != null ? _localPlayer : FindFirstObjectByType<Player>();
         HexGrid grid = local != null && local.Grid != null ? local.Grid : FindFirstObjectByType<HexGrid>();
@@ -310,15 +322,7 @@ public class GameSession : MonoBehaviour
     private static List<(string pid, int col, int row)> BuildSpawnListFromPayload(BattleStartedPayload payload)
     {
         var list = new List<(string, int, int)>();
-        if (payload.players != null && payload.players.Length > 0)
-        {
-            foreach (var p in payload.players)
-            {
-                if (p == null || string.IsNullOrEmpty(p.playerId)) continue;
-                list.Add((p.playerId, p.col, p.row));
-            }
-            if (list.Count > 0) return list;
-        }
+        var seen = new HashSet<string>();
 
         if (payload.spawnPlayerIds != null && payload.spawnCols != null && payload.spawnRows != null
             && payload.spawnPlayerIds.Length == payload.spawnCols.Length
@@ -326,8 +330,18 @@ public class GameSession : MonoBehaviour
         {
             for (int i = 0; i < payload.spawnPlayerIds.Length; i++)
             {
-                if (string.IsNullOrEmpty(payload.spawnPlayerIds[i])) continue;
-                list.Add((payload.spawnPlayerIds[i], payload.spawnCols[i], payload.spawnRows[i]));
+                string id = payload.spawnPlayerIds[i];
+                if (string.IsNullOrEmpty(id) || !seen.Add(id)) continue;
+                list.Add((id, payload.spawnCols[i], payload.spawnRows[i]));
+            }
+        }
+
+        if (payload.players != null && payload.players.Length > 0)
+        {
+            foreach (var p in payload.players)
+            {
+                if (p == null || string.IsNullOrEmpty(p.playerId) || !seen.Add(p.playerId)) continue;
+                list.Add((p.playerId, p.col, p.row));
             }
         }
 

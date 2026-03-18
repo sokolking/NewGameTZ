@@ -40,8 +40,8 @@ dotnet run
 
 - **POST /api/battle/join** — встать в очередь или начать бой. Тело: `{ "startCol": 0, "startRow": 0 }`. Ответ: `{ "battleId", "playerId", "status": "waiting"|"battle", "battleStarted"? }`. Если пришёл второй игрок — оба получают `status: "battle"` и `battleStarted`.
 - **GET /api/battle/{battleId}/poll?playerId=P1** — для первого игрока: опрос до появления второго. Ответ: `{ "status": "waiting"|"battle", "battleStarted"? }`.
-- **POST /api/battle/{battleId}/submit** — отправить ход. Тело: `SubmitTurnPayload` (JSON).
-- **GET /api/battle/{battleId}** — состояние раунда и последний `TurnResult` (если раунд только что завершился). Ответ: `roundIndex`, `roundDuration`, `roundTimeLeft`, `turnResult?` (внутри `roundResolveReason`: `allSubmitted` — все сдали ход до таймера; `timerExpired` — время вышло), `participants` — массив `{ playerId, hasSubmitted, endedTurnEarly }` по участникам боя, `allSubmittedThisRound` — все уже отправили ход в текущем раунде. Раунд **сразу** переходит к следующему, когда **все** сдали ход; таймер не ждёт.
+- **WebSocket `/ws/battle`** — ход и события боя. Клиент шлёт `submitTurn`, сервер отвечает `submitAck`, а после закрытия раунда пушит `roundResolved` с `turnResult`, `roundIndex` и `roundDeadlineUtcMs`.
+- **GET /api/battle/{battleId}** — состояние раунда для отладки. Ответ: `roundIndex`, `roundDuration`, `roundTimeLeft`, `roundDeadlineUtcMs`, `turnResult?`, `participants`, `allSubmittedThisRound`. Для UI таймера ориентируйтесь на `roundDeadlineUtcMs`, а не на перезапуск локальных `30` секунд.
 - **POST /api/battle/{battleId}/leave?playerId=P1** — игрок вышел (закрыл клиент или сцену). Если ждал в очереди один — комната удаляется из очереди. Если бой уже идёт — комната удаляется, таймер раунда больше не тикает; второй клиент при опросе получит 404.
 
 ## Стартовые позиции
@@ -50,4 +50,4 @@ dotnet run
 
 ## Unity
 
-В сцене: объект с `BattleServerConnection` (URL сервера), ссылка на `GameSession`. У `GameSession` включить Is Online Mode и указать ссылку на `BattleServerConnection`. При старте игры вызывается Join; при завершении хода — Submit; в фоне — опрос GET для получения TurnResult.
+В сцене: объект с `BattleServerConnection` (URL сервера), ссылка на `GameSession`. У `GameSession` включить Is Online Mode и указать ссылку на `BattleServerConnection`. При старте игры вызывается Join; при завершении хода клиент шлёт `submitTurn` по WebSocket; итог раунда приходит по `roundResolved`.

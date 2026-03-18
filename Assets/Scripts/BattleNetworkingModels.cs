@@ -71,14 +71,14 @@ public class WsSubmitAckMsg
     public int expectedRound;
 }
 
-/// <summary>Пуш по WebSocket после закрытия раунда (turnResult + новый roundIndex/timeLeft).</summary>
+/// <summary>Пуш по WebSocket после закрытия раунда (turnResult + новый roundIndex + UTC deadline следующего раунда).</summary>
 [Serializable]
 public class BattleRoundWsPush
 {
     public string type;
     public TurnResultPayload turnResult;
     public int roundIndex;
-    public float roundTimeLeft;
+    public long roundDeadlineUtcMs;
 }
 
 /// <summary>Ответ сервера (Server → Client): TurnResult.</summary>
@@ -118,7 +118,8 @@ public class BattleStartedPayload
     public string playerId;
     public BattlePlayerInfo[] players;
     public float roundDuration;
-    /// <summary>Спавн для JsonUtility (параллельные массивы).</summary>
+    public long roundDeadlineUtcMs;
+    /// <summary>Спавн для JsonUtility (параллельные массивы): локальный playerId и все прочие entity ids, включая мобов.</summary>
     public string[] spawnPlayerIds;
     public int[] spawnCols;
     public int[] spawnRows;

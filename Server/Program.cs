@@ -37,7 +37,7 @@ BattleRoom.RoundClosedForPush += room =>
     var battleId = room.BattleId;
     var turn = room.LastTurnResult;
     var nextRi = room.RoundIndex;
-    var rtl = room.RoundTimeLeft;
+    var roundDeadlineUtcMs = room.RoundDeadlineUtcMs;
     _ = Task.Run(async () =>
     {
         try
@@ -47,7 +47,7 @@ BattleRoom.RoundClosedForPush += room =>
                 type = BattleWsProtocol.TypeRoundResolved,
                 turnResult = turn,
                 roundIndex = nextRi,
-                roundTimeLeft = rtl
+                roundDeadlineUtcMs
             }, jsonOpt);
             await BattleWebSocketRegistry.BroadcastTextAsync(battleId, wsPayload);
             Console.WriteLine($"[tzInfo] Round push (ws): battleId={battleId}, resolvedRound={turn.RoundIndex}, nextRound={nextRi}");
@@ -200,6 +200,7 @@ app.MapGet("/api/battle/{battleId}", (string battleId, BattleRoomStore s) =>
         RoundIndex = room.RoundIndex,
         RoundDuration = BattleRoom.RoundDuration,
         RoundTimeLeft = room.RoundTimeLeft,
+        RoundDeadlineUtcMs = room.RoundDeadlineUtcMs,
         TurnResult = null,
         Participants = room.BuildParticipantStatuses(),
         AllSubmittedThisRound = room.Submissions.Count >= room.Players.Count && room.Players.Count > 0,
@@ -246,6 +247,7 @@ public class BattleStateResponse
     public int RoundIndex { get; set; }
     public float RoundDuration { get; set; }
     public float RoundTimeLeft { get; set; }
+    public long RoundDeadlineUtcMs { get; set; }
     public TurnResultPayloadDto? TurnResult { get; set; }
     public BattleParticipantStatusDto[]? Participants { get; set; }
     public bool AllSubmittedThisRound { get; set; }

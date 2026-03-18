@@ -8,8 +8,10 @@ public class BattleRoom
     public string BattleId { get; }
     public const float RoundDuration = 30f;
     public const int MaxAp = 100;
+    public const int MobMaxAp = 75;
     public int RoundIndex { get; set; }
     public float RoundTimeLeft { get; set; }
+    public long RoundDeadlineUtcMs { get; set; }
     public bool RoundInProgress { get; set; }
 
     /// <summary>Флаг: бой создан как одиночный (1 игрок + серверный моб), а не матчмейкинг 1v1.</summary>
@@ -60,12 +62,204 @@ public class BattleRoom
         return GetStepCost(fromStepIndex + steps) - GetStepCost(fromStepIndex);
     }
 
+    private static int GetUnitMaxAp(UnitType unitType) =>
+        unitType == UnitType.Mob ? MobMaxAp : MaxAp;
+
+    private static int GetUnitRoundStartAp(UnitType unitType, float penaltyFraction) =>
+        unitType == UnitType.Mob
+            ? MobMaxAp
+            : Math.Max(0, (int)Math.Round(MaxAp * (1.0 - penaltyFraction)));
+
+    private static int GetMaxReachableSteps(int currentAp)
+    {
+        int maxSteps = 0;
+        for (int steps = 1; ; steps++)
+        {
+            if (GetMoveCost(0, steps) > currentAp)
+                break;
+            maxSteps = steps;
+        }
+        return maxSteps;
+    }
+
+    private static IEnumerable<(int col, int row)> EnumerateNeighbors(int col, int row)
+    {
+        for (int dir = 0; dir < 6; dir++)
+        {
+            HexSpawn.GetNeighbor(col, row, dir, out int nc, out int nr);
+            if (nc < 0 || nr < 0 || nc >= HexSpawn.DefaultGridWidth || nr >= HexSpawn.DefaultGridLength)
+                continue;
+            yield return (nc, nr);
+        }
+    }
+
+    private static List<((int col, int row) pos, int targetIndex)> BuildPursuitTargets(HexPositionDto[] targetPath)
+    {
+        var targets = new List<((int col, int row), int)>();
+        var seen = new HashSet<(int col, int row)>();
+        if (targetPath == null || targetPath.Length == 0)
+            return targets;
+
+        for (int i = 0; i < targetPath.Length - 1; i++)
+        {
+            var pos = (targetPath[i].Col, targetPath[i].Row);
+            if (seen.Add(pos))
+                targets.Add((pos, i));
+        }
+
+        var finalPos = (targetPath[^1].Col, targetPath[^1].Row);
+        foreach (var neighbor in EnumerateNeighbors(finalPos.Item1, finalPos.Item2))
+        {
+            if (seen.Add(neighbor))
+                targets.Add((neighbor, targetPath.Length - 1));
+        }
+
+        // Fallback для неожиданного пустого набора целей.
+        if (targets.Count == 0)
+        {
+            foreach (var neighbor in EnumerateNeighbors(finalPos.Item1, finalPos.Item2))
+            {
+                if (seen.Add(neighbor))
+                    targets.Add((neighbor, targetPath.Length - 1));
+            }
+        }
+
+        return targets;
+    }
+
+    private static ((int col, int row) endCell, Dictionary<(int col, int row), (int col, int row)> prev)? FindBestReachablePursuitCell(
+        UnitStateDto mob,
+        HexPositionDto[] targetPath)
+    {
+        var pursuitTargets = BuildPursuitTargets(targetPath);
+        if (pursuitTargets.Count == 0)
+            return null;
+
+        int maxSteps = GetMaxReachableSteps(mob.CurrentAp);
+        var start = (mob.Col, mob.Row);
+        var queue = new Queue<((int col, int row) pos, int steps)>();
+        var visited = new HashSet<(int col, int row)> { start };
+        var prev = new Dictionary<(int col, int row), (int col, int row)>();
+
+        queue.Enqueue((start, 0));
+
+        (int distanceToTarget, int targetIndex, int stepsUsed)? bestScore = null;
+        (int col, int row) bestCell = start;
+
+        while (queue.Count > 0)
+        {
+            var (cell, stepsUsed) = queue.Dequeue();
+
+            foreach (var target in pursuitTargets)
+            {
+                int distance = HexSpawn.HexDistance(cell.col, cell.row, target.pos.col, target.pos.row);
+                var score = (distance, target.targetIndex, stepsUsed);
+                if (bestScore == null
+                    || score.distance < bestScore.Value.distanceToTarget
+                    || (score.distance == bestScore.Value.distanceToTarget && score.targetIndex > bestScore.Value.targetIndex)
+                    || (score.distance == bestScore.Value.distanceToTarget && score.targetIndex == bestScore.Value.targetIndex && score.stepsUsed < bestScore.Value.stepsUsed))
+                {
+                    bestScore = score;
+                    bestCell = cell;
+                }
+            }
+
+            if (stepsUsed >= maxSteps)
+                continue;
+
+            foreach (var neighbor in EnumerateNeighbors(cell.col, cell.row))
+            {
+                if (!visited.Add(neighbor))
+                    continue;
+                prev[neighbor] = cell;
+                queue.Enqueue((neighbor, stepsUsed + 1));
+            }
+        }
+
+        return (bestCell, prev);
+    }
+
+    private static HexPositionDto[] BuildMobChasePath(UnitStateDto mob, HexPositionDto[] targetPath)
+    {
+        var path = new List<HexPositionDto>
+        {
+            new() { Col = mob.Col, Row = mob.Row }
+        };
+
+        if (targetPath == null || targetPath.Length == 0)
+            return path.ToArray();
+
+        var pursuit = FindBestReachablePursuitCell(mob, targetPath);
+        if (pursuit == null)
+            return path.ToArray();
+
+        var (endCell, prev) = pursuit.Value;
+        if (endCell.col == mob.Col && endCell.row == mob.Row)
+            return path.ToArray();
+
+        var reverse = new List<(int col, int row)>();
+        var cursor = endCell;
+        while (cursor != (mob.Col, mob.Row))
+        {
+            reverse.Add(cursor);
+            if (!prev.TryGetValue(cursor, out cursor))
+                break;
+        }
+
+        reverse.Reverse();
+        foreach (var step in reverse)
+            path.Add(new HexPositionDto { Col = step.col, Row = step.row });
+
+        return path.ToArray();
+    }
+
+    private static HexPositionDto[] LimitPathByAvailableAp(UnitStateDto unit, HexPositionDto[]? rawPath)
+    {
+        var start = new HexPositionDto { Col = unit.Col, Row = unit.Row };
+        if (rawPath == null || rawPath.Length == 0)
+            return new[] { start };
+
+        var limited = new List<HexPositionDto> { start };
+        int maxSteps = GetMaxReachableSteps(unit.CurrentAp);
+        int stepsAdded = 0;
+
+        for (int i = 1; i < rawPath.Length && stepsAdded < maxSteps; i++)
+        {
+            limited.Add(new HexPositionDto { Col = rawPath[i].Col, Row = rawPath[i].Row });
+            stepsAdded++;
+        }
+
+        return limited.ToArray();
+    }
+
     public BattleRoom(string battleId)
     {
         BattleId = battleId;
     }
 
-    /// <summary>Сгенерировать команды для всех мобов в текущем раунде (простой ИИ «догнать ближайшего игрока»).</summary>
+    private static long GetUtcNowMs() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+
+    private void ResetRoundTimer()
+    {
+        RoundDeadlineUtcMs = GetUtcNowMs() + (long)Math.Round(RoundDuration * 1000f);
+        RoundTimeLeft = RoundDuration;
+    }
+
+    private void RefreshRoundTimeLeft()
+    {
+        if (RoundDeadlineUtcMs <= 0)
+        {
+            RoundTimeLeft = 0f;
+            return;
+        }
+
+        long remainingMs = RoundDeadlineUtcMs - GetUtcNowMs();
+        RoundTimeLeft = Math.Max(0f, remainingMs / 1000f);
+    }
+
+    /// <summary>Сгенерировать команды для всех мобов в текущем раунде.
+    /// Моб строит маршрут по траектории ближайшего игрока в этом же раунде, чтобы догонять не старую позицию, а движение цели.
+    /// </summary>
     private void EnsureMobCommandsForCurrentRound()
     {
         var playerUnits = Units.Values.Where(u => u.UnitType == UnitType.Player).ToList();
@@ -73,41 +267,18 @@ public class BattleRoom
 
         foreach (var mob in Units.Values.Where(u => u.UnitType == UnitType.Mob))
         {
-            if (UnitCommands.ContainsKey(mob.UnitId))
-                continue; // уже есть команда
-
             // ближайший игрок по hex-distance
             var target = playerUnits
                 .OrderBy(p => HexSpawn.HexDistance(mob.Col, mob.Row, p.Col, p.Row))
                 .First();
 
-            int bestCol = mob.Col;
-            int bestRow = mob.Row;
-            int bestDist = HexSpawn.HexDistance(mob.Col, mob.Row, target.Col, target.Row);
+            HexPositionDto[] targetPath;
+            if (UnitCommands.TryGetValue(target.UnitId, out var targetCommand) && targetCommand.Path != null && targetCommand.Path.Length > 0)
+                targetPath = LimitPathByAvailableAp(target, targetCommand.Path);
+            else
+                targetPath = new[] { new HexPositionDto { Col = target.Col, Row = target.Row } };
 
-            for (int dir = 0; dir < 6; dir++)
-            {
-                HexSpawn.GetNeighbor(mob.Col, mob.Row, dir, out int nc, out int nr);
-                if (nc < 0 || nr < 0 || nc >= HexSpawn.DefaultGridWidth || nr >= HexSpawn.DefaultGridLength)
-                    continue;
-
-                int d = HexSpawn.HexDistance(nc, nr, target.Col, target.Row);
-                if (d < bestDist)
-                {
-                    bestDist = d;
-                    bestCol = nc;
-                    bestRow = nr;
-                }
-            }
-
-            // путь моба: от текущей клетки к лучшему соседу (или остаться на месте)
-            var path = (bestCol == mob.Col && bestRow == mob.Row)
-                ? new[] { new HexPositionDto { Col = mob.Col, Row = mob.Row } }
-                : new[]
-                  {
-                      new HexPositionDto { Col = mob.Col, Row = mob.Row },
-                      new HexPositionDto { Col = bestCol, Row = bestRow }
-                  };
+            var path = BuildMobChasePath(mob, targetPath);
 
             UnitCommands[mob.UnitId] = new UnitCommandDto
             {
@@ -162,7 +333,7 @@ public class BattleRoom
                     UnitType = UnitType.Mob,
                     Col = mobCol,
                     Row = mobRow,
-                    CurrentAp = MaxAp,
+                    CurrentAp = MobMaxAp,
                     PenaltyFraction = 0f
                 };
             }
@@ -173,7 +344,7 @@ public class BattleRoom
     {
         EnsureUnitsInitialized();
         RoundIndex = 0;
-        RoundTimeLeft = RoundDuration;
+        ResetRoundTimer();
         RoundInProgress = true;
         Submissions.Clear();
         SubmissionOrder.Clear();
@@ -205,7 +376,7 @@ public class BattleRoom
                 {
                     Col = col,
                     Row = row,
-                    CurrentAp = MaxAp,
+                    CurrentAp = GetUnitRoundStartAp(UnitType.Player, 0f),
                     PenaltyFraction = 0f
                 };
             }
@@ -226,14 +397,29 @@ public class BattleRoom
 
     public void FillSpawnArrays(out string[] ids, out int[] cols, out int[] rows)
     {
-        var list = ParticipantIds.Where(Players.ContainsKey).ToList();
-        ids = list.Select(p => p).ToArray();
-        cols = list.Select(p => Players[p].col).ToArray();
-        rows = list.Select(p => Players[p].row).ToArray();
+        EnsureUnitsInitialized();
+
+        var items = new List<(string id, int col, int row)>();
+
+        foreach (var playerId in ParticipantIds.Where(Players.ContainsKey))
+        {
+            if (PlayerToUnitId.TryGetValue(playerId, out var unitId) && Units.TryGetValue(unitId, out var unit))
+                items.Add((playerId, unit.Col, unit.Row));
+            else
+                items.Add((playerId, Players[playerId].col, Players[playerId].row));
+        }
+
+        foreach (var unit in Units.Values.Where(u => u.UnitType == UnitType.Mob))
+            items.Add((unit.UnitId, unit.Col, unit.Row));
+
+        ids = items.Select(x => x.id).ToArray();
+        cols = items.Select(x => x.col).ToArray();
+        rows = items.Select(x => x.row).ToArray();
     }
 
     public BattleStartedPayloadDto BuildBattleStartedFor(string playerId)
     {
+        EnsureUnitsInitialized();
         var players = Players.Select(p => new BattlePlayerInfoDto
         {
             PlayerId = p.Key,
@@ -247,6 +433,7 @@ public class BattleRoom
             PlayerId = playerId,
             Players = players,
             RoundDuration = RoundDuration,
+            RoundDeadlineUtcMs = RoundDeadlineUtcMs,
             SpawnPlayerIds = sid,
             SpawnCols = sc,
             SpawnRows = sr
@@ -274,7 +461,7 @@ public class BattleRoom
                     UnitType = UnitType.Player,
                     Col = pos.col,
                     Row = pos.row,
-                    CurrentAp = MaxAp,
+                    CurrentAp = GetUnitRoundStartAp(UnitType.Player, 0f),
                     PenaltyFraction = 0f
                 };
             }
@@ -289,6 +476,7 @@ public class BattleRoom
 
         Submissions[payload.PlayerId] = payload;
         SubmissionOrder.Add(payload.PlayerId);
+        RefreshRoundTimeLeft();
         if (RoundTimeLeft > 0.01f)
             EndedTurnEarlyThisRound[payload.PlayerId] = true;
 
@@ -352,7 +540,7 @@ public class BattleRoom
 
             if (UnitCommands.TryGetValue(uid, out var cmd) && cmd.Path != null && cmd.Path.Length > 0)
             {
-                paths[uid] = cmd.Path;
+                paths[uid] = LimitPathByAvailableAp(us, cmd.Path);
             }
             else
             {
@@ -457,13 +645,13 @@ public class BattleRoom
                     UnitType = UnitType.Player,
                     Col = final.col,
                     Row = final.row,
-                    CurrentAp = MaxAp,
+                    CurrentAp = GetUnitRoundStartAp(UnitType.Player, 0f),
                     PenaltyFraction = 0f
                 };
             }
 
-            float newPenalty = us.PenaltyFraction;
-            if (stepsTaken > 0 && us.CurrentAp >= apSpent)
+            float newPenalty = us.UnitType == UnitType.Mob ? 0f : us.PenaltyFraction;
+            if (us.UnitType != UnitType.Mob && stepsTaken > 0 && us.CurrentAp >= apSpent)
             {
                 int n = 0;
                 while (GetStepCost(n + 1) <= MaxAp) n++;
@@ -476,16 +664,20 @@ public class BattleRoom
                 }
             }
 
-            int nPen = 0;
-            while (GetStepCost(nPen + 1) <= MaxAp) nPen++;
-            int lastStepCost = nPen >= 1 ? GetStepCost(nPen) : 0;
-            int prelastStepCost = nPen >= 2 ? GetStepCost(nPen - 1) : 0;
-            bool endedOnPenaltyHex = apSpent == prelastStepCost || apSpent == lastStepCost;
-            const float recoveryFraction = 0.05f;
-            if (!endedOnPenaltyHex)
-                newPenalty = Math.Max(0f, newPenalty - recoveryFraction);
-            newPenalty = Math.Min(0.9f, newPenalty);
-            int nextRoundAp = Math.Max(0, (int)Math.Round(MaxAp * (1.0 - newPenalty)));
+            if (us.UnitType != UnitType.Mob)
+            {
+                int nPen = 0;
+                while (GetStepCost(nPen + 1) <= MaxAp) nPen++;
+                int lastStepCost = nPen >= 1 ? GetStepCost(nPen) : 0;
+                int prelastStepCost = nPen >= 2 ? GetStepCost(nPen - 1) : 0;
+                bool endedOnPenaltyHex = apSpent == prelastStepCost || apSpent == lastStepCost;
+                const float recoveryFraction = 0.05f;
+                if (!endedOnPenaltyHex)
+                    newPenalty = Math.Max(0f, newPenalty - recoveryFraction);
+                newPenalty = Math.Min(0.9f, newPenalty);
+            }
+
+            int nextRoundAp = GetUnitRoundStartAp(us.UnitType, newPenalty);
 
             // Обновляем Units (серверное состояние) для следующего раунда.
             us.Col = final.col;
@@ -521,7 +713,7 @@ public class BattleRoom
         };
 
         RoundIndex++;
-        RoundTimeLeft = RoundDuration;
+        ResetRoundTimer();
         Submissions.Clear();
         SubmissionOrder.Clear();
         EndedTurnEarlyThisRound.Clear();
@@ -537,7 +729,7 @@ public class BattleRoom
     public void Tick(float deltaSeconds)
     {
         if (!RoundInProgress) return;
-        RoundTimeLeft -= deltaSeconds;
+        RefreshRoundTimeLeft();
         if (RoundTimeLeft <= 0)
         {
             RoundTimeLeft = 0;
