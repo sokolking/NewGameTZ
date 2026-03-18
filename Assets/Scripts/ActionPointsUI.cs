@@ -2,7 +2,6 @@ using UnityEngine;
 using UnityEngine.UI;
 using UnityEngine.InputSystem;
 using System.Collections.Generic;
-using UnityEngine.EventSystems;
 
 /// <summary>
 /// UI для отображения очков действия и кнопки \"Закончить ход\".
@@ -32,11 +31,9 @@ public class ActionPointsUI : MonoBehaviour
     [Header("Миникарта")]
     [SerializeField] private RectTransform _miniMapPanel;
     [Tooltip("Максимальный размер миникарты. Фактический размер подстраивается под пропорции поля.")]
-    // Не сериализуем: иначе сцена хранит старый размер и изменения в коде не видны в Play Mode.
     private Vector2 _miniMapSize = new Vector2(182f, 98f);
     [SerializeField] private Vector2 _miniMapMargin = new Vector2(16f, 16f);
     private float _miniMapPadding = 4f;
-    // Не сериализуем по той же причине, что и размер панели.
     private float _miniMapMarkerSize = 7f;
     [SerializeField] private Color _miniMapPlayerColor = Color.white;
     [SerializeField] private Color _miniMapEnemyColor = Color.red;
@@ -47,7 +44,6 @@ public class ActionPointsUI : MonoBehaviour
     private readonly System.Collections.Generic.Queue<string> _logLines = new System.Collections.Generic.Queue<string>();
     private readonly Dictionary<string, Image> _miniMapRemoteMarkers = new();
     private Image _miniMapLocalMarker;
-    private MiniMapClickHandler _miniMapClickHandler;
     private static Sprite _miniMapCircleSprite;
 
     private void Awake()
@@ -248,16 +244,7 @@ public class ActionPointsUI : MonoBehaviour
 
             Image bg = panelGo.GetComponent<Image>();
             bg.color = new Color(0f, 0f, 0f, 0.55f);
-            bg.raycastTarget = true;
-        }
-
-        if (_miniMapClickHandler == null && _miniMapPanel != null)
-        {
-            _miniMapClickHandler = _miniMapPanel.GetComponent<MiniMapClickHandler>();
-            if (_miniMapClickHandler == null)
-                _miniMapClickHandler = _miniMapPanel.gameObject.AddComponent<MiniMapClickHandler>();
-            _miniMapClickHandler.Clicked -= HandleMiniMapClicked;
-            _miniMapClickHandler.Clicked += HandleMiniMapClicked;
+            bg.raycastTarget = false;
         }
 
         if (_miniMapLocalMarker == null)
@@ -403,13 +390,12 @@ public class ActionPointsUI : MonoBehaviour
         if (grid == null || cam == null || grid.Width <= 0 || grid.Length <= 0)
             return false;
 
-        grid.GetGridBoundsWorld(out float worldMinX, out float worldMaxX, out float worldMinZ, out float worldMaxZ);
         Vector2[] points =
         {
-            ProjectToViewport(cam, new Vector3(worldMinX, 0f, worldMinZ)),
-            ProjectToViewport(cam, new Vector3(worldMinX, 0f, worldMaxZ)),
-            ProjectToViewport(cam, new Vector3(worldMaxX, 0f, worldMinZ)),
-            ProjectToViewport(cam, new Vector3(worldMaxX, 0f, worldMaxZ)),
+            ProjectToViewport(cam, grid.GetCellWorldPosition(0, 0)),
+            ProjectToViewport(cam, grid.GetCellWorldPosition(0, grid.Length - 1)),
+            ProjectToViewport(cam, grid.GetCellWorldPosition(grid.Width - 1, 0)),
+            ProjectToViewport(cam, grid.GetCellWorldPosition(grid.Width - 1, grid.Length - 1)),
         };
 
         float minViewX = float.MaxValue;
@@ -436,44 +422,6 @@ public class ActionPointsUI : MonoBehaviour
     {
         Vector3 viewport = cam.WorldToViewportPoint(worldPosition);
         return new Vector2(viewport.x, viewport.y);
-    }
-
-    private void HandleMiniMapClicked(PointerEventData eventData)
-    {
-        if (_miniMapPanel == null || eventData == null)
-            return;
-
-        Player local = _gameSession != null ? _gameSession.LocalPlayer : null;
-        HexGrid grid = local != null ? local.Grid : FindFirstObjectByType<HexGrid>();
-        if (grid == null)
-            return;
-
-        Camera miniMapCamera = ResolveMiniMapCamera();
-        HexGridCamera gridCamera = miniMapCamera != null ? miniMapCamera.GetComponent<HexGridCamera>() : null;
-        if (miniMapCamera == null || gridCamera == null)
-            return;
-
-        if (!RectTransformUtility.ScreenPointToLocalPointInRectangle(_miniMapPanel, eventData.position, eventData.pressEventCamera, out Vector2 localPoint))
-            return;
-
-        Rect rect = _miniMapPanel.rect;
-        float xNorm = Mathf.Clamp01((localPoint.x - rect.xMin) / Mathf.Max(1f, rect.width));
-        float yNorm = Mathf.Clamp01((localPoint.y - rect.yMin) / Mathf.Max(1f, rect.height));
-
-        if (!TryGetMiniMapViewportBounds(grid, miniMapCamera, out Vector2 minViewport, out Vector2 maxViewport))
-            return;
-
-        Vector2 targetViewport = new Vector2(
-            Mathf.Lerp(minViewport.x, maxViewport.x, xNorm),
-            Mathf.Lerp(minViewport.y, maxViewport.y, yNorm));
-
-        Ray ray = miniMapCamera.ViewportPointToRay(new Vector3(targetViewport.x, targetViewport.y, 0f));
-        Plane groundPlane = new Plane(Vector3.up, 0f);
-        if (!groundPlane.Raycast(ray, out float enter) || enter <= 0f)
-            return;
-
-        Vector3 groundPoint = ray.GetPoint(enter);
-        gridCamera.FocusOnGroundPoint(groundPoint);
     }
 
     private void UpdateMiniMapPanelLayout(int gridWidth, int gridLength)
@@ -509,7 +457,7 @@ public class ActionPointsUI : MonoBehaviour
             }
         }
 
-        _miniMapPanel.sizeDelta = new Vector2(panelWidth, panelHeight);
+        _miniMapPanel.sizeDelta = new Vector2(panelHeight, panelWidth);
     }
 
     private void SetMiniMapMarkerPosition(
