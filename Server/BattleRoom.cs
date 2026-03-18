@@ -516,8 +516,8 @@ public class BattleRoom
             };
         }
 
-        // Серверный моб: ставим далеко от P1 (для начала достаточно зеркального спавна).
-        if (Players.TryGetValue("P1", out var p1Pos))
+        // Серверный моб есть только в одиночном бою.
+        if (IsSolo && Players.TryGetValue("P1", out var p1Pos))
         {
             var (mobCol, mobRow) = HexSpawn.FindOpponentSpawn(
                 p1Pos.col,
