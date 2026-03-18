@@ -6,6 +6,27 @@
 
 Требуется .NET 8 SDK.
 
+### PostgreSQL
+
+Теперь история боёв и история ходов хранятся в **PostgreSQL**, а не в памяти процесса.
+
+Поднять локальную БД:
+
+```bash
+cd "/Users/ВАШ_ЛОГИН/My project (1)"
+docker compose up -d
+```
+
+По умолчанию сервер ждёт БД с такими параметрами:
+
+- host: `localhost`
+- port: `55432`
+- database: `battle_server`
+- user: `battle_user`
+- password: `battle_password`
+
+Строка подключения лежит в `Server/appsettings.json` и может быть переопределена через переменную окружения `BATTLE_DB_CONNECTION_STRING`.
+
 Путь к проекту с **пробелами** (например `My project (1)`) — обязательно в **кавычках**:
 
 ```bash

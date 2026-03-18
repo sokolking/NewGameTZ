@@ -129,3 +129,31 @@ public class BattleTurnRecordDto
     public string BattleId { get; set; } = "";
     public TurnResultPayloadDto TurnResult { get; set; } = new();
 }
+
+public class BattleBrowseRowDto
+{
+    public string BattleId { get; set; } = "";
+    public DateTimeOffset CreatedUtc { get; set; }
+    public int TurnCount { get; set; }
+    public string? LatestTurnId { get; set; }
+}
+
+public class BattleTurnBrowseRowDto
+{
+    public string TurnId { get; set; } = "";
+    public string BattleId { get; set; } = "";
+    public int TurnIndex { get; set; }
+    public int RoundIndex { get; set; }
+    public string RoundResolveReason { get; set; } = "";
+    public DateTimeOffset CreatedUtc { get; set; }
+}
+
+public class BattleTurnDetailDto
+{
+    public string TurnId { get; set; } = "";
+    public string BattleId { get; set; } = "";
+    public int TurnIndex { get; set; }
+    public DateTimeOffset CreatedUtc { get; set; }
+    public string RawJson { get; set; } = "";
+    public TurnResultPayloadDto TurnResult { get; set; } = new();
+}

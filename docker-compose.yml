@@ -1,0 +1,21 @@
+services:
+  battle-postgres:
+    image: postgres:16-alpine
+    container_name: battle-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: battle_server
+      POSTGRES_USER: battle_user
+      POSTGRES_PASSWORD: battle_password
+    ports:
+      - "55432:5432"
+    volumes:
+      - battle-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U battle_user -d battle_server"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  battle-postgres-data:

@@ -6,6 +6,9 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 
 var builder = WebApplication.CreateBuilder(args);
+var logStore = new BattleLogStore();
+builder.Services.AddSingleton(logStore);
+builder.Services.AddSingleton<BattlePostgresDatabase>();
 builder.Services.AddSingleton<BattleHistoryDatabase>();
 builder.Services.AddSingleton<BattleTurnDatabase>();
 builder.Services.AddSingleton<BattleRoomStore>();
@@ -13,6 +16,8 @@ builder.Services.AddCors(options =>
 {
     options.AddDefaultPolicy(p => p.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader());
 });
+Console.SetOut(new BattleLogConsoleWriter(Console.Out, logStore, isError: false));
+Console.SetError(new BattleLogConsoleWriter(Console.Error, logStore, isError: true));
 
 var app = builder.Build();
 app.UseCors();
@@ -33,6 +38,8 @@ app.Use(async (ctx, next) =>
 var jsonOpt = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 jsonOpt.Converters.Add(new JsonStringEnumConverter());
 
+var postgresDb = app.Services.GetRequiredService<BattlePostgresDatabase>();
+postgresDb.EnsureCreated();
 var battleHistoryDb = app.Services.GetRequiredService<BattleHistoryDatabase>();
 var battleTurnDb = app.Services.GetRequiredService<BattleTurnDatabase>();
 
@@ -44,13 +51,13 @@ BattleRoom.RoundClosedForPush += room =>
     var nextRi = room.RoundIndex;
     var roundDeadlineUtcMs = room.RoundDeadlineUtcMs;
     var turnId = Guid.NewGuid().ToString("N");
-    var battleRecord = battleHistoryDb.AppendTurn(battleId, turnId);
     battleTurnDb.Save(new BattleTurnRecordDto
     {
         TurnId = turnId,
         BattleId = battleId,
         TurnResult = turn
     });
+    var battleRecord = battleHistoryDb.AppendTurn(battleId, turnId);
     _ = Task.Run(async () =>
     {
         try
@@ -238,6 +245,73 @@ app.MapGet("/api/battle/{battleId}/turns/{turnId}", (string battleId, string tur
     return Results.Json(record, jsonOpt);
 });
 
+app.MapGet("/api/db/battles", (BattleHistoryDatabase db, int? take) =>
+{
+    int requested = take ?? 100;
+    return Results.Json(db.ListBattles(requested), jsonOpt);
+});
+
+app.MapGet("/api/db/battles/{battleId}/turns", (string battleId, BattleTurnDatabase db, int? take) =>
+{
+    int requested = take ?? 200;
+    return Results.Json(db.ListTurnsForBattle(battleId, requested), jsonOpt);
+});
+
+app.MapGet("/api/db/turns/{turnId}", (string turnId, BattleTurnDatabase db) =>
+{
+    var detail = db.GetTurnDetail(turnId);
+    if (detail == null)
+        return Results.Json(new { error = "Turn not found" }, statusCode: 404);
+
+    return Results.Json(detail, jsonOpt);
+});
+
+app.MapGet("/api/logs/recent", (BattleLogStore logs, int? take) =>
+{
+    int requested = take ?? 200;
+    return Results.Json(logs.GetRecent(requested), jsonOpt);
+});
+
+app.MapGet("/api/logs/stream", async (HttpContext ctx, BattleLogStore logs) =>
+{
+    ctx.Response.Headers.CacheControl = "no-cache";
+    ctx.Response.Headers.Connection = "keep-alive";
+    ctx.Response.Headers["X-Accel-Buffering"] = "no";
+    ctx.Response.ContentType = "text/event-stream";
+
+    var (subscriptionId, reader) = logs.Subscribe();
+    try
+    {
+        await ctx.Response.WriteAsync(": connected\n\n", ctx.RequestAborted);
+        await ctx.Response.Body.FlushAsync(ctx.RequestAborted);
+
+        while (!ctx.RequestAborted.IsCancellationRequested)
+        {
+            while (reader.TryRead(out var entry))
+            {
+                string json = JsonSerializer.Serialize(entry, jsonOpt);
+                await ctx.Response.WriteAsync($"data: {json}\n\n", ctx.RequestAborted);
+                await ctx.Response.Body.FlushAsync(ctx.RequestAborted);
+            }
+
+            await Task.Delay(250, ctx.RequestAborted);
+            await ctx.Response.WriteAsync(": heartbeat\n\n", ctx.RequestAborted);
+            await ctx.Response.Body.FlushAsync(ctx.RequestAborted);
+        }
+    }
+    catch (OperationCanceledException)
+    {
+        // Client disconnected.
+    }
+    finally
+    {
+        logs.Unsubscribe(subscriptionId);
+    }
+});
+
+app.MapGet("/logs", () => Results.Content(BattleLogDashboardPage.Html, "text/html; charset=utf-8"));
+app.MapGet("/db", () => Results.Content(BattleDbDashboardPage.Html, "text/html; charset=utf-8"));
+
 // POST leave — только вне игровой сцены (отмена очереди с меню; в бою выход — disconnect WS + leave по сокету).
 app.MapPost("/api/battle/{battleId}/leave", (string battleId, string playerId, BattleRoomStore s) =>
 {
@@ -291,4 +365,282 @@ public class PollResponse
     public BattleStartedPayloadDto? BattleStarted { get; set; }
     public int RoundIndex { get; set; }
     public float RoundDuration { get; set; }
+}
+
+public static class BattleLogDashboardPage
+{
+    public const string Html = """
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Battle Server Logs</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0f1117;
+      --panel: #171a22;
+      --border: #2b3140;
+      --text: #e8ecf4;
+      --muted: #9aa4b2;
+      --info: #6ea8fe;
+      --warn: #ffcc66;
+      --error: #ff6b6b;
+      --http: #6dd3a0;
+      --ws: #7aa2ff;
+      --tz: #c792ea;
+      --mob: #f78c6c;
+      --system: #7f8ea3;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+    }
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      background: rgba(15,17,23,.92);
+      backdrop-filter: blur(10px);
+      border-bottom: 1px solid var(--border);
+      padding: 14px 18px;
+    }
+    .title { margin: 0 0 12px; font-size: 20px; }
+    .controls {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .chip-row {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      padding: 6px 10px;
+      border-radius: 999px;
+      color: var(--text);
+      font-size: 13px;
+    }
+    input[type="search"] {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      color: var(--text);
+      border-radius: 10px;
+      padding: 9px 12px;
+      min-width: 280px;
+    }
+    button {
+      background: var(--panel);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 9px 12px;
+      cursor: pointer;
+    }
+    button:hover { border-color: #46506a; }
+    .status {
+      color: var(--muted);
+      font-size: 13px;
+      margin-left: auto;
+    }
+    .log-list {
+      padding: 14px 18px 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .entry {
+      display: grid;
+      grid-template-columns: 110px 72px 110px 1fr;
+      gap: 10px;
+      align-items: start;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 10px 12px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 12px;
+      line-height: 1.45;
+    }
+    .entry.hidden { display: none; }
+    .time { color: var(--muted); }
+    .level {
+      text-transform: uppercase;
+      font-weight: 700;
+      letter-spacing: .04em;
+    }
+    .level-info { color: var(--info); }
+    .level-warn { color: var(--warn); }
+    .level-error { color: var(--error); }
+    .tag {
+      display: inline-flex;
+      width: fit-content;
+      min-width: 70px;
+      justify-content: center;
+      border-radius: 999px;
+      padding: 3px 8px;
+      font-weight: 700;
+      border: 1px solid transparent;
+    }
+    .tag-http { color: var(--http); border-color: rgba(109,211,160,.3); background: rgba(109,211,160,.08); }
+    .tag-BattleWS { color: var(--ws); border-color: rgba(122,162,255,.3); background: rgba(122,162,255,.08); }
+    .tag-tzInfo { color: var(--tz); border-color: rgba(199,146,234,.3); background: rgba(199,146,234,.08); }
+    .tag-mobAI { color: var(--mob); border-color: rgba(247,140,108,.3); background: rgba(247,140,108,.08); }
+    .tag-system { color: var(--system); border-color: rgba(127,142,163,.3); background: rgba(127,142,163,.08); }
+    .message {
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .footer-note {
+      color: var(--muted);
+      font-size: 12px;
+      padding: 0 18px 18px;
+    }
+    @media (max-width: 900px) {
+      .entry {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <h1 class="title">Battle Server Logs</h1>
+    <div class="controls">
+      <input id="search" type="search" placeholder="Search logs, tags, battleId, playerId">
+      <button id="toggleScroll" type="button">Auto-scroll: on</button>
+      <button id="clear" type="button">Clear View</button>
+      <div class="chip-row">
+        <label class="chip"><input class="tag-filter" type="checkbox" value="BattleWS" checked> `BattleWS`</label>
+        <label class="chip"><input class="tag-filter" type="checkbox" value="tzInfo" checked> `tzInfo`</label>
+        <label class="chip"><input class="tag-filter" type="checkbox" value="mobAI" checked> `mobAI`</label>
+        <label class="chip"><input class="tag-filter" type="checkbox" value="http" checked> `http`</label>
+        <label class="chip"><input class="tag-filter" type="checkbox" value="system" checked> `system`</label>
+      </div>
+      <div id="status" class="status">connecting...</div>
+    </div>
+  </div>
+  <div id="logList" class="log-list"></div>
+  <div class="footer-note">Live stream via Server-Sent Events from `/api/logs/stream`.</div>
+  <script>
+    const logList = document.getElementById('logList');
+    const statusEl = document.getElementById('status');
+    const searchEl = document.getElementById('search');
+    const toggleScrollEl = document.getElementById('toggleScroll');
+    const clearEl = document.getElementById('clear');
+    const filterEls = Array.from(document.querySelectorAll('.tag-filter'));
+    const entries = [];
+    let autoScroll = true;
+
+    function activeTags() {
+      const checked = filterEls.filter(el => el.checked).map(el => el.value);
+      return new Set(checked);
+    }
+
+    function entryMatches(entry) {
+      const tags = activeTags();
+      if (!tags.has(entry.tag) && !(entry.tag === 'system' && tags.has('system')))
+        return false;
+
+      const query = searchEl.value.trim().toLowerCase();
+      if (!query)
+        return true;
+      const haystack = `${entry.tag} ${entry.level} ${entry.message} ${entry.raw}`.toLowerCase();
+      return haystack.includes(query);
+    }
+
+    function fmtTime(utc) {
+      const d = new Date(utc);
+      return d.toLocaleTimeString();
+    }
+
+    function renderEntry(entry, prepend = false) {
+      const row = document.createElement('div');
+      row.className = 'entry';
+      row.dataset.tag = entry.tag;
+      row.dataset.level = entry.level;
+      row.innerHTML = `
+        <div class="time">${fmtTime(entry.utc)}</div>
+        <div class="level level-${entry.level}">${entry.level}</div>
+        <div><span class="tag tag-${entry.tag}">${entry.tag}</span></div>
+        <div class="message"></div>
+      `;
+      row.querySelector('.message').textContent = entry.message;
+      entry.element = row;
+      if (!entryMatches(entry))
+        row.classList.add('hidden');
+
+      if (prepend && logList.firstChild)
+        logList.insertBefore(row, logList.firstChild);
+      else
+        logList.appendChild(row);
+    }
+
+    function applyFilters() {
+      for (const entry of entries)
+        entry.element.classList.toggle('hidden', !entryMatches(entry));
+    }
+
+    function addEntry(entry) {
+      entries.push(entry);
+      renderEntry(entry);
+      while (entries.length > 1500) {
+        const removed = entries.shift();
+        removed.element?.remove();
+      }
+      if (autoScroll)
+        window.scrollTo({ top: document.body.scrollHeight, behavior: 'instant' });
+    }
+
+    async function loadRecent() {
+      const resp = await fetch('/api/logs/recent?take=250');
+      const items = await resp.json();
+      for (const entry of items)
+        addEntry(entry);
+    }
+
+    function connect() {
+      const stream = new EventSource('/api/logs/stream');
+      statusEl.textContent = 'connected';
+      stream.onopen = () => statusEl.textContent = 'connected';
+      stream.onerror = () => statusEl.textContent = 'reconnecting...';
+      stream.onmessage = ev => {
+        try {
+          addEntry(JSON.parse(ev.data));
+        } catch {
+          // ignore malformed event
+        }
+      };
+    }
+
+    searchEl.addEventListener('input', applyFilters);
+    filterEls.forEach(el => el.addEventListener('change', applyFilters));
+    toggleScrollEl.addEventListener('click', () => {
+      autoScroll = !autoScroll;
+      toggleScrollEl.textContent = `Auto-scroll: ${autoScroll ? 'on' : 'off'}`;
+    });
+    clearEl.addEventListener('click', () => {
+      entries.splice(0, entries.length);
+      logList.innerHTML = '';
+    });
+
+    loadRecent().then(connect).catch(err => {
+      statusEl.textContent = 'failed to load logs';
+      console.error(err);
+    });
+  </script>
+</body>
+</html>
+""";
 }
