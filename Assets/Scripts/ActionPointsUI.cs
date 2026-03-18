@@ -26,6 +26,8 @@ public class ActionPointsUI : MonoBehaviour
     [SerializeField] private Slider _roundWaitSlider;
     [Tooltip("Секунды на один цикл заполнения бара (неопределённый прогресс).")]
     [SerializeField] private float _roundWaitBarCycleSeconds = 1.25f;
+    [Tooltip("За сколько секунд до конца live-хода автосабмитить draft, пока открыт просмотр истории.")]
+    [SerializeField] private float _historicalViewAutoSubmitLeadSeconds = 1f;
 
     [Header("Миникарта")]
     [Tooltip("Панель миникарты из Canvas.")]
@@ -36,6 +38,13 @@ public class ActionPointsUI : MonoBehaviour
     [SerializeField] private Text _miniMapTimeText;
     [Tooltip("UI Text для ОД под миникартой.")]
     [SerializeField] private Text _miniMapApText;
+    [SerializeField] private Color _miniMapTimeNormalColor = Color.white;
+    [SerializeField] private Color _miniMapTimeWarningColor = Color.red;
+    [SerializeField] private float _miniMapTimeWarningThresholdSeconds = 5f;
+    [Header("Трекинг ходов")]
+    [SerializeField] private Text _turnTrackerText;
+    [SerializeField] private Button _turnTrackerPrevButton;
+    [SerializeField] private Button _turnTrackerNextButton;
     private float _miniMapPadding = 4f;
     private float _miniMapMarkerSize = 7f;
     [SerializeField] private Color _miniMapPlayerColor = Color.white;
@@ -51,8 +60,8 @@ public class ActionPointsUI : MonoBehaviour
 
     private void Awake()
     {
-        if (_endTurnButton != null)
-            _endTurnButton.onClick.AddListener(OnEndTurnClicked);
+        AutoBindSceneReferences();
+        BindUiCallbacks();
 
         if (_roundWaitBarCycleSeconds <= 0.05f)
             _roundWaitBarCycleSeconds = 1.25f;
@@ -69,6 +78,8 @@ public class ActionPointsUI : MonoBehaviour
 
     private void Start()
     {
+        AutoBindSceneReferences();
+        BindUiCallbacks();
         EnsureMiniMap();
         if (_player != null)
             AppendLog($"Ход {_player.TurnCount + 1} начат. ОД: {_player.CurrentAp}.");
@@ -76,6 +87,10 @@ public class ActionPointsUI : MonoBehaviour
 
     private void OnDestroy()
     {
+        if (_turnTrackerPrevButton != null)
+            _turnTrackerPrevButton.onClick.RemoveListener(OnTurnTrackerPrevClicked);
+        if (_turnTrackerNextButton != null)
+            _turnTrackerNextButton.onClick.RemoveListener(OnTurnTrackerNextClicked);
         GameSession.OnNetworkMessage -= AppendLog;
         GameSession.OnSubmitTurnDeliveredToServer -= ShowRoundWaitAfterSubmitDelivered;
         GameSession.OnWebSocketRoundPushReceived -= HideRoundWaitPanel;
@@ -97,7 +112,23 @@ public class ActionPointsUI : MonoBehaviour
             ? "--:--"
             : FormatRoundTime(_player.TurnTimeLeft);
         UpdateMiniMapStats(timerStr, _player.CurrentAp);
+        UpdateTurnTrackerUi();
         UpdateMiniMap();
+
+        bool isViewingHistory = _gameSession != null && (_gameSession.IsViewingHistoricalTurn || _gameSession.IsTurnHistoryReplayPlaying);
+        if (isViewingHistory && !_roundWaitVisible && _gameSession != null && !_gameSession.IsWaitingForServerRoundResolve)
+        {
+            float leadTime = Mathf.Max(0.05f, _historicalViewAutoSubmitLeadSeconds);
+            if (_player.TurnTimeLeft <= leadTime)
+            {
+                if (_gameSession.TryAutoSubmitTimedOutLiveTurn(animateResolvedRound: true))
+                {
+                    ShowRoundWaitPanel();
+                    AppendLog("Время live-хода почти истекло. Отправка текущего хода на сервер…");
+                }
+            }
+        }
+
         if (Keyboard.current == null) return;
 
         if (_roundWaitVisible) return;
@@ -108,7 +139,18 @@ public class ActionPointsUI : MonoBehaviour
             TryEndTurn(animate: true);
 
         if (_player.TurnTimeExpired)
-            TryEndTurn(animate: true);
+        {
+            if (_gameSession != null && isViewingHistory)
+            {
+                if (_gameSession.TryAutoSubmitTimedOutLiveTurn(animateResolvedRound: true))
+                {
+                    ShowRoundWaitPanel();
+                    AppendLog("Время хода истекло. Отправка текущего хода на сервер…");
+                }
+            }
+            else
+                TryEndTurn(animate: true);
+        }
     }
 
     private void OnEndTurnClicked()
@@ -121,10 +163,24 @@ public class ActionPointsUI : MonoBehaviour
     {
         if (_player == null) return;
         if (_endTurnInProgress) return;
-        if (_player.IsMoving) return;
-        if (_gameSession != null && _gameSession.IsBattleAnimationPlaying) return;
         if (_roundWaitVisible) return;
         if (_gameSession != null && _gameSession.IsWaitingForServerRoundResolve) return;
+
+        bool isViewingHistory = _gameSession != null && (_gameSession.IsViewingHistoricalTurn || _gameSession.IsTurnHistoryReplayPlaying);
+        if (isViewingHistory)
+        {
+            _endTurnInProgress = true;
+            if (_gameSession.TrySubmitCurrentLiveTurnDraft(animate))
+            {
+                ShowRoundWaitPanel();
+                AppendLog("Отправка текущего хода на сервер…");
+            }
+            _endTurnInProgress = false;
+            return;
+        }
+
+        if (_player.IsMoving) return;
+        if (_gameSession != null && _gameSession.IsBattleAnimationPlaying) return;
 
         _endTurnInProgress = true;
 
@@ -207,6 +263,18 @@ public class ActionPointsUI : MonoBehaviour
         _gameSession.SubmitTurnLocal(path, _player.ApSpentThisTurn, _player.StepsTakenThisTurn, _gameSession.ServerRoundIndexForSubmit);
     }
 
+    private void OnTurnTrackerPrevClicked()
+    {
+        _gameSession?.TryStepViewedTurn(-1);
+        UpdateTurnTrackerUi();
+    }
+
+    private void OnTurnTrackerNextClicked()
+    {
+        _gameSession?.TryStepViewedTurn(1);
+        UpdateTurnTrackerUi();
+    }
+
     private void HandlePlayerMoved(HexCell cell)
     {
         if (cell == null) return;
@@ -225,6 +293,7 @@ public class ActionPointsUI : MonoBehaviour
 
     private void EnsureMiniMap()
     {
+        AutoBindSceneReferences();
         if (_miniMapPanel == null || _miniMapStatsPanel == null || _miniMapTimeText == null || _miniMapApText == null)
             return;
 
@@ -294,9 +363,33 @@ public class ActionPointsUI : MonoBehaviour
             return;
 
         if (_miniMapTimeText != null)
+        {
             _miniMapTimeText.text = timerText;
+            bool isWarning = _player != null
+                && _player.TurnTimeLeft <= Mathf.Max(0f, _miniMapTimeWarningThresholdSeconds)
+                && (_gameSession == null || !_gameSession.IsWaitingForServerRoundResolve);
+            _miniMapTimeText.color = isWarning ? _miniMapTimeWarningColor : _miniMapTimeNormalColor;
+        }
         if (_miniMapApText != null)
             _miniMapApText.text = $"ОД {currentAp}";
+    }
+
+    private void UpdateTurnTrackerUi()
+    {
+        AutoBindSceneReferences();
+        int displayedTurn = 1;
+        if (_gameSession != null)
+            displayedTurn = Mathf.Max(1, _gameSession.DisplayedTurnNumber);
+        else if (_player != null)
+            displayedTurn = _player.TurnCount + 1;
+
+        if (_turnTrackerText != null)
+            _turnTrackerText.text = $"Ход {displayedTurn}";
+
+        if (_turnTrackerPrevButton != null)
+            _turnTrackerPrevButton.interactable = _gameSession != null && _gameSession.CanViewPreviousTurn;
+        if (_turnTrackerNextButton != null)
+            _turnTrackerNextButton.interactable = _gameSession != null && _gameSession.CanViewNextTurn;
     }
 
     private void UpdateMiniMap()
@@ -443,5 +536,93 @@ public class ActionPointsUI : MonoBehaviour
         int minutes = totalSeconds / 60;
         int seconds = totalSeconds % 60;
         return $"{minutes:00}:{seconds:00}";
+    }
+
+    private void AutoBindSceneReferences()
+    {
+        if (_player == null)
+            _player = FindFirstObjectByType<Player>();
+        if (_gameSession == null)
+            _gameSession = FindFirstObjectByType<GameSession>();
+
+        Transform frontContent = FindNamedTransform("Front Content Maker");
+        if (frontContent == null)
+            return;
+
+        if (_miniMapPanel == null)
+            _miniMapPanel = FindChildComponent<RectTransform>(frontContent, "MiniMapPanel");
+        if (_miniMapStatsPanel == null)
+            _miniMapStatsPanel = FindChildComponent<RectTransform>(frontContent, "MiniMapStatsPanel");
+        if (_miniMapTimeText == null)
+            _miniMapTimeText = FindChildComponent<Text>(frontContent, "MiniMapTimeText");
+        if (_miniMapApText == null)
+            _miniMapApText = FindChildComponent<Text>(frontContent, "MiniMapApText");
+        if (_turnTrackerText == null)
+            _turnTrackerText = FindChildComponent<Text>(frontContent, "TurnTrackerText");
+        if (_turnTrackerPrevButton == null)
+            _turnTrackerPrevButton = FindChildComponent<Button>(frontContent, "TurnTrackerPrevButton");
+        if (_turnTrackerNextButton == null)
+            _turnTrackerNextButton = FindChildComponent<Button>(frontContent, "TurnTrackerNextButton");
+    }
+
+    private void BindUiCallbacks()
+    {
+        if (_endTurnButton != null)
+        {
+            _endTurnButton.onClick.RemoveListener(OnEndTurnClicked);
+            _endTurnButton.onClick.AddListener(OnEndTurnClicked);
+        }
+
+        if (_turnTrackerPrevButton != null)
+        {
+            _turnTrackerPrevButton.onClick.RemoveListener(OnTurnTrackerPrevClicked);
+            _turnTrackerPrevButton.onClick.AddListener(OnTurnTrackerPrevClicked);
+        }
+
+        if (_turnTrackerNextButton != null)
+        {
+            _turnTrackerNextButton.onClick.RemoveListener(OnTurnTrackerNextClicked);
+            _turnTrackerNextButton.onClick.AddListener(OnTurnTrackerNextClicked);
+        }
+    }
+
+    private static T FindChildComponent<T>(Transform root, string childName) where T : Component
+    {
+        Transform child = FindNamedTransform(childName, root);
+        return child != null ? child.GetComponent<T>() : null;
+    }
+
+    private static Transform FindNamedTransform(string objectName)
+    {
+        return FindNamedTransform(objectName, null);
+    }
+
+    private static Transform FindNamedTransform(string objectName, Transform root)
+    {
+        if (string.IsNullOrEmpty(objectName))
+            return null;
+
+        if (root != null)
+        {
+            foreach (Transform child in root.GetComponentsInChildren<Transform>(true))
+            {
+                if (child != null && child.name == objectName)
+                    return child;
+            }
+
+            return null;
+        }
+
+        foreach (Transform candidate in Resources.FindObjectsOfTypeAll<Transform>())
+        {
+            if (candidate == null || candidate.hideFlags != HideFlags.None)
+                continue;
+            if (!candidate.gameObject.scene.IsValid())
+                continue;
+            if (candidate.name == objectName)
+                return candidate;
+        }
+
+        return null;
     }
 }

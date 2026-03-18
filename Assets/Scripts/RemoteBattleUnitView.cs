@@ -81,4 +81,9 @@ public class RemoteBattleUnitView : MonoBehaviour
 
         _isMoving = false;
     }
+
+    public void ForceStopMovement()
+    {
+        _isMoving = false;
+    }
 }

@@ -6,10 +6,18 @@ namespace BattleServer;
 public class BattleRoomStore
 {
     private readonly object _lock = new();
+    private readonly BattleHistoryDatabase _battleHistoryDb;
+    private readonly BattleTurnDatabase _battleTurnDb;
     /// <summary>Очередь ожидающих (один игрок). Как только второй присоединился — создаём бой из двух.</summary>
     private string? _waitingBattleId;
 
     private readonly Dictionary<string, BattleRoom> _rooms = new();
+
+    public BattleRoomStore(BattleHistoryDatabase battleHistoryDb, BattleTurnDatabase battleTurnDb)
+    {
+        _battleHistoryDb = battleHistoryDb;
+        _battleTurnDb = battleTurnDb;
+    }
 
     /// <summary>Таймер раундов (вызывать из фона).</summary>
     public void Tick(float deltaSeconds)
@@ -35,6 +43,7 @@ public class BattleRoomStore
                 int p1r = Math.Clamp(startRow, 0, HexSpawn.DefaultGridLength - 1);
                 room.AddPlayer("P1", p1c, p1r);
                 _rooms[bid] = room;
+                _battleHistoryDb.EnsureBattle(bid);
                 return (bid, "P1", room, null);
             }
 
@@ -86,6 +95,7 @@ public class BattleRoomStore
                 int soloRow = Math.Clamp(startRow, 0, HexSpawn.DefaultGridLength - 1);
                 soloRoom.AddPlayer("P1", soloCol, soloRow);
                 _rooms[soloBattleId] = soloRoom;
+                _battleHistoryDb.EnsureBattle(soloBattleId);
                 soloRoom.StartFirstRound();
                 Console.WriteLine($"[tzInfo] Solo join: battleId={soloBattleId}, playerId=P1, start=({soloCol},{soloRow})");
                 return new JoinResponse
@@ -115,6 +125,7 @@ public class BattleRoomStore
             int pr = Math.Clamp(startRow, 0, HexSpawn.DefaultGridLength - 1);
             r.AddPlayer("P1", pc, pr);
             _rooms[bid] = r;
+            _battleHistoryDb.EnsureBattle(bid);
             _waitingBattleId = bid;
             Console.WriteLine($"[tzInfo] Matchmaking waiting: battleId={bid}, playerId=P1, start=({pc},{pr})");
             return new JoinResponse { BattleId = bid, PlayerId = "P1", Status = "waiting" };
@@ -157,11 +168,15 @@ public class BattleRoomStore
             if (room.Players.Count == 1 && _waitingBattleId == battleId)
             {
                 _rooms.Remove(battleId);
+                var turnIds = _battleHistoryDb.RemoveBattle(battleId);
+                _battleTurnDb.RemoveMany(turnIds);
                 _waitingBattleId = null;
                 return true;
             }
 
             _rooms.Remove(battleId);
+            var removedTurnIds = _battleHistoryDb.RemoveBattle(battleId);
+            _battleTurnDb.RemoveMany(removedTurnIds);
             if (_waitingBattleId == battleId)
                 _waitingBattleId = null;
             return true;

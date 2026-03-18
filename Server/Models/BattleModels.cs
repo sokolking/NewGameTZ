@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+
 namespace BattleServer.Models;
 
 /// <summary>Тип юнита в бою.</summary>
@@ -107,4 +109,23 @@ public class BattleStartedPayloadDto
     public int[]? SpawnRows { get; set; }
     public int[]? ObstacleCols { get; set; }
     public int[]? ObstacleRows { get; set; }
+}
+
+public class BattleTurnHistoryStateDto
+{
+    public string[]? TurnHistoryIds { get; set; }
+    public int CurrentTurnPointer { get; set; }
+}
+
+public class BattleRecordDto
+{
+    public string BattleId { get; set; } = "";
+    public List<string> TurnIds { get; set; } = new();
+}
+
+public class BattleTurnRecordDto
+{
+    public string TurnId { get; set; } = "";
+    public string BattleId { get; set; } = "";
+    public TurnResultPayloadDto TurnResult { get; set; } = new();
 }

@@ -17,7 +17,7 @@ public class Player : MonoBehaviour
     [SerializeField] private int _maxAp = 100;
 
     [Header("Таймер хода, сек")]
-    [SerializeField] private float _turnDurationSeconds = 30f;
+    [SerializeField] private float _turnDurationSeconds = 100f;
 
     private const float PrelastPenaltyFraction = 0.05f;  // штраф за предпоследний шаг при макс. ОД
     private const float LastPenaltyFraction = 0.08f;      // штраф за последний шаг при макс. ОД
@@ -433,6 +433,11 @@ public class Player : MonoBehaviour
             transform.position = target;
         }
 
+        _isMoving = false;
+    }
+
+    public void ForceStopMovement()
+    {
         _isMoving = false;
     }
 }

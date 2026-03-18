@@ -137,6 +137,36 @@ public class BattleServerConnection : MonoBehaviour
         }
     }
 
+    public IEnumerator LoadTurnByIdCoroutine(string turnId, Action<BattleTurnResponsePayload> onLoaded, Action<string> onFailed)
+    {
+        if (string.IsNullOrEmpty(_serverUrl) || string.IsNullOrEmpty(_battleId) || string.IsNullOrEmpty(turnId))
+        {
+            onFailed?.Invoke("Не удалось загрузить ход.");
+            yield break;
+        }
+
+        string url = $"{_serverUrl}/api/battle/{_battleId}/turns/{UnityWebRequest.EscapeURL(turnId)}";
+        using (var req = UnityWebRequest.Get(url))
+        {
+            yield return req.SendWebRequest();
+
+            if (req.result != UnityWebRequest.Result.Success)
+            {
+                onFailed?.Invoke(string.IsNullOrEmpty(req.error) ? "Не удалось загрузить ход." : req.error);
+                yield break;
+            }
+
+            var response = JsonUtility.FromJson<BattleTurnResponsePayload>(req.downloadHandler.text);
+            if (response == null || response.turnResult == null)
+            {
+                onFailed?.Invoke("Сервер вернул пустой ход.");
+                yield break;
+            }
+
+            onLoaded?.Invoke(response);
+        }
+    }
+
     [Serializable]
     private class JoinRequest
     {

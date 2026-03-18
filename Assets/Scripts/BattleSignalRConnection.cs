@@ -300,6 +300,15 @@ public class BattleSignalRConnection : MonoBehaviour
         var push = JsonUtility.FromJson<BattleRoundWsPush>(json);
         if (push.turnResult == null) return;
 
+        _gameSession.ReplaceTurnHistoryIds(push.turnHistoryIds, push.currentTurnPointer);
+        if (push.turnHistoryIds != null
+            && push.currentTurnPointer >= 0
+            && push.currentTurnPointer < push.turnHistoryIds.Length)
+        {
+            string currentTurnId = push.turnHistoryIds[push.currentTurnPointer];
+            _gameSession.CacheTurnHistoryEntry(currentTurnId, push.turnResult);
+        }
+
         GameSession.OnWebSocketRoundPushReceived?.Invoke();
 
         int resolvedRound = push.turnResult.roundIndex;

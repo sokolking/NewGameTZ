@@ -6,7 +6,7 @@ namespace BattleServer;
 public class BattleRoom
 {
     public string BattleId { get; }
-    public const float RoundDuration = 30f;
+    public const float RoundDuration = 100f;
     public const int MaxAp = 100;
     public const int MobMaxAp = 75;
     public const int MaxObstacleChains = 10;
@@ -730,6 +730,10 @@ public class BattleRoom
     {
         var resolveReason = fromTimer ? "timerExpired" : "allSubmitted";
         Console.WriteLine($"[tzInfo] CloseRound begin: battleId={BattleId}, roundIndex={RoundIndex}, reason={resolveReason}, submissions={Submissions.Count}, units={Units.Count}");
+
+        // Если раунд закрывается по таймеру без submit от игрока, команда моба всё равно
+        // должна быть подготовлена для текущего раунда, иначе весь раунд "простаивает".
+        EnsureMobCommandsForCurrentRound();
 
         // Собираем список всех юнитов (игроки + мобы), которые участвуют в симуляции.
         var unitIds = Units.Keys.ToList();

@@ -6,6 +6,8 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 
 var builder = WebApplication.CreateBuilder(args);
+builder.Services.AddSingleton<BattleHistoryDatabase>();
+builder.Services.AddSingleton<BattleTurnDatabase>();
 builder.Services.AddSingleton<BattleRoomStore>();
 builder.Services.AddCors(options =>
 {
@@ -31,6 +33,9 @@ app.Use(async (ctx, next) =>
 var jsonOpt = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 jsonOpt.Converters.Add(new JsonStringEnumConverter());
 
+var battleHistoryDb = app.Services.GetRequiredService<BattleHistoryDatabase>();
+var battleTurnDb = app.Services.GetRequiredService<BattleTurnDatabase>();
+
 BattleRoom.RoundClosedForPush += room =>
 {
     if (room.LastTurnResult == null) return;
@@ -38,6 +43,14 @@ BattleRoom.RoundClosedForPush += room =>
     var turn = room.LastTurnResult;
     var nextRi = room.RoundIndex;
     var roundDeadlineUtcMs = room.RoundDeadlineUtcMs;
+    var turnId = Guid.NewGuid().ToString("N");
+    var battleRecord = battleHistoryDb.AppendTurn(battleId, turnId);
+    battleTurnDb.Save(new BattleTurnRecordDto
+    {
+        TurnId = turnId,
+        BattleId = battleId,
+        TurnResult = turn
+    });
     _ = Task.Run(async () =>
     {
         try
@@ -47,7 +60,9 @@ BattleRoom.RoundClosedForPush += room =>
                 type = BattleWsProtocol.TypeRoundResolved,
                 turnResult = turn,
                 roundIndex = nextRi,
-                roundDeadlineUtcMs
+                roundDeadlineUtcMs,
+                turnHistoryIds = battleRecord.TurnIds,
+                currentTurnPointer = battleRecord.TurnIds.Count - 1
             }, jsonOpt);
             await BattleWebSocketRegistry.BroadcastTextAsync(battleId, wsPayload);
             Console.WriteLine($"[tzInfo] Round push (ws): battleId={battleId}, resolvedRound={turn.RoundIndex}, nextRound={nextRi}");
@@ -193,6 +208,7 @@ app.MapGet("/api/battle/{battleId}", (string battleId, BattleRoomStore s) =>
 {
     var room = s.GetRoom(battleId);
     if (room == null) return Results.Json(new { error = "Battle not found" }, statusCode: 404);
+    var battleRecord = battleHistoryDb.GetBattle(battleId);
 
     room.FillSpawnArrays(out var spawnIds, out var spawnCols, out var spawnRows);
     var response = new BattleStateResponse
@@ -202,6 +218,8 @@ app.MapGet("/api/battle/{battleId}", (string battleId, BattleRoomStore s) =>
         RoundTimeLeft = room.RoundTimeLeft,
         RoundDeadlineUtcMs = room.RoundDeadlineUtcMs,
         TurnResult = null,
+        TurnHistoryIds = battleRecord?.TurnIds.ToArray() ?? Array.Empty<string>(),
+        CurrentTurnPointer = battleRecord != null ? battleRecord.TurnIds.Count - 1 : -1,
         Participants = room.BuildParticipantStatuses(),
         AllSubmittedThisRound = room.Submissions.Count >= room.Players.Count && room.Players.Count > 0,
         SpawnPlayerIds = spawnIds,
@@ -209,6 +227,15 @@ app.MapGet("/api/battle/{battleId}", (string battleId, BattleRoomStore s) =>
         SpawnRows = spawnRows
     };
     return Results.Json(response, jsonOpt);
+});
+
+app.MapGet("/api/battle/{battleId}/turns/{turnId}", (string battleId, string turnId) =>
+{
+    var record = battleTurnDb.GetTurn(turnId);
+    if (record == null || !string.Equals(record.BattleId, battleId, StringComparison.Ordinal))
+        return Results.Json(new { error = "Turn not found" }, statusCode: 404);
+
+    return Results.Json(record, jsonOpt);
 });
 
 // POST leave — только вне игровой сцены (отмена очереди с меню; в бою выход — disconnect WS + leave по сокету).
@@ -249,6 +276,8 @@ public class BattleStateResponse
     public float RoundTimeLeft { get; set; }
     public long RoundDeadlineUtcMs { get; set; }
     public TurnResultPayloadDto? TurnResult { get; set; }
+    public string[]? TurnHistoryIds { get; set; }
+    public int CurrentTurnPointer { get; set; }
     public BattleParticipantStatusDto[]? Participants { get; set; }
     public bool AllSubmittedThisRound { get; set; }
     public string[]? SpawnPlayerIds { get; set; }

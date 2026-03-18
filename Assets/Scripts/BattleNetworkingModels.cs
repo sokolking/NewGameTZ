@@ -79,6 +79,15 @@ public class BattleRoundWsPush
     public TurnResultPayload turnResult;
     public int roundIndex;
     public long roundDeadlineUtcMs;
+    public string[] turnHistoryIds;
+    public int currentTurnPointer;
+}
+
+[Serializable]
+public class BattleTurnResponsePayload
+{
+    public string turnId;
+    public TurnResultPayload turnResult;
 }
 
 /// <summary>Ответ сервера (Server → Client): TurnResult.</summary>

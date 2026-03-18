@@ -8,6 +8,25 @@ using UnityEngine;
 /// </summary>
 public class GameSession : MonoBehaviour
 {
+    private sealed class ReplayUnitSnapshot
+    {
+        public string UnitId;
+        public int UnitType;
+        public int Col;
+        public int Row;
+        public int CurrentAp;
+        public float PenaltyFraction;
+        public bool IsLocal;
+    }
+
+    private sealed class LiveTurnDraftSnapshot
+    {
+        public int RoundIndex;
+        public List<(int col, int row)> Path = new();
+        public int ApSpent;
+        public int StepsTaken;
+    }
+
     /// <summary>Сообщения для UI: «Не удалось отправить ход», «Клетка занята», rejectedReason и т.д.</summary>
     public static System.Action<string> OnNetworkMessage;
     /// <summary>POST submit успешно принят — показать бар до ответа по WebSocket.</summary>
@@ -33,19 +52,36 @@ public class GameSession : MonoBehaviour
     // Ключ: идентификатор сущности в сети (для игроков — playerId, для мобов — unitId сервера).
     private readonly Dictionary<string, RemoteBattleUnitView> _remoteUnits = new();
     private readonly HashSet<(int col, int row)> _obstacleCells = new();
+    private readonly Dictionary<string, ReplayUnitSnapshot> _initialReplayState = new();
+    private readonly List<string> _turnHistoryIds = new();
+    private readonly Dictionary<string, TurnResultPayload> _turnHistoryCache = new();
 
     private bool _waitingForServerRoundResolve;
     private bool _animateResolvedRoundForPendingSubmit = true;
+    private bool _isTurnHistoryReplayPlaying;
     private int _lastProcessedTurnResultRound = -1;
     /// <summary>Индекс раунда с сервера — только его слать в submit (TurnCount локально может отличаться).</summary>
     private int _serverRoundIndex;
+    private int _currentTurnHistoryPointer = -1;
+    private int _selectedTurnHistoryPointer = -1;
+    private long _liveRoundDeadlineUtcMs;
+    private Coroutine _turnReplayCoroutine;
+    private readonly List<Coroutine> _activeReplayAnimationCoroutines = new();
+    private LiveTurnDraftSnapshot _liveTurnDraftSnapshot;
 
     /// <summary>Блокировка ввода: ожидание результата раунда или анимация.</summary>
-    public bool BlockPlayerInput => _waitingForServerRoundResolve || IsBattleAnimationPlaying;
+    public bool BlockPlayerInput => _waitingForServerRoundResolve || IsBattleAnimationPlaying || IsTurnHistoryReplayPlaying || IsViewingHistoricalTurn;
 
     public bool IsWaitingForServerRoundResolve => _waitingForServerRoundResolve;
     public int LastProcessedTurnResultRound => _lastProcessedTurnResultRound;
     public int ServerRoundIndexForSubmit => _serverRoundIndex;
+    public bool IsTurnHistoryReplayPlaying => _isTurnHistoryReplayPlaying;
+    public bool IsViewingHistoricalTurn => _selectedTurnHistoryPointer >= 0;
+    public int CurrentTurnHistoryPointer => _currentTurnHistoryPointer;
+    public int SelectedTurnHistoryPointer => _selectedTurnHistoryPointer;
+    public int DisplayedTurnNumber => _selectedTurnHistoryPointer >= 0 ? _selectedTurnHistoryPointer + 1 : _serverRoundIndex + 1;
+    public bool CanViewPreviousTurn => _selectedTurnHistoryPointer > 0 || (_selectedTurnHistoryPointer < 0 && _currentTurnHistoryPointer >= 0);
+    public bool CanViewNextTurn => _selectedTurnHistoryPointer >= 0;
 
     public bool IsInBattleWithServer() => _serverConnection != null && _serverConnection.IsInBattle;
     public bool IsObstacleCell(int col, int row) => _obstacleCells.Contains((col, row));
@@ -65,6 +101,100 @@ public class GameSession : MonoBehaviour
     public void RegisterProcessedTurnResult(int roundIndex)
     {
         _lastProcessedTurnResultRound = roundIndex;
+    }
+
+    public void ReplaceTurnHistoryIds(string[] turnHistoryIds, int currentTurnPointer)
+    {
+        _turnHistoryIds.Clear();
+        if (turnHistoryIds != null)
+        {
+            foreach (var turnId in turnHistoryIds)
+            {
+                if (!string.IsNullOrEmpty(turnId))
+                    _turnHistoryIds.Add(turnId);
+            }
+        }
+
+        _currentTurnHistoryPointer = Mathf.Clamp(currentTurnPointer, -1, _turnHistoryIds.Count - 1);
+        _selectedTurnHistoryPointer = -1;
+        _liveTurnDraftSnapshot = null;
+    }
+
+    public void CacheTurnHistoryEntry(string turnId, TurnResultPayload turnResult)
+    {
+        if (string.IsNullOrEmpty(turnId) || turnResult == null)
+            return;
+
+        _turnHistoryCache[turnId] = turnResult;
+    }
+
+    public bool TryStepViewedTurn(int delta)
+    {
+        if (_turnHistoryIds.Count == 0)
+            return false;
+
+        bool restoreLive = false;
+        int target = -1;
+
+        if (_selectedTurnHistoryPointer < 0)
+        {
+            if (delta >= 0 || _currentTurnHistoryPointer < 0)
+                return false;
+
+            CaptureLiveTurnDraft();
+            target = _currentTurnHistoryPointer;
+        }
+        else
+        {
+            target = _selectedTurnHistoryPointer + delta;
+            if (target < 0)
+                return false;
+            if (target > _currentTurnHistoryPointer)
+            {
+                if (delta > 0 && _selectedTurnHistoryPointer == _currentTurnHistoryPointer)
+                    restoreLive = true;
+                else
+                    return false;
+            }
+            else if (target == _selectedTurnHistoryPointer)
+                return false;
+        }
+
+        CancelTurnReplayPlayback();
+        if (restoreLive)
+            _turnReplayCoroutine = StartCoroutine(RestoreLiveTurnStateCoroutine());
+        else
+            StartTurnHistoryReplay(target);
+        return true;
+    }
+
+    public bool TryAutoSubmitTimedOutLiveTurn(bool animateResolvedRound)
+    {
+        return TrySubmitCurrentLiveTurnDraft(animateResolvedRound);
+    }
+
+    public bool TrySubmitCurrentLiveTurnDraft(bool animateResolvedRound)
+    {
+        if (_waitingForServerRoundResolve || !IsInBattleWithServer())
+            return false;
+
+        bool isViewingHistory = _selectedTurnHistoryPointer >= 0 || _isTurnHistoryReplayPlaying;
+        var draft = _liveTurnDraftSnapshot;
+        if (!isViewingHistory || draft == null || draft.RoundIndex != _serverRoundIndex)
+        {
+            CaptureLiveTurnDraft();
+            draft = _liveTurnDraftSnapshot;
+        }
+
+        if (draft == null)
+            return false;
+
+        if (isViewingHistory)
+            CancelTurnReplayPlayback();
+
+        BeginWaitingForServerRoundResolve(animateResolvedRound);
+        SubmitTurnLocal(draft.Path, draft.ApSpent, draft.StepsTaken, _serverRoundIndex);
+        return true;
     }
 
     public static GameSession Active { get; private set; }
@@ -97,6 +227,8 @@ public class GameSession : MonoBehaviour
 
     private void Start()
     {
+        if (_serverConnection == null)
+            _serverConnection = FindFirstObjectByType<BattleServerConnection>();
         if (_localPlayer == null)
             _localPlayer = FindFirstObjectByType<Player>();
         // В одиночном режиме теперь тоже используется серверный бой (1 игрок + серверный моб),
@@ -276,6 +408,7 @@ public class GameSession : MonoBehaviour
     public void ApplyRoundState(int roundIndex, long roundDeadlineUtcMs)
     {
         _serverRoundIndex = roundIndex;
+        _liveRoundDeadlineUtcMs = roundDeadlineUtcMs;
         Player local = _localPlayer != null ? _localPlayer : FindFirstObjectByType<Player>();
         local?.SetRoundState(roundIndex, roundDeadlineUtcMs);
     }
@@ -284,6 +417,7 @@ public class GameSession : MonoBehaviour
     public void ApplyBattleStarted(BattleStartedPayload payload)
     {
         if (payload == null) return;
+        CancelTurnReplayPlayback();
         _battleId = payload.battleId ?? _battleId;
         _playerId = payload.playerId ?? _playerId;
 
@@ -294,12 +428,20 @@ public class GameSession : MonoBehaviour
         _remoteUnits.Clear();
         _lastProcessedTurnResultRound = -1;
         _serverRoundIndex = 0;
+        _liveRoundDeadlineUtcMs = 0;
+        _turnHistoryIds.Clear();
+        _turnHistoryCache.Clear();
+        _currentTurnHistoryPointer = -1;
+        _selectedTurnHistoryPointer = -1;
+        _isTurnHistoryReplayPlaying = false;
+        _liveTurnDraftSnapshot = null;
+        _initialReplayState.Clear();
         CancelWaitingForServerRoundResolve();
 
         long deadlineUtcMs = payload.roundDeadlineUtcMs;
         if (deadlineUtcMs <= 0)
         {
-            float duration = payload.roundDuration > 0 ? payload.roundDuration : 30f;
+            float duration = payload.roundDuration > 0 ? payload.roundDuration : 100f;
             deadlineUtcMs = Player.BuildRoundDeadlineUtcMs(duration);
         }
         ApplyRoundState(0, deadlineUtcMs);
@@ -318,10 +460,22 @@ public class GameSession : MonoBehaviour
 
         foreach (var (pid, col, row) in spawnList)
         {
+            bool isMob = !string.IsNullOrEmpty(pid) && pid.StartsWith("MOB_", System.StringComparison.OrdinalIgnoreCase);
+            int startAp = isMob ? 75 : 100;
             if (pid == _playerId)
             {
                 if (local != null)
                     local.ApplyServerTurnResult(new HexPosition(col, row), new[] { new HexPosition(col, row) }, 100, 0f);
+                _initialReplayState[pid] = new ReplayUnitSnapshot
+                {
+                    UnitId = pid,
+                    UnitType = 0,
+                    Col = col,
+                    Row = row,
+                    CurrentAp = 100,
+                    PenaltyFraction = 0f,
+                    IsLocal = true
+                };
                 continue;
             }
 
@@ -329,9 +483,305 @@ public class GameSession : MonoBehaviour
             var rv = go.AddComponent<RemoteBattleUnitView>();
             rv.Initialize(pid, grid, col, row, moveDur);
             _remoteUnits[pid] = rv;
+            _initialReplayState[pid] = new ReplayUnitSnapshot
+            {
+                UnitId = pid,
+                UnitType = isMob ? 1 : 0,
+                Col = col,
+                Row = row,
+                CurrentAp = startAp,
+                PenaltyFraction = 0f,
+                IsLocal = false
+            };
         }
 
         FindFirstObjectByType<HexGridCamera>()?.RefocusOnLocalPlayer();
+    }
+
+    private void StartTurnHistoryReplay(int targetPointer)
+    {
+        if (targetPointer < 0 || targetPointer >= _turnHistoryIds.Count)
+            return;
+
+        _turnReplayCoroutine = StartCoroutine(ReplayTurnHistoryCoroutine(targetPointer));
+    }
+
+    private IEnumerator ReplayTurnHistoryCoroutine(int targetPointer)
+    {
+        _isTurnHistoryReplayPlaying = true;
+        _selectedTurnHistoryPointer = targetPointer;
+        if (_serverConnection == null)
+            _serverConnection = FindFirstObjectByType<BattleServerConnection>();
+
+        string turnId = _turnHistoryIds[targetPointer];
+        if (string.IsNullOrEmpty(turnId))
+        {
+            _selectedTurnHistoryPointer = -1;
+            _isTurnHistoryReplayPlaying = false;
+            _turnReplayCoroutine = null;
+            yield break;
+        }
+
+        if (!_turnHistoryCache.TryGetValue(turnId, out var targetTurn))
+        {
+            bool loaded = false;
+            string loadError = null;
+            BattleTurnResponsePayload response = null;
+            if (_serverConnection == null)
+            {
+                _selectedTurnHistoryPointer = -1;
+                _isTurnHistoryReplayPlaying = false;
+                _turnReplayCoroutine = null;
+                yield break;
+            }
+
+            yield return _serverConnection.LoadTurnByIdCoroutine(
+                turnId,
+                result =>
+                {
+                    response = result;
+                    loaded = true;
+                },
+                error => loadError = error);
+
+            if (!loaded || response == null || response.turnResult == null)
+            {
+                _selectedTurnHistoryPointer = -1;
+                _isTurnHistoryReplayPlaying = false;
+                _turnReplayCoroutine = null;
+                if (!string.IsNullOrEmpty(loadError))
+                    OnNetworkMessage?.Invoke(loadError);
+                yield break;
+            }
+
+            targetTurn = response.turnResult;
+            _turnHistoryCache[turnId] = targetTurn;
+        }
+
+        ResetToInitialReplayState();
+
+        for (int i = 0; i < targetPointer; i++)
+        {
+            string pastTurnId = _turnHistoryIds[i];
+            if (string.IsNullOrEmpty(pastTurnId))
+                continue;
+
+            if (!_turnHistoryCache.TryGetValue(pastTurnId, out var pastTurn))
+            {
+                bool loaded = false;
+                string loadError = null;
+                BattleTurnResponsePayload response = null;
+                if (_serverConnection == null)
+                {
+                    _selectedTurnHistoryPointer = -1;
+                    _isTurnHistoryReplayPlaying = false;
+                    _turnReplayCoroutine = null;
+                    yield break;
+                }
+
+                yield return _serverConnection.LoadTurnByIdCoroutine(
+                    pastTurnId,
+                    result =>
+                    {
+                        response = result;
+                        loaded = true;
+                    },
+                    error => loadError = error);
+
+                if (!loaded || response == null || response.turnResult == null)
+                {
+                    _selectedTurnHistoryPointer = -1;
+                    _isTurnHistoryReplayPlaying = false;
+                    _turnReplayCoroutine = null;
+                    if (!string.IsNullOrEmpty(loadError))
+                        OnNetworkMessage?.Invoke(loadError);
+                    yield break;
+                }
+
+                pastTurn = response.turnResult;
+                _turnHistoryCache[pastTurnId] = pastTurn;
+            }
+
+            BuildTurnResultAnimationJobs(pastTurn, prepareForAnimation: false);
+        }
+
+        if (_liveRoundDeadlineUtcMs > 0)
+            ApplyRoundState(_serverRoundIndex, _liveRoundDeadlineUtcMs);
+
+        var jobs = BuildTurnResultAnimationJobs(targetTurn, prepareForAnimation: true);
+        if (jobs.Count > 0)
+            yield return PlayReplayAnimationsParallel(jobs);
+
+        _isTurnHistoryReplayPlaying = false;
+        _turnReplayCoroutine = null;
+    }
+
+    private IEnumerator RestoreLiveTurnStateCoroutine()
+    {
+        _isTurnHistoryReplayPlaying = true;
+
+        ResetToInitialReplayState();
+
+        for (int i = 0; i <= _currentTurnHistoryPointer; i++)
+        {
+            string turnId = _turnHistoryIds[i];
+            if (string.IsNullOrEmpty(turnId))
+                continue;
+
+            if (!_turnHistoryCache.TryGetValue(turnId, out var turn))
+            {
+                bool loaded = false;
+                string loadError = null;
+                BattleTurnResponsePayload response = null;
+                if (_serverConnection == null)
+                    _serverConnection = FindFirstObjectByType<BattleServerConnection>();
+                if (_serverConnection == null)
+                {
+                    _isTurnHistoryReplayPlaying = false;
+                    _turnReplayCoroutine = null;
+                    yield break;
+                }
+
+                yield return _serverConnection.LoadTurnByIdCoroutine(
+                    turnId,
+                    result =>
+                    {
+                        response = result;
+                        loaded = true;
+                    },
+                    error => loadError = error);
+
+                if (!loaded || response == null || response.turnResult == null)
+                {
+                    _isTurnHistoryReplayPlaying = false;
+                    _turnReplayCoroutine = null;
+                    if (!string.IsNullOrEmpty(loadError))
+                        OnNetworkMessage?.Invoke(loadError);
+                    yield break;
+                }
+
+                turn = response.turnResult;
+                _turnHistoryCache[turnId] = turn;
+            }
+
+            BuildTurnResultAnimationJobs(turn, prepareForAnimation: false);
+        }
+
+        if (_liveRoundDeadlineUtcMs > 0)
+            ApplyRoundState(_serverRoundIndex, _liveRoundDeadlineUtcMs);
+
+        ReapplyLiveTurnDraftSnapshot();
+        _selectedTurnHistoryPointer = -1;
+        _isTurnHistoryReplayPlaying = false;
+        _turnReplayCoroutine = null;
+    }
+
+    private void CancelTurnReplayPlayback()
+    {
+        if (_turnReplayCoroutine != null)
+        {
+            StopCoroutine(_turnReplayCoroutine);
+            _turnReplayCoroutine = null;
+        }
+
+        foreach (var coroutine in _activeReplayAnimationCoroutines)
+        {
+            if (coroutine != null)
+                StopCoroutine(coroutine);
+        }
+        _activeReplayAnimationCoroutines.Clear();
+
+        Player local = _localPlayer != null ? _localPlayer : FindFirstObjectByType<Player>();
+        local?.ForceStopMovement();
+        foreach (var remote in _remoteUnits.Values)
+            remote?.ForceStopMovement();
+
+        _isTurnHistoryReplayPlaying = false;
+    }
+
+    private void CaptureLiveTurnDraft()
+    {
+        Player local = _localPlayer != null ? _localPlayer : FindFirstObjectByType<Player>();
+        if (local == null)
+        {
+            _liveTurnDraftSnapshot = null;
+            return;
+        }
+
+        _liveTurnDraftSnapshot = new LiveTurnDraftSnapshot
+        {
+            RoundIndex = _serverRoundIndex,
+            Path = local.GetTurnPathCopy(),
+            ApSpent = local.ApSpentThisTurn,
+            StepsTaken = local.StepsTakenThisTurn
+        };
+    }
+
+    private void ReapplyLiveTurnDraftSnapshot()
+    {
+        if (_liveTurnDraftSnapshot == null || _liveTurnDraftSnapshot.RoundIndex != _serverRoundIndex)
+            return;
+
+        Player local = _localPlayer != null ? _localPlayer : FindFirstObjectByType<Player>();
+        if (local == null)
+            return;
+
+        if (_liveTurnDraftSnapshot.Path == null || _liveTurnDraftSnapshot.Path.Count < 2)
+            return;
+
+        local.MoveAlongPath(new List<(int col, int row)>(_liveTurnDraftSnapshot.Path), animate: false);
+    }
+
+    private IEnumerator PlayReplayAnimationsParallel(List<(object unit, bool isLocal, HexPosition[] path)> jobs)
+    {
+        _activeReplayAnimationCoroutines.Clear();
+        foreach (var j in jobs)
+        {
+            if (j.isLocal && j.unit is Player pl)
+                _activeReplayAnimationCoroutines.Add(StartCoroutine(PlayTurnResultAnimationCoroutine(pl, j.path)));
+            else if (!j.isLocal && j.unit is RemoteBattleUnitView rv)
+                _activeReplayAnimationCoroutines.Add(StartCoroutine(PlayRemoteAnimationCoroutine(rv, j.path)));
+        }
+
+        foreach (var coroutine in _activeReplayAnimationCoroutines)
+            yield return coroutine;
+
+        _activeReplayAnimationCoroutines.Clear();
+    }
+
+    private void ResetToInitialReplayState()
+    {
+        Player local = _localPlayer != null ? _localPlayer : FindFirstObjectByType<Player>();
+        HexGrid grid = local != null && local.Grid != null ? local.Grid : FindFirstObjectByType<HexGrid>();
+        float moveDur = local != null ? local.MoveDurationPerHex : 0.2f;
+        if (grid == null)
+            return;
+
+        foreach (var snapshot in _initialReplayState.Values)
+        {
+            if (snapshot.IsLocal)
+            {
+                if (local == null) continue;
+                var point = new HexPosition(snapshot.Col, snapshot.Row);
+                local.ApplyServerTurnResult(point, new[] { point }, snapshot.CurrentAp, snapshot.PenaltyFraction, prepareForAnimation: false);
+                continue;
+            }
+
+            if (!_remoteUnits.TryGetValue(snapshot.UnitId, out var remote) || remote == null)
+            {
+                var go = new GameObject(snapshot.UnitType == 1 ? ("Mob_" + snapshot.UnitId) : ("Remote_" + snapshot.UnitId));
+                remote = go.AddComponent<RemoteBattleUnitView>();
+                remote.Initialize(snapshot.UnitId, grid, snapshot.Col, snapshot.Row, moveDur);
+                _remoteUnits[snapshot.UnitId] = remote;
+            }
+
+            remote.ApplyServerTurnResult(
+                new HexPosition(snapshot.Col, snapshot.Row),
+                new[] { new HexPosition(snapshot.Col, snapshot.Row) },
+                snapshot.CurrentAp,
+                snapshot.PenaltyFraction,
+                prepareForAnimation: false);
+        }
     }
 
     private void ApplyObstacleMap(BattleStartedPayload payload, HexGrid grid)

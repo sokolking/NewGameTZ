@@ -131,7 +131,7 @@
 {
   "battleId": "...",
   "roundIndex": 3,
-  "roundDuration": 30.0
+  "roundDuration": 100.0
 }
 ```
 
@@ -149,7 +149,7 @@
   "battleId": "battle-uuid",
   "playerId": "P1",
   "players": [ {"playerId": "P1", "col": 0, "row": 0}, {"playerId": "P2", "col": 24, "row": 39} ],
-  "roundDuration": 30.0
+  "roundDuration": 100.0
 }
 ```
 

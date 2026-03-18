@@ -45,7 +45,7 @@
       { "playerId": "P1", "col": 0, "row": 0 },
       { "playerId": "P2", "col": 24, "row": 39 }
     ],
-    "roundDuration": 30.0,
+    "roundDuration": 100.0,
     "spawnPlayerIds": [ "P1", "P2" ],
     "spawnCols": [ 0, 24 ],
     "spawnRows": [ 0, 39 ]
@@ -63,7 +63,7 @@
     "players": [
       { "playerId": "P1", "col": 0, "row": 0 }
     ],
-    "roundDuration": 30.0,
+    "roundDuration": 100.0,
     "spawnPlayerIds": [ "P1" ],
     "spawnCols": [ 0 ],
     "spawnRows": [ 0 ]
@@ -93,13 +93,13 @@
     "battleId": "abcd1234",
     "playerId": "P1",
     "players": [ ... ],
-    "roundDuration": 30.0,
+    "roundDuration": 100.0,
     "spawnPlayerIds": [ ... ],
     "spawnCols": [ ... ],
     "spawnRows": [ ... ]
   },
   "roundIndex": 0,
-  "roundDuration": 30.0
+  "roundDuration": 100.0
 }
 ```
 
@@ -143,7 +143,7 @@
 ```jsonc
 {
   "roundIndex": 1,          // текущий раунд (уже следующий, если прошлый только что завершился)
-  "roundDuration": 30.0,
+  "roundDuration": 100.0,
   "roundTimeLeft": 27.2,
   "roundDeadlineUtcMs": 1773858123456,
 
@@ -195,7 +195,7 @@
 }
 ```
 
-`roundDeadlineUtcMs` — абсолютный UTC timestamp окончания текущего раунда. Клиент должен вычислять остаток времени как `deadline - now`, а не заново запускать локальные `30` секунд после показа анимаций.
+`roundDeadlineUtcMs` — абсолютный UTC timestamp окончания текущего раунда. Клиент должен вычислять остаток времени как `deadline - now`, а не заново запускать локальные `100` секунд после показа анимаций.
 
 Замечание: `participants` и `allSubmittedThisRound` относятся **к текущему раунду** (`roundIndex`), а `turnResult` — к **предыдущему завершённому раунду**.
 
@@ -256,7 +256,7 @@ public class PlayerBattleState
 public void StartFirstRound()
 {
     RoundIndex = 0;
-    RoundTimeLeft = RoundDuration; // 30f
+    RoundTimeLeft = RoundDuration; // 100f
     RoundInProgress = true;
     Submissions.Clear();
     SubmissionOrder.Clear();
