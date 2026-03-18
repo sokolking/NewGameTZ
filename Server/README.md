@@ -63,7 +63,7 @@ dotnet run
 - **GET /api/battle/{battleId}/poll?playerId=P1** — для первого игрока: опрос до появления второго. Ответ: `{ "status": "waiting"|"battle", "battleStarted"? }`.
 - **WebSocket `/ws/battle`** — ход и события боя. Клиент шлёт `submitTurn`, сервер отвечает `submitAck`, а после закрытия раунда пушит `roundResolved` с `turnResult`, `roundIndex` и `roundDeadlineUtcMs`.
 - **GET /api/battle/{battleId}** — состояние раунда для отладки. Ответ: `roundIndex`, `roundDuration`, `roundTimeLeft`, `roundDeadlineUtcMs`, `turnResult?`, `participants`, `allSubmittedThisRound`. Для UI таймера ориентируйтесь на `roundDeadlineUtcMs`, а не на перезапуск локальных `100` секунд.
-- **POST /api/battle/{battleId}/leave?playerId=P1** — игрок вышел (закрыл клиент или сцену). Если ждал в очереди один — комната удаляется из очереди. Если бой уже идёт — комната удаляется, таймер раунда больше не тикает; второй клиент при опросе получит 404.
+- **POST /api/battle/{battleId}/leave?playerId=P1** — игрок вышел (закрыл клиент или сцену). Если ждал в очереди один — комната удаляется из очереди. Если бой уже идёт — активная комната удаляется только из памяти и таймер раунда больше не тикает; записи боя и ходов остаются в PostgreSQL, а второй клиент при опросе получит 404.
 
 ## Стартовые позиции
 

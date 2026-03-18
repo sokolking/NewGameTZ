@@ -168,15 +168,11 @@ public class BattleRoomStore
             if (room.Players.Count == 1 && _waitingBattleId == battleId)
             {
                 _rooms.Remove(battleId);
-                var turnIds = _battleHistoryDb.RemoveBattle(battleId);
-                _battleTurnDb.RemoveMany(turnIds);
                 _waitingBattleId = null;
                 return true;
             }
 
             _rooms.Remove(battleId);
-            var removedTurnIds = _battleHistoryDb.RemoveBattle(battleId);
-            _battleTurnDb.RemoveMany(removedTurnIds);
             if (_waitingBattleId == battleId)
                 _waitingBattleId = null;
             return true;
