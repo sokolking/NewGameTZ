@@ -11,7 +11,6 @@ using System.Collections.Generic;
 public class ActionPointsUI : MonoBehaviour
 {
     [SerializeField] private Player _player;
-    [SerializeField] private Text _apText;
     [SerializeField] private Button _endTurnButton;
     [Header("Лог ходов")]
     [SerializeField] private Text _logText;
@@ -29,10 +28,14 @@ public class ActionPointsUI : MonoBehaviour
     [SerializeField] private float _roundWaitBarCycleSeconds = 1.25f;
 
     [Header("Миникарта")]
+    [Tooltip("Панель миникарты из Canvas.")]
     [SerializeField] private RectTransform _miniMapPanel;
-    [Tooltip("Максимальный размер миникарты. Фактический размер подстраивается под пропорции поля.")]
-    private Vector2 _miniMapSize = new Vector2(182f, 98f);
-    [SerializeField] private Vector2 _miniMapMargin = new Vector2(16f, 16f);
+    [Tooltip("Панель под миникартой для времени и ОД.")]
+    [SerializeField] private RectTransform _miniMapStatsPanel;
+    [Tooltip("UI Text для таймера под миникартой.")]
+    [SerializeField] private Text _miniMapTimeText;
+    [Tooltip("UI Text для ОД под миникартой.")]
+    [SerializeField] private Text _miniMapApText;
     private float _miniMapPadding = 4f;
     private float _miniMapMarkerSize = 7f;
     [SerializeField] private Color _miniMapPlayerColor = Color.white;
@@ -89,13 +92,11 @@ public class ActionPointsUI : MonoBehaviour
             _roundWaitSlider.normalizedValue = t;
         }
 
-        if (_player == null || _apText == null) return;
-        // Пока ждём ответ сервера после досрочного «Закончить ход» — не показывать замороженный таймер (T 22),
-        // чтобы не создавать впечатление ожидания окончания раунда на сервере.
+        if (_player == null) return;
         string timerStr = (_gameSession != null && _gameSession.IsWaitingForServerRoundResolve)
-            ? "—"
-            : Mathf.CeilToInt(Mathf.Max(0f, _player.TurnTimeLeft)).ToString();
-        _apText.text = $"Ход {_player.TurnCount + 1} | ОД {_player.CurrentAp} | T {timerStr}";
+            ? "--:--"
+            : FormatRoundTime(_player.TurnTimeLeft);
+        UpdateMiniMapStats(timerStr, _player.CurrentAp);
         UpdateMiniMap();
         if (Keyboard.current == null) return;
 
@@ -224,53 +225,11 @@ public class ActionPointsUI : MonoBehaviour
 
     private void EnsureMiniMap()
     {
-        if (_miniMapPanel == null)
-        {
-            Transform existing = transform.Find("MiniMapPanel");
-            if (existing != null)
-                _miniMapPanel = existing as RectTransform;
-        }
-
-        if (_miniMapPanel == null)
-        {
-            GameObject panelGo = new GameObject("MiniMapPanel", typeof(RectTransform), typeof(Image));
-            panelGo.transform.SetParent(transform, false);
-            _miniMapPanel = panelGo.GetComponent<RectTransform>();
-            _miniMapPanel.anchorMin = new Vector2(1f, 1f);
-            _miniMapPanel.anchorMax = new Vector2(1f, 1f);
-            _miniMapPanel.pivot = new Vector2(1f, 1f);
-            _miniMapPanel.anchoredPosition = new Vector2(-_miniMapMargin.x, -_miniMapMargin.y);
-            _miniMapPanel.sizeDelta = _miniMapSize;
-
-            Image bg = panelGo.GetComponent<Image>();
-            bg.color = new Color(0f, 0f, 0f, 0.55f);
-            bg.raycastTarget = false;
-        }
+        if (_miniMapPanel == null || _miniMapStatsPanel == null || _miniMapTimeText == null || _miniMapApText == null)
+            return;
 
         if (_miniMapLocalMarker == null)
             _miniMapLocalMarker = CreateMiniMapMarker("LocalPlayerMarker", _miniMapPlayerColor);
-    }
-
-    private Image CreateMiniMapMarker(string name, Color color)
-    {
-        if (_miniMapPanel == null)
-            return null;
-
-        GameObject go = new GameObject(name, typeof(RectTransform), typeof(Image));
-        go.transform.SetParent(_miniMapPanel, false);
-        RectTransform rt = go.GetComponent<RectTransform>();
-        rt.anchorMin = new Vector2(0f, 0f);
-        rt.anchorMax = new Vector2(0f, 0f);
-        rt.pivot = new Vector2(0.5f, 0.5f);
-        rt.sizeDelta = new Vector2(_miniMapMarkerSize, _miniMapMarkerSize);
-
-        Image image = go.GetComponent<Image>();
-        image.sprite = GetMiniMapCircleSprite();
-        image.type = Image.Type.Simple;
-        image.preserveAspect = true;
-        image.color = color;
-        image.raycastTarget = false;
-        return image;
     }
 
     private static Sprite GetMiniMapCircleSprite()
@@ -306,6 +265,40 @@ public class ActionPointsUI : MonoBehaviour
         return _miniMapCircleSprite;
     }
 
+    private Image CreateMiniMapMarker(string name, Color color)
+    {
+        if (_miniMapPanel == null)
+            return null;
+
+        GameObject go = new GameObject(name, typeof(RectTransform), typeof(Image));
+        go.transform.SetParent(_miniMapPanel, false);
+        RectTransform rt = go.GetComponent<RectTransform>();
+        rt.anchorMin = new Vector2(0f, 0f);
+        rt.anchorMax = new Vector2(0f, 0f);
+        rt.pivot = new Vector2(0.5f, 0.5f);
+        rt.sizeDelta = new Vector2(_miniMapMarkerSize, _miniMapMarkerSize);
+
+        Image image = go.GetComponent<Image>();
+        image.sprite = GetMiniMapCircleSprite();
+        image.type = Image.Type.Simple;
+        image.preserveAspect = true;
+        image.color = color;
+        image.raycastTarget = false;
+        return image;
+    }
+
+    private void UpdateMiniMapStats(string timerText, int currentAp)
+    {
+        EnsureMiniMap();
+        if (_miniMapPanel == null || _miniMapStatsPanel == null)
+            return;
+
+        if (_miniMapTimeText != null)
+            _miniMapTimeText.text = timerText;
+        if (_miniMapApText != null)
+            _miniMapApText.text = $"ОД {currentAp}";
+    }
+
     private void UpdateMiniMap()
     {
         EnsureMiniMap();
@@ -325,7 +318,6 @@ public class ActionPointsUI : MonoBehaviour
 
         float width = Mathf.Max(0.001f, maxViewport.x - minViewport.x);
         float height = Mathf.Max(0.001f, maxViewport.y - minViewport.y);
-        UpdateMiniMapPanelLayout(grid.Width, grid.Length);
         float usableWidth = Mathf.Max(1f, _miniMapPanel.rect.width - _miniMapPadding * 2f);
         float usableHeight = Mathf.Max(1f, _miniMapPanel.rect.height - _miniMapPadding * 2f);
 
@@ -424,42 +416,6 @@ public class ActionPointsUI : MonoBehaviour
         return new Vector2(viewport.x, viewport.y);
     }
 
-    private void UpdateMiniMapPanelLayout(int gridWidth, int gridLength)
-    {
-        if (_miniMapPanel == null)
-            return;
-
-        float maxWidth = Mathf.Max(60f, _miniMapSize.x);
-        float maxHeight = Mathf.Max(60f, _miniMapSize.y);
-        float aspect = Mathf.Max(1f, gridWidth) / Mathf.Max(1f, gridLength);
-
-        float panelWidth;
-        float panelHeight;
-
-        if (aspect >= 1f)
-        {
-            panelWidth = maxWidth;
-            panelHeight = panelWidth / aspect;
-            if (panelHeight > maxHeight)
-            {
-                panelHeight = maxHeight;
-                panelWidth = panelHeight * aspect;
-            }
-        }
-        else
-        {
-            panelHeight = maxHeight;
-            panelWidth = panelHeight * aspect;
-            if (panelWidth > maxWidth)
-            {
-                panelWidth = maxWidth;
-                panelHeight = panelWidth / aspect;
-            }
-        }
-
-        _miniMapPanel.sizeDelta = new Vector2(panelHeight, panelWidth);
-    }
-
     private void SetMiniMapMarkerPosition(
         RectTransform marker,
         Vector3 worldPosition,
@@ -479,5 +435,13 @@ public class ActionPointsUI : MonoBehaviour
         marker.anchoredPosition = new Vector2(
             _miniMapPadding + xNorm * usableWidth,
             _miniMapPadding + yNorm * usableHeight);
+    }
+
+    private static string FormatRoundTime(float secondsLeft)
+    {
+        int totalSeconds = Mathf.Max(0, Mathf.CeilToInt(secondsLeft));
+        int minutes = totalSeconds / 60;
+        int seconds = totalSeconds % 60;
+        return $"{minutes:00}:{seconds:00}";
     }
 }
