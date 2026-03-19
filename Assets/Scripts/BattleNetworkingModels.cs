@@ -27,9 +27,35 @@ public class SubmitTurnPayload
     public string battleId;
     public string playerId;
     public int roundIndex;
-    public HexPosition[] path;
-    public int apSpentThisTurn;
-    public int stepsTakenThisTurn;
+    public BattleQueuedAction[] actions;
+}
+
+[Serializable]
+public class BattleQueuedAction
+{
+    public string actionType;
+    public HexPosition targetPosition;
+    public string targetUnitId;
+    public string bodyPart;
+    public string posture;
+    public int cost;
+}
+
+[Serializable]
+public class BattleExecutedAction
+{
+    public string unitId;
+    public string actionType;
+    public int tick;
+    public bool succeeded;
+    public string failureReason;
+    public HexPosition fromPosition;
+    public HexPosition toPosition;
+    public string targetUnitId;
+    public string bodyPart;
+    public string posture;
+    public int damage;
+    public bool targetDied;
 }
 
 /// <summary>Результат хода для одного игрока (часть TurnResult).</summary>
@@ -46,6 +72,13 @@ public class PlayerTurnResult
     public float penaltyFraction;
     public int apSpentThisTurn;
     public string rejectedReason;
+    public int maxHp;
+    public int currentHp;
+    public bool isDead;
+    public string attackTargetUnitId;
+    public int damageDealt;
+    public string currentPosture;
+    public BattleExecutedAction[] executedActions;
 }
 
 /// <summary>Клиент → сервер: ход по WebSocket.</summary>
@@ -56,9 +89,7 @@ public class WsClientSubmitTurn
     public string battleId;
     public string playerId;
     public int roundIndex;
-    public HexPosition[] path;
-    public int apSpentThisTurn;
-    public int stepsTakenThisTurn;
+    public BattleQueuedAction[] actions;
 }
 
 /// <summary>Сервер → клиент: квитанция на submitTurn.</summary>
@@ -99,6 +130,7 @@ public class TurnResultPayload
     public PlayerTurnResult[] results;
     /// <summary>Сервер: allSubmitted | timerExpired</summary>
     public string roundResolveReason;
+    public bool battleFinished;
 }
 
 /// <summary>Старт раунда (Server → Client): RoundStarted — один раз в начале раунда.</summary>
@@ -132,6 +164,10 @@ public class BattleStartedPayload
     public string[] spawnPlayerIds;
     public int[] spawnCols;
     public int[] spawnRows;
+    public int[] spawnCurrentAps;
+    public int[] spawnMaxHps;
+    public int[] spawnCurrentHps;
+    public string[] spawnCurrentPostures;
     public int[] obstacleCols;
     public int[] obstacleRows;
 }

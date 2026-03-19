@@ -2,6 +2,8 @@ using UnityEngine;
 using UnityEngine.UI;
 using UnityEngine.InputSystem;
 using System.Collections.Generic;
+using UnityEngine.SceneManagement;
+using UnityEngine.EventSystems;
 
 /// <summary>
 /// UI для отображения очков действия и кнопки \"Закончить ход\".
@@ -12,6 +14,22 @@ public class ActionPointsUI : MonoBehaviour
 {
     [SerializeField] private Player _player;
     [SerializeField] private Button _endTurnButton;
+    [Header("Положение тела")]
+    [SerializeField] private Button _walkButton;
+    [SerializeField] private Button _runButton;
+    [SerializeField] private Button _sitButton;
+    [SerializeField] private Button _hideButton;
+    [SerializeField] private Button _skipButton;
+    [SerializeField] private Image _walkBG;
+    [SerializeField] private Image _runBG;
+    [SerializeField] private Image _sitBG;
+    [SerializeField] private Image _hideBG;
+    [SerializeField] private Image _skipBG;
+    [SerializeField] private GameObject _skipDialogPanel;
+    [SerializeField] private Text _skipDialogQuestionText;
+    [SerializeField] private InputField _skipDialogInput;
+    [SerializeField] private Button _skipDialogOkButton;
+    [SerializeField] private Button _skipDialogCancelButton;
     [Header("Лог ходов")]
     [SerializeField] private Text _loggerText;
     [SerializeField] private Button _loggerUpButton;
@@ -69,6 +87,11 @@ public class ActionPointsUI : MonoBehaviour
     [SerializeField] private float _battleBeginZoomDuration = 0.9f;
     [Tooltip("Опциональный UI Text. Если не задан, создаётся автоматически по центру экрана.")]
     [SerializeField] private Text _battleBeginOverlayText;
+    [Header("Окно завершения боя")]
+    [SerializeField] private GameObject _battleEndPanel;
+    [SerializeField] private Text _battleEndTitleText;
+    [SerializeField] private Button _battleEndCloseButton;
+    [SerializeField] private Button _battleEndMainMenuButton;
 
     private bool _endTurnInProgress;
     private bool _roundWaitVisible;
@@ -81,6 +104,9 @@ public class ActionPointsUI : MonoBehaviour
     private static Sprite _miniMapWhiteSprite;
     private bool _battleBeginSequencePlayed;
     private bool _battleBeginSequenceRunning;
+    private MovementPosture _skipReturnPosture = MovementPosture.Walk;
+
+    public static bool IsModalDialogOpen { get; private set; }
 
     private void Awake()
     {
@@ -92,12 +118,18 @@ public class ActionPointsUI : MonoBehaviour
 
         if (_player != null)
             _player.OnMovedToCell += HandlePlayerMoved;
+        if (_player != null)
+            _player.OnMovementPostureChanged += HandleMovementPostureChanged;
 
         GameSession.OnNetworkMessage += AppendLog;
         GameSession.OnSubmitTurnDeliveredToServer += ShowRoundWaitAfterSubmitDelivered;
         GameSession.OnWebSocketRoundPushReceived += HideRoundWaitPanel;
         GameSession.OnServerRoundWaitCancelled += HideRoundWaitPanel;
+        GameSession.OnBattleFinished += HandleBattleFinished;
         if (_roundWaitPanel != null) _roundWaitPanel.SetActive(false);
+        if (_battleEndPanel != null) _battleEndPanel.SetActive(false);
+        if (_skipDialogPanel != null) _skipDialogPanel.SetActive(false);
+        IsModalDialogOpen = false;
     }
 
     private void Start()
@@ -105,6 +137,15 @@ public class ActionPointsUI : MonoBehaviour
         AutoBindSceneReferences();
         BindUiCallbacks();
         EnsureMiniMap();
+        EnsureSkipDialog();
+        if (_player != null)
+        {
+            _player.OnMovedToCell -= HandlePlayerMoved;
+            _player.OnMovedToCell += HandlePlayerMoved;
+            _player.OnMovementPostureChanged -= HandleMovementPostureChanged;
+            _player.OnMovementPostureChanged += HandleMovementPostureChanged;
+        }
+        RefreshMovementButtons(_player != null ? _player.CurrentMovementPosture : MovementPosture.Walk, skipSelected: false);
         if (_player != null)
             AppendLog($"Ход {_player.TurnCount + 1} начат. ОД: {_player.CurrentAp}.");
     }
@@ -119,12 +160,30 @@ public class ActionPointsUI : MonoBehaviour
             _loggerUpButton.onClick.RemoveListener(OnLoggerUpClicked);
         if (_loggerDownButton != null)
             _loggerDownButton.onClick.RemoveListener(OnLoggerDownClicked);
+        if (_walkButton != null)
+            _walkButton.onClick.RemoveListener(OnWalkClicked);
+        if (_runButton != null)
+            _runButton.onClick.RemoveListener(OnRunClicked);
+        if (_sitButton != null)
+            _sitButton.onClick.RemoveListener(OnSitClicked);
+        if (_hideButton != null)
+            _hideButton.onClick.RemoveListener(OnHideClicked);
+        if (_skipButton != null)
+            _skipButton.onClick.RemoveListener(OnSkipClicked);
+        if (_skipDialogOkButton != null)
+            _skipDialogOkButton.onClick.RemoveListener(OnSkipDialogOkClicked);
+        if (_skipDialogCancelButton != null)
+            _skipDialogCancelButton.onClick.RemoveListener(OnSkipDialogCancelClicked);
         GameSession.OnNetworkMessage -= AppendLog;
         GameSession.OnSubmitTurnDeliveredToServer -= ShowRoundWaitAfterSubmitDelivered;
         GameSession.OnWebSocketRoundPushReceived -= HideRoundWaitPanel;
         GameSession.OnServerRoundWaitCancelled -= HideRoundWaitPanel;
+        GameSession.OnBattleFinished -= HandleBattleFinished;
         if (_player != null)
             _player.OnMovedToCell -= HandlePlayerMoved;
+        if (_player != null)
+            _player.OnMovementPostureChanged -= HandleMovementPostureChanged;
+        IsModalDialogOpen = false;
     }
 
     private void Update()
@@ -151,7 +210,7 @@ public class ActionPointsUI : MonoBehaviour
         if (isViewingHistory && !_roundWaitVisible && _gameSession != null && !_gameSession.IsWaitingForServerRoundResolve)
         {
             float leadTime = Mathf.Max(0.05f, _historicalViewAutoSubmitLeadSeconds);
-            if (_player.TurnTimeLeft <= leadTime)
+            if (!_gameSession.IsBattleFinished && _player.TurnTimeLeft <= leadTime)
             {
                 if (_gameSession.TryAutoSubmitTimedOutLiveTurn(animateResolvedRound: true))
                 {
@@ -164,6 +223,7 @@ public class ActionPointsUI : MonoBehaviour
         if (Keyboard.current == null) return;
 
         if (_roundWaitVisible) return;
+        if (_gameSession != null && _gameSession.IsBattleFinished) return;
 
         if (Keyboard.current.dKey.wasPressedThisFrame)
             TryEndTurn(animate: false);
@@ -278,11 +338,95 @@ public class ActionPointsUI : MonoBehaviour
         TryEndTurn(animate: true);
     }
 
+    private void OnWalkClicked()
+    {
+        ChangeMovementPosture(MovementPosture.Walk);
+    }
+
+    private void OnRunClicked()
+    {
+        ChangeMovementPosture(MovementPosture.Run);
+    }
+
+    private void OnSitClicked()
+    {
+        ChangeMovementPosture(MovementPosture.Sit);
+    }
+
+    private void OnHideClicked()
+    {
+        ChangeMovementPosture(MovementPosture.Hide);
+    }
+
+    private void OnSkipClicked()
+    {
+        if (!CanInteractWithMovementUi())
+            return;
+
+        EnsureSkipDialog();
+        if (_skipDialogPanel == null || _player == null)
+            return;
+
+        _skipReturnPosture = _player.CurrentMovementPosture;
+        RefreshMovementButtons(_skipReturnPosture, skipSelected: true);
+        if (_skipDialogQuestionText != null)
+            _skipDialogQuestionText.text = "Сколько ОД пропустить?";
+        if (_skipDialogInput != null)
+            _skipDialogInput.text = "1";
+        _skipDialogPanel.SetActive(true);
+        IsModalDialogOpen = true;
+        ActivateSkipInputField();
+    }
+
+    private void OnSkipDialogOkClicked()
+    {
+        if (_player == null)
+        {
+            CloseSkipDialog(restoreSelection: true);
+            return;
+        }
+
+        if (!int.TryParse(_skipDialogInput != null ? _skipDialogInput.text : string.Empty, out int skipCost) || skipCost <= 0)
+        {
+            AppendLog("Введите положительное число ОД");
+            return;
+        }
+
+        if (!_player.QueueWaitAction(skipCost))
+        {
+            AppendLog("Недостаточно ОД для пропуска");
+            return;
+        }
+
+        AppendLog($"Пропуск {skipCost} ОД");
+        CloseSkipDialog(restoreSelection: true);
+    }
+
+    private void OnSkipDialogCancelClicked()
+    {
+        CloseSkipDialog(restoreSelection: true);
+    }
+
+    private void ChangeMovementPosture(MovementPosture posture)
+    {
+        if (!CanInteractWithMovementUi() || _player == null)
+            return;
+
+        if (!_player.QueuePostureChange(posture))
+        {
+            AppendLog("Недостаточно ОД для смены положения");
+            return;
+        }
+
+        RefreshMovementButtons(_player.CurrentMovementPosture, skipSelected: false);
+    }
+
     private void TryEndTurn(bool animate)
     {
         if (_player == null) return;
         if (_endTurnInProgress) return;
         if (_roundWaitVisible) return;
+        if (_gameSession != null && _gameSession.IsBattleFinished) return;
         if (_gameSession != null && _gameSession.IsWaitingForServerRoundResolve) return;
 
         bool isViewingHistory = _gameSession != null && (_gameSession.IsViewingHistoricalTurn || _gameSession.IsTurnHistoryReplayPlaying);
@@ -378,8 +522,8 @@ public class ActionPointsUI : MonoBehaviour
     {
         if (_player == null || _gameSession == null || !_gameSession.IsOnlineMode) return;
         if (!_gameSession.IsInBattleWithServer()) return;
-        var path = _player.GetTurnPathCopy();
-        _gameSession.SubmitTurnLocal(path, _player.ApSpentThisTurn, _player.StepsTakenThisTurn, _gameSession.ServerRoundIndexForSubmit);
+        var actions = _player.GetTurnActionsCopy();
+        _gameSession.SubmitTurnLocal(actions, _gameSession.ServerRoundIndexForSubmit);
     }
 
     private void OnTurnTrackerPrevClicked()
@@ -449,6 +593,184 @@ public class ActionPointsUI : MonoBehaviour
             _loggerUpButton.interactable = _loggerStartIndex > 0;
         if (_loggerDownButton != null)
             _loggerDownButton.interactable = _loggerStartIndex < maxStart;
+    }
+
+    private void HandleMovementPostureChanged(MovementPosture posture)
+    {
+        if (!IsModalDialogOpen)
+            RefreshMovementButtons(posture, skipSelected: false);
+    }
+
+    private bool CanInteractWithMovementUi()
+    {
+        if (IsModalDialogOpen)
+            return false;
+        if (_roundWaitVisible)
+            return false;
+        if (_gameSession != null && (_gameSession.IsWaitingForServerRoundResolve || _gameSession.IsBattleFinished))
+            return false;
+        return _player != null;
+    }
+
+    private void RefreshMovementButtons(MovementPosture posture, bool skipSelected)
+    {
+        SetMovementBg(_walkBG, !skipSelected && posture == MovementPosture.Walk);
+        SetMovementBg(_runBG, !skipSelected && posture == MovementPosture.Run);
+        SetMovementBg(_sitBG, !skipSelected && posture == MovementPosture.Sit);
+        SetMovementBg(_hideBG, !skipSelected && posture == MovementPosture.Hide);
+        SetMovementBg(_skipBG, skipSelected);
+    }
+
+    private static void SetMovementBg(Image image, bool selected)
+    {
+        if (image == null)
+            return;
+
+        Color color = image.color;
+        color.r = selected ? 1f : 0f;
+        color.g = selected ? 1f : 0f;
+        color.b = selected ? 1f : 0f;
+        image.color = color;
+    }
+
+    private void CloseSkipDialog(bool restoreSelection)
+    {
+        if (_skipDialogPanel != null)
+            _skipDialogPanel.SetActive(false);
+        IsModalDialogOpen = false;
+        if (restoreSelection)
+        {
+            MovementPosture posture = _player != null ? _player.CurrentMovementPosture : _skipReturnPosture;
+            RefreshMovementButtons(posture, skipSelected: false);
+        }
+    }
+
+    private void EnsureSkipDialog()
+    {
+        if (_skipDialogPanel != null && _skipDialogInput != null && _skipDialogOkButton != null && _skipDialogCancelButton != null)
+            return;
+
+        Canvas canvas = GetComponentInParent<Canvas>();
+        if (canvas == null)
+            canvas = FindFirstObjectByType<Canvas>();
+        if (canvas == null)
+            return;
+
+        if (_skipDialogPanel == null)
+        {
+            _skipDialogPanel = new GameObject("SkipDialogPanel", typeof(RectTransform), typeof(Image));
+            _skipDialogPanel.transform.SetParent(canvas.transform, false);
+            RectTransform rt = _skipDialogPanel.GetComponent<RectTransform>();
+            rt.anchorMin = new Vector2(0.5f, 0.5f);
+            rt.anchorMax = new Vector2(0.5f, 0.5f);
+            rt.pivot = new Vector2(0.5f, 0.5f);
+            rt.sizeDelta = new Vector2(360f, 180f);
+            Image bg = _skipDialogPanel.GetComponent<Image>();
+            bg.color = new Color(0f, 0f, 0f, 0.88f);
+        }
+
+        if (_skipDialogQuestionText == null)
+        {
+            GameObject go = new GameObject("SkipDialogQuestionText", typeof(RectTransform), typeof(Text));
+            go.transform.SetParent(_skipDialogPanel.transform, false);
+            RectTransform rt = go.GetComponent<RectTransform>();
+            rt.anchorMin = new Vector2(0.1f, 0.65f);
+            rt.anchorMax = new Vector2(0.9f, 0.92f);
+            rt.offsetMin = Vector2.zero;
+            rt.offsetMax = Vector2.zero;
+            _skipDialogQuestionText = go.GetComponent<Text>();
+            _skipDialogQuestionText.alignment = TextAnchor.MiddleCenter;
+            _skipDialogQuestionText.color = Color.white;
+            _skipDialogQuestionText.fontSize = 24;
+            _skipDialogQuestionText.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+        }
+
+        if (_skipDialogInput == null)
+            _skipDialogInput = CreateSkipDialogInputField();
+        if (_skipDialogOkButton == null)
+            _skipDialogOkButton = CreateSkipDialogButton("SkipDialogOkButton", "OK", new Vector2(-70f, -55f), OnSkipDialogOkClicked);
+        if (_skipDialogCancelButton == null)
+            _skipDialogCancelButton = CreateSkipDialogButton("SkipDialogCancelButton", "Отмена", new Vector2(70f, -55f), OnSkipDialogCancelClicked);
+
+        BindUiCallbacks();
+        _skipDialogPanel.SetActive(false);
+    }
+
+    private void ActivateSkipInputField()
+    {
+        if (_skipDialogInput == null)
+            return;
+
+        if (EventSystem.current != null)
+            EventSystem.current.SetSelectedGameObject(_skipDialogInput.gameObject);
+        _skipDialogInput.Select();
+        _skipDialogInput.ActivateInputField();
+    }
+
+    private InputField CreateSkipDialogInputField()
+    {
+        GameObject go = new GameObject("SkipDialogInput", typeof(RectTransform), typeof(Image), typeof(InputField));
+        go.transform.SetParent(_skipDialogPanel.transform, false);
+        RectTransform rt = go.GetComponent<RectTransform>();
+        rt.anchorMin = new Vector2(0.2f, 0.42f);
+        rt.anchorMax = new Vector2(0.8f, 0.58f);
+        rt.offsetMin = Vector2.zero;
+        rt.offsetMax = Vector2.zero;
+        Image bg = go.GetComponent<Image>();
+        bg.color = new Color(1f, 1f, 1f, 0.12f);
+
+        GameObject textGo = new GameObject("Text", typeof(RectTransform), typeof(Text));
+        textGo.transform.SetParent(go.transform, false);
+        RectTransform textRt = textGo.GetComponent<RectTransform>();
+        textRt.anchorMin = Vector2.zero;
+        textRt.anchorMax = Vector2.one;
+        textRt.offsetMin = new Vector2(10f, 6f);
+        textRt.offsetMax = new Vector2(-10f, -6f);
+        Text text = textGo.GetComponent<Text>();
+        text.alignment = TextAnchor.MiddleCenter;
+        text.color = Color.white;
+        text.fontSize = 22;
+        text.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+        text.raycastTarget = false;
+
+        InputField input = go.GetComponent<InputField>();
+        input.targetGraphic = bg;
+        input.textComponent = text;
+        input.contentType = InputField.ContentType.IntegerNumber;
+        input.lineType = InputField.LineType.SingleLine;
+        input.text = "1";
+        return input;
+    }
+
+    private Button CreateSkipDialogButton(string name, string caption, Vector2 anchoredPos, UnityEngine.Events.UnityAction onClick)
+    {
+        GameObject go = new GameObject(name, typeof(RectTransform), typeof(Image), typeof(Button));
+        go.transform.SetParent(_skipDialogPanel.transform, false);
+        RectTransform rt = go.GetComponent<RectTransform>();
+        rt.anchorMin = new Vector2(0.5f, 0.5f);
+        rt.anchorMax = new Vector2(0.5f, 0.5f);
+        rt.pivot = new Vector2(0.5f, 0.5f);
+        rt.anchoredPosition = anchoredPos;
+        rt.sizeDelta = new Vector2(120f, 40f);
+        Image bg = go.GetComponent<Image>();
+        bg.color = new Color(0.2f, 0.2f, 0.2f, 1f);
+        Button button = go.GetComponent<Button>();
+        button.onClick.AddListener(onClick);
+
+        GameObject labelGo = new GameObject("Text", typeof(RectTransform), typeof(Text));
+        labelGo.transform.SetParent(go.transform, false);
+        RectTransform labelRt = labelGo.GetComponent<RectTransform>();
+        labelRt.anchorMin = Vector2.zero;
+        labelRt.anchorMax = Vector2.one;
+        labelRt.offsetMin = Vector2.zero;
+        labelRt.offsetMax = Vector2.zero;
+        Text label = labelGo.GetComponent<Text>();
+        label.text = caption;
+        label.alignment = TextAnchor.MiddleCenter;
+        label.color = Color.white;
+        label.fontSize = 20;
+        label.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+        return button;
     }
 
     private void EnsureMiniMap()
@@ -803,6 +1125,26 @@ public class ActionPointsUI : MonoBehaviour
             _turnTrackerPrevButton = FindChildComponent<Button>(frontContent, "TurnTrackerPrevButton");
         if (_turnTrackerNextButton == null)
             _turnTrackerNextButton = FindChildComponent<Button>(frontContent, "TurnTrackerNextButton");
+        if (_walkButton == null)
+            _walkButton = FindChildComponent<Button>(frontContent, "walkButton") ?? FindChildComponent<Button>(frontContent, "WalkButton");
+        if (_runButton == null)
+            _runButton = FindChildComponent<Button>(frontContent, "runButton") ?? FindChildComponent<Button>(frontContent, "RunButton");
+        if (_sitButton == null)
+            _sitButton = FindChildComponent<Button>(frontContent, "sitButton") ?? FindChildComponent<Button>(frontContent, "SitButton");
+        if (_hideButton == null)
+            _hideButton = FindChildComponent<Button>(frontContent, "hideButton") ?? FindChildComponent<Button>(frontContent, "HideButton");
+        if (_skipButton == null)
+            _skipButton = FindChildComponent<Button>(frontContent, "skipButton") ?? FindChildComponent<Button>(frontContent, "SkipButton");
+        if (_walkBG == null)
+            _walkBG = FindChildComponent<Image>(frontContent, "walkBG") ?? FindChildComponent<Image>(frontContent, "WalkBG");
+        if (_runBG == null)
+            _runBG = FindChildComponent<Image>(frontContent, "runBG") ?? FindChildComponent<Image>(frontContent, "RunBG");
+        if (_sitBG == null)
+            _sitBG = FindChildComponent<Image>(frontContent, "sitBG") ?? FindChildComponent<Image>(frontContent, "SitBG");
+        if (_hideBG == null)
+            _hideBG = FindChildComponent<Image>(frontContent, "hideBG") ?? FindChildComponent<Image>(frontContent, "HideBG");
+        if (_skipBG == null)
+            _skipBG = FindChildComponent<Image>(frontContent, "skipBG") ?? FindChildComponent<Image>(frontContent, "SkipBG");
         if (_loggerText == null)
             _loggerText = FindChildComponent<Text>(frontContent, "LoggerText");
         if (_loggerText == null)
@@ -869,6 +1211,32 @@ public class ActionPointsUI : MonoBehaviour
             _endTurnButton.onClick.AddListener(OnEndTurnClicked);
         }
 
+        if (_walkButton != null)
+        {
+            _walkButton.onClick.RemoveListener(OnWalkClicked);
+            _walkButton.onClick.AddListener(OnWalkClicked);
+        }
+        if (_runButton != null)
+        {
+            _runButton.onClick.RemoveListener(OnRunClicked);
+            _runButton.onClick.AddListener(OnRunClicked);
+        }
+        if (_sitButton != null)
+        {
+            _sitButton.onClick.RemoveListener(OnSitClicked);
+            _sitButton.onClick.AddListener(OnSitClicked);
+        }
+        if (_hideButton != null)
+        {
+            _hideButton.onClick.RemoveListener(OnHideClicked);
+            _hideButton.onClick.AddListener(OnHideClicked);
+        }
+        if (_skipButton != null)
+        {
+            _skipButton.onClick.RemoveListener(OnSkipClicked);
+            _skipButton.onClick.AddListener(OnSkipClicked);
+        }
+
         if (_turnTrackerPrevButton != null)
         {
             _turnTrackerPrevButton.onClick.RemoveListener(OnTurnTrackerPrevClicked);
@@ -893,7 +1261,127 @@ public class ActionPointsUI : MonoBehaviour
             _loggerDownButton.onClick.AddListener(OnLoggerDownClicked);
         }
 
+        if (_battleEndCloseButton != null)
+        {
+            _battleEndCloseButton.onClick.RemoveListener(OnBattleEndCloseClicked);
+            _battleEndCloseButton.onClick.AddListener(OnBattleEndCloseClicked);
+        }
+
+        if (_battleEndMainMenuButton != null)
+        {
+            _battleEndMainMenuButton.onClick.RemoveListener(OnBattleEndMainMenuClicked);
+            _battleEndMainMenuButton.onClick.AddListener(OnBattleEndMainMenuClicked);
+        }
+
+        if (_skipDialogOkButton != null)
+        {
+            _skipDialogOkButton.onClick.RemoveListener(OnSkipDialogOkClicked);
+            _skipDialogOkButton.onClick.AddListener(OnSkipDialogOkClicked);
+        }
+        if (_skipDialogCancelButton != null)
+        {
+            _skipDialogCancelButton.onClick.RemoveListener(OnSkipDialogCancelClicked);
+            _skipDialogCancelButton.onClick.AddListener(OnSkipDialogCancelClicked);
+        }
+
         RefreshLoggerView();
+    }
+
+    private void HandleBattleFinished(bool victory)
+    {
+        EnsureBattleEndPanel();
+        if (_battleEndTitleText != null)
+            _battleEndTitleText.text = victory ? "Бой выигран" : "Бой проигран";
+        if (_battleEndPanel != null)
+            _battleEndPanel.SetActive(true);
+        HideRoundWaitPanel();
+    }
+
+    private void OnBattleEndCloseClicked()
+    {
+        if (_battleEndPanel != null)
+            _battleEndPanel.SetActive(false);
+    }
+
+    private void OnBattleEndMainMenuClicked()
+    {
+        Time.timeScale = 1f;
+        SceneManager.LoadScene("MainMenu");
+    }
+
+    private void EnsureBattleEndPanel()
+    {
+        if (_battleEndPanel != null && _battleEndTitleText != null && _battleEndCloseButton != null && _battleEndMainMenuButton != null)
+            return;
+
+        Canvas canvas = GetComponentInParent<Canvas>();
+        if (canvas == null) canvas = FindFirstObjectByType<Canvas>();
+        if (canvas == null) return;
+
+        if (_battleEndPanel == null)
+        {
+            _battleEndPanel = new GameObject("BattleEndPanel", typeof(RectTransform), typeof(Image));
+            _battleEndPanel.transform.SetParent(canvas.transform, false);
+            RectTransform panelRt = _battleEndPanel.GetComponent<RectTransform>();
+            panelRt.anchorMin = new Vector2(0.5f, 0.5f);
+            panelRt.anchorMax = new Vector2(0.5f, 0.5f);
+            panelRt.pivot = new Vector2(0.5f, 0.5f);
+            panelRt.sizeDelta = new Vector2(420f, 220f);
+            Image bg = _battleEndPanel.GetComponent<Image>();
+            bg.color = new Color(0f, 0f, 0f, 0.86f);
+        }
+
+        if (_battleEndTitleText == null)
+        {
+            var go = new GameObject("BattleEndTitle", typeof(RectTransform), typeof(Text));
+            go.transform.SetParent(_battleEndPanel.transform, false);
+            var rt = go.GetComponent<RectTransform>();
+            rt.anchorMin = new Vector2(0.1f, 0.60f);
+            rt.anchorMax = new Vector2(0.9f, 0.95f);
+            rt.offsetMin = Vector2.zero;
+            rt.offsetMax = Vector2.zero;
+            _battleEndTitleText = go.GetComponent<Text>();
+            _battleEndTitleText.alignment = TextAnchor.MiddleCenter;
+            _battleEndTitleText.color = Color.white;
+            _battleEndTitleText.fontSize = 36;
+            _battleEndTitleText.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+        }
+
+        if (_battleEndCloseButton == null)
+            _battleEndCloseButton = CreateBattleEndButton("BattleEndCloseButton", "Закрыть", new Vector2(-90f, -70f), OnBattleEndCloseClicked);
+        if (_battleEndMainMenuButton == null)
+            _battleEndMainMenuButton = CreateBattleEndButton("BattleEndMainMenuButton", "Главное меню", new Vector2(90f, -70f), OnBattleEndMainMenuClicked);
+    }
+
+    private Button CreateBattleEndButton(string name, string caption, Vector2 anchoredPos, UnityEngine.Events.UnityAction onClick)
+    {
+        GameObject go = new GameObject(name, typeof(RectTransform), typeof(Image), typeof(Button));
+        go.transform.SetParent(_battleEndPanel.transform, false);
+        RectTransform rt = go.GetComponent<RectTransform>();
+        rt.anchorMin = new Vector2(0.5f, 0.5f);
+        rt.anchorMax = new Vector2(0.5f, 0.5f);
+        rt.pivot = new Vector2(0.5f, 0.5f);
+        rt.anchoredPosition = anchoredPos;
+        rt.sizeDelta = new Vector2(160f, 44f);
+        var img = go.GetComponent<Image>();
+        img.color = new Color(0.2f, 0.2f, 0.2f, 1f);
+        var btn = go.GetComponent<Button>();
+        btn.onClick.AddListener(onClick);
+
+        GameObject labelGo = new GameObject("Text", typeof(RectTransform), typeof(Text));
+        labelGo.transform.SetParent(go.transform, false);
+        RectTransform lrt = labelGo.GetComponent<RectTransform>();
+        lrt.anchorMin = Vector2.zero;
+        lrt.anchorMax = Vector2.one;
+        lrt.offsetMin = Vector2.zero;
+        lrt.offsetMax = Vector2.zero;
+        Text txt = labelGo.GetComponent<Text>();
+        txt.text = caption;
+        txt.alignment = TextAnchor.MiddleCenter;
+        txt.color = Color.white;
+        txt.fontSize = 20;
+        txt.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+        return btn;
     }
 
     private static T FindChildComponent<T>(Transform root, string childName) where T : Component

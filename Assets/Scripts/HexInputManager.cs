@@ -41,6 +41,8 @@ public class HexInputManager : MonoBehaviour
     private float _lastClickTime;
     private Vector2 _lastClickPosition;
     private HexCell _lastHoveredCell;
+    private int _lastHoverAp = int.MinValue;
+    private MovementPosture _lastHoverPosture = MovementPosture.Walk;
     private GameObject _holdIndicatorGo;
     private SpriteRenderer _holdIndicatorBaseRenderer;
     private static Sprite _holdBlockSprite;
@@ -60,6 +62,18 @@ public class HexInputManager : MonoBehaviour
         if (_camera == null) _camera = Camera.main;
         if (_camera == null) return;
         if (Mouse.current == null) return;
+        if (ActionPointsUI.IsModalDialogOpen) return;
+        if (_player != null && (_player.IsDead || _player.IsHidden))
+        {
+            if (_lastHoveredCell != null)
+            {
+                _lastHoveredCell.SetHighlight(false);
+                _lastHoveredCell.SetCostLabel(-1);
+                _lastHoveredCell = null;
+            }
+            IsHoldingRemoteTargetWithLeftMouse = false;
+            return;
+        }
         if (GameSession.Active != null && GameSession.Active.BlockPlayerInput)
         {
             if (_lastHoveredCell != null)
@@ -80,7 +94,10 @@ public class HexInputManager : MonoBehaviour
     private void UpdateHover()
     {
         HexCell cell = GetHexUnderCursor();
-        if (cell == _lastHoveredCell) return;
+        MovementPosture posture = _player != null ? _player.CurrentMovementPosture : MovementPosture.Walk;
+        int currentAp = _player != null ? _player.CurrentAp : int.MinValue;
+        if (cell == _lastHoveredCell && currentAp == _lastHoverAp && posture == _lastHoverPosture)
+            return;
 
         if (_lastHoveredCell != null)
         {
@@ -89,6 +106,8 @@ public class HexInputManager : MonoBehaviour
         }
 
         _lastHoveredCell = cell;
+        _lastHoverAp = currentAp;
+        _lastHoverPosture = posture;
         if (cell != null)
         {
             cell.SetHighlight(true);
@@ -133,7 +152,12 @@ public class HexInputManager : MonoBehaviour
     private void OnDoubleClick()
     {
         HexCell cell = GetHexUnderCursor();
-        if (cell == null || _player == null || _player.IsMoving) return;
+        if (cell == null || _player == null || _player.IsMoving || _player.IsDead || _player.IsHidden) return;
+        if (!_player.EnsureMovablePostureForMovement())
+        {
+            GameSession.OnNetworkMessage?.Invoke("Недостаточно ОД для выхода из укрытия");
+            return;
+        }
 
         List<(int col, int row)> path = HexPathfinding.FindPath(
             _grid,
@@ -173,7 +197,7 @@ public class HexInputManager : MonoBehaviour
         if (!Mouse.current.leftButton.isPressed)
         {
             if (_heldRemoteTarget != null && _hoveredBodyPart != BodyPart.None)
-                LogAttackedBodyPart(_hoveredBodyPart);
+                ApplyAttackOnRelease(_heldRemoteTarget, _hoveredBodyPart);
             _heldRemoteTarget = null;
             _hasHoldIndicatorAnchor = false;
             _hoveredBodyPart = BodyPart.None;
@@ -444,20 +468,28 @@ public class HexInputManager : MonoBehaviour
         ApplyHoldPartColors(part);
     }
 
-    private static void LogAttackedBodyPart(BodyPart part)
+    private void ApplyAttackOnRelease(RemoteBattleUnitView target, BodyPart part)
     {
+        if (target == null || part == BodyPart.None)
+            return;
+
+        string label = "корпус";
         switch (part)
         {
             case BodyPart.Head:
-                GameSession.OnNetworkMessage?.Invoke("Атака: голова");
+                label = "голова";
                 break;
             case BodyPart.Torso:
-                GameSession.OnNetworkMessage?.Invoke("Атака: корпус");
+                label = "корпус";
                 break;
             case BodyPart.Legs:
-                GameSession.OnNetworkMessage?.Invoke("Атака: ноги");
+                label = "ноги";
                 break;
         }
+
+        bool applied = GameSession.Active != null && GameSession.Active.TryPerformSilhouetteAttack(target, label);
+        if (!applied)
+            GameSession.OnNetworkMessage?.Invoke("Атака не применена");
     }
 
     private void ApplyHoldPartColors(BodyPart highlightedPart)

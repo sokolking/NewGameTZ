@@ -35,7 +35,18 @@ CREATE TABLE IF NOT EXISTS battles (
 CREATE TABLE IF NOT EXISTS users (
     id BIGSERIAL PRIMARY KEY,
     username TEXT NOT NULL UNIQUE,
-    password TEXT NOT NULL
+    password TEXT NOT NULL,
+    max_hp INT NOT NULL DEFAULT 10,
+    max_ap INT NOT NULL DEFAULT 100,
+    weapon_code TEXT NOT NULL DEFAULT 'fist'
+);
+
+CREATE TABLE IF NOT EXISTS weapons (
+    id BIGSERIAL PRIMARY KEY,
+    code TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    damage INT NOT NULL,
+    range INT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS battle_turns (
@@ -56,12 +67,26 @@ CREATE TABLE IF NOT EXISTS battle_turn_links (
 CREATE INDEX IF NOT EXISTS ix_battle_turn_links_battle_id_turn_index
     ON battle_turn_links (battle_id, turn_index);
 
-INSERT INTO users (username, password)
+ALTER TABLE users ADD COLUMN IF NOT EXISTS max_hp INT NOT NULL DEFAULT 10;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS max_ap INT NOT NULL DEFAULT 100;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS weapon_code TEXT NOT NULL DEFAULT 'fist';
+
+INSERT INTO users (username, password, max_hp, max_ap, weapon_code)
 VALUES
-    ('test', 'test'),
-    ('test2', 'test')
+    ('test', 'test', 10, 270, 'fist'),
+    ('test2', 'test', 10, 39, 'fist')
 ON CONFLICT (username) DO UPDATE
-SET password = EXCLUDED.password;
+SET password = EXCLUDED.password,
+    max_hp = EXCLUDED.max_hp,
+    max_ap = EXCLUDED.max_ap,
+    weapon_code = EXCLUDED.weapon_code;
+
+INSERT INTO weapons (code, name, damage, range)
+VALUES ('fist', 'Fist', 1, 1)
+ON CONFLICT (code) DO UPDATE
+SET name = EXCLUDED.name,
+    damage = EXCLUDED.damage,
+    range = EXCLUDED.range;
 """;
             command.ExecuteNonQuery();
         }

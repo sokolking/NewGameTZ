@@ -82,7 +82,7 @@ public class BattleRoomStore
     /// - Если есть ожидающий и solo == false — создаём пару и возвращаем battleStarted второму игроку.
     /// - Иначе встаём в очередь как P1 и ждём второго игрока.
     /// </summary>
-    public JoinResponse JoinOrCreate(int startCol, int startRow, bool solo)
+    public JoinResponse JoinOrCreate(int startCol, int startRow, bool solo, int playerMaxHp, int playerMaxAp, string weaponCode, int weaponDamage, int weaponRange)
     {
         lock (_lock)
         {
@@ -94,6 +94,7 @@ public class BattleRoomStore
                 int soloCol = Math.Clamp(startCol, 0, HexSpawn.DefaultGridWidth - 1);
                 int soloRow = Math.Clamp(startRow, 0, HexSpawn.DefaultGridLength - 1);
                 soloRoom.AddPlayer("P1", soloCol, soloRow);
+                soloRoom.SetPlayerCombatProfile("P1", playerMaxHp, playerMaxAp, weaponCode, weaponDamage, weaponRange);
                 _rooms[soloBattleId] = soloRoom;
                 _battleHistoryDb.EnsureBattle(soloBattleId);
                 soloRoom.StartFirstRound();
@@ -113,6 +114,7 @@ public class BattleRoomStore
                 var (p1c, p1r) = waitingRoom.Players["P1"];
                 var (p2c, p2r) = HexSpawn.FindOpponentSpawn(p1c, p1r, HexSpawn.DefaultGridWidth, HexSpawn.DefaultGridLength, HexSpawn.MinSpawnHexDistance);
                 waitingRoom.AddPlayer("P2", p2c, p2r);
+                waitingRoom.SetPlayerCombatProfile("P2", playerMaxHp, playerMaxAp, weaponCode, weaponDamage, weaponRange);
                 waitingRoom.StartFirstRound();
                 Console.WriteLine($"[tzInfo] Matchmaking pair completed: battleId={battleId}, P1=({p1c},{p1r}), P2=({p2c},{p2r})");
                 _waitingBattleId = null;
@@ -124,6 +126,7 @@ public class BattleRoomStore
             int pc = Math.Clamp(startCol, 0, HexSpawn.DefaultGridWidth - 1);
             int pr = Math.Clamp(startRow, 0, HexSpawn.DefaultGridLength - 1);
             r.AddPlayer("P1", pc, pr);
+            r.SetPlayerCombatProfile("P1", playerMaxHp, playerMaxAp, weaponCode, weaponDamage, weaponRange);
             _rooms[bid] = r;
             _battleHistoryDb.EnsureBattle(bid);
             _waitingBattleId = bid;
@@ -149,7 +152,7 @@ public class BattleRoomStore
             if (payload.RoundIndex != room.RoundIndex)
                 return SubmitTurnResult.RoundMismatch(room.RoundIndex);
             bool shouldClose = room.SubmitTurn(payload);
-            Console.WriteLine($"[tzInfo] SubmitTurn: battleId={battleId}, playerId={payload.PlayerId}, round={payload.RoundIndex}, pathLen={(payload.Path?.Length ?? 0)}, shouldClose={shouldClose}");
+            Console.WriteLine($"[tzInfo] SubmitTurn: battleId={battleId}, playerId={payload.PlayerId}, round={payload.RoundIndex}, actionCount={(payload.Actions?.Length ?? 0)}, shouldClose={shouldClose}");
             if (!shouldClose)
                 return SubmitTurnResult.Accepted(false);
             room.CloseRound(fromTimer: false);

@@ -147,9 +147,7 @@ public class BattleSignalRConnection : MonoBehaviour
                 battleId = _battleId,
                 playerId = _playerId,
                 roundIndex = p.roundIndex,
-                path = p.path,
-                apSpentThisTurn = p.apSpentThisTurn,
-                stepsTakenThisTurn = p.stepsTakenThisTurn
+                actions = p.actions
             };
             var json = JsonUtility.ToJson(msg);
             var bytes = Encoding.UTF8.GetBytes(json);

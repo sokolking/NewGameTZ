@@ -24,6 +24,13 @@ public class MovementRangeHighlighter : MonoBehaviour
     private void Update()
     {
         if (_grid == null || _player == null) return;
+        if (_player.IsDead || _player.IsHidden)
+        {
+            ClearMask();
+            _wasBlocked = false;
+            _wasMoving = false;
+            return;
+        }
         bool isBlocked = GameSession.Active != null && GameSession.Active.BlockPlayerInput;
         if (isBlocked)
         {
@@ -90,8 +97,6 @@ public class MovementRangeHighlighter : MonoBehaviour
         int maxSteps = GetMaxReachableSteps(stepsAlready);
         if (maxSteps <= 0) return;
 
-        _player.GetPenaltyStepCosts(out int prelastCost, out int lastCost);
-
         var visited = new HashSet<(int col, int row)>();
         var queue = new Queue<(int col, int row, int dist)>();
 
@@ -105,9 +110,8 @@ public class MovementRangeHighlighter : MonoBehaviour
             HexCell cell = _grid.GetCell(col, row);
             if (cell != null && !cell.IsObstacle)
             {
-                int totalApIfGoHere = _player.GetStepCost(stepsAlready + dist);
                 bool reachableNow = dist <= maxSteps;
-                bool isPenaltyRing = reachableNow && (totalApIfGoHere == prelastCost || totalApIfGoHere == lastCost);
+                bool isPenaltyRing = reachableNow && _player.IsPenaltyHexAtDistance(dist);
 
                 Color c = isPenaltyRing ? _farColor : _nearColor;
                 c.a = 0.1f;
@@ -120,8 +124,7 @@ public class MovementRangeHighlighter : MonoBehaviour
             {
                 HexGrid.GetNeighbor(col, row, dir, out int nc, out int nr);
                 var key = (nc, nr);
-                HexCell nextCell = _grid.GetCell(nc, nr);
-                if (!visited.Contains(key) && _grid.IsInBounds(nc, nr) && (nextCell == null || !nextCell.IsObstacle))
+                if (!visited.Contains(key) && _grid.IsInBounds(nc, nr))
                 {
                     visited.Add(key);
                     queue.Enqueue((nc, nr, dist + 1));

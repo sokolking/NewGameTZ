@@ -12,10 +12,16 @@ public class RemoteBattleUnitView : MonoBehaviour
     [SerializeField] private float _moveDurationPerHex = 0.2f;
 
     private bool _isMoving;
+    private int _maxHp = 10;
+    private int _currentHp = 10;
 
     public string NetworkPlayerId { get; private set; }
     public bool IsMoving => _isMoving;
     public bool IsMob => !string.IsNullOrEmpty(NetworkPlayerId) && NetworkPlayerId.StartsWith("MOB_", StringComparison.OrdinalIgnoreCase);
+    public int CurrentCol { get; private set; }
+    public int CurrentRow { get; private set; }
+    public int CurrentHp => _currentHp;
+    public int MaxHp => _maxHp;
 
     public void Initialize(string playerId, HexGrid grid, int startCol, int startRow, float moveDurationPerHex = -1f)
     {
@@ -23,7 +29,11 @@ public class RemoteBattleUnitView : MonoBehaviour
         _grid = grid;
         if (moveDurationPerHex > 0f) _moveDurationPerHex = moveDurationPerHex;
         if (_grid != null)
+        {
             transform.position = _grid.GetCellWorldPosition(startCol, startRow);
+            CurrentCol = startCol;
+            CurrentRow = startRow;
+        }
         EnsureVisual();
     }
 
@@ -48,11 +58,23 @@ public class RemoteBattleUnitView : MonoBehaviour
         if (_grid == null || actualPath == null || actualPath.Length == 0)
         {
             if (_grid != null && finalPosition != null)
+            {
                 transform.position = _grid.GetCellWorldPosition(finalPosition.col, finalPosition.row);
+                CurrentCol = finalPosition.col;
+                CurrentRow = finalPosition.row;
+            }
             return;
         }
         var pos = prepareForAnimation ? actualPath[0] : actualPath[actualPath.Length - 1];
         transform.position = _grid.GetCellWorldPosition(pos.col, pos.row);
+        CurrentCol = finalPosition != null ? finalPosition.col : pos.col;
+        CurrentRow = finalPosition != null ? finalPosition.row : pos.row;
+    }
+
+    public void SetHealth(int currentHp, int maxHp)
+    {
+        _maxHp = Mathf.Max(1, maxHp);
+        _currentHp = Mathf.Clamp(currentHp, 0, _maxHp);
     }
 
     public IEnumerator PlayPathAnimation(HexPosition[] path)

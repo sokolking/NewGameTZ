@@ -12,6 +12,7 @@ builder.Services.AddSingleton<BattlePostgresDatabase>();
 builder.Services.AddSingleton<BattleHistoryDatabase>();
 builder.Services.AddSingleton<BattleTurnDatabase>();
 builder.Services.AddSingleton<BattleUserDatabase>();
+builder.Services.AddSingleton<BattleWeaponDatabase>();
 builder.Services.AddSingleton<BattleRoomStore>();
 builder.Services.AddCors(options =>
 {
@@ -44,6 +45,7 @@ postgresDb.EnsureCreated();
 var battleHistoryDb = app.Services.GetRequiredService<BattleHistoryDatabase>();
 var battleTurnDb = app.Services.GetRequiredService<BattleTurnDatabase>();
 var battleUserDb = app.Services.GetRequiredService<BattleUserDatabase>();
+var battleWeaponDb = app.Services.GetRequiredService<BattleWeaponDatabase>();
 
 BattleRoom.RoundClosedForPush += room =>
 {
@@ -98,8 +100,22 @@ app.MapPost("/api/battle/join", (BattleRoomStore s, JoinRequest? body) =>
     string password = body?.password ?? "";
     if (!battleUserDb.ValidateCredentials(username, password))
         return Results.Json(new ErrorResponse { Error = "Invalid username or password." }, jsonOpt, statusCode: 401);
+    battleUserDb.TryGetCombatProfile(username, out int playerMaxHp, out int playerMaxAp, out string weaponCode);
+    if (!battleWeaponDb.TryGetWeaponByCode(weaponCode, out var weapon))
+    {
+        weaponCode = "fist";
+        battleWeaponDb.TryGetWeaponByCode(weaponCode, out weapon);
+    }
 
-    var resp = s.JoinOrCreate(startCol, startRow, solo);
+    var resp = s.JoinOrCreate(
+        startCol,
+        startRow,
+        solo,
+        playerMaxHp,
+        playerMaxAp,
+        weaponCode,
+        weapon.Damage,
+        weapon.Range);
     return Results.Json(resp, jsonOpt);
 });
 
@@ -224,7 +240,7 @@ app.MapGet("/api/battle/{battleId}", (string battleId, BattleRoomStore s) =>
     if (room == null) return Results.Json(new { error = "Battle not found" }, statusCode: 404);
     var battleRecord = battleHistoryDb.GetBattle(battleId);
 
-    room.FillSpawnArrays(out var spawnIds, out var spawnCols, out var spawnRows);
+    room.FillSpawnArrays(out var spawnIds, out var spawnCols, out var spawnRows, out var spawnCurrentAps, out var spawnMaxHps, out var spawnCurrentHps, out var spawnCurrentPostures);
     var response = new BattleStateResponse
     {
         RoundIndex = room.RoundIndex,
@@ -238,7 +254,11 @@ app.MapGet("/api/battle/{battleId}", (string battleId, BattleRoomStore s) =>
         AllSubmittedThisRound = room.Submissions.Count >= room.Players.Count && room.Players.Count > 0,
         SpawnPlayerIds = spawnIds,
         SpawnCols = spawnCols,
-        SpawnRows = spawnRows
+        SpawnRows = spawnRows,
+        SpawnCurrentAps = spawnCurrentAps,
+        SpawnMaxHps = spawnMaxHps,
+        SpawnCurrentHps = spawnCurrentHps,
+        SpawnCurrentPostures = spawnCurrentPostures
     };
     return Results.Json(response, jsonOpt);
 });
@@ -277,6 +297,23 @@ app.MapGet("/api/db/users", (BattleUserDatabase db, int? take) =>
 {
     int requested = take ?? 100;
     return Results.Json(db.ListUsers(requested), jsonOpt);
+});
+
+app.MapGet("/api/db/weapons", (BattleWeaponDatabase db, int? take) =>
+{
+    int requested = take ?? 100;
+    return Results.Json(db.ListWeapons(requested), jsonOpt);
+});
+
+app.MapPost("/api/db/weapons", (BattleWeaponDatabase db, WeaponUpsertRequest request) =>
+{
+    if (request == null)
+        return Results.Json(new { error = "request body required" }, statusCode: 400);
+    if (string.IsNullOrWhiteSpace(request.code) || string.IsNullOrWhiteSpace(request.name))
+        return Results.Json(new { error = "code and name are required" }, statusCode: 400);
+
+    db.UpsertWeapon(request.code, request.name, request.damage, request.range);
+    return Results.Ok(new { ok = true });
 });
 
 app.MapGet("/api/logs/recent", (BattleLogStore logs, int? take) =>
@@ -325,6 +362,7 @@ app.MapGet("/api/logs/stream", async (HttpContext ctx, BattleLogStore logs) =>
 app.MapGet("/logs", () => Results.Content(BattleLogDashboardPage.Html, "text/html; charset=utf-8"));
 app.MapGet("/db", () => Results.Content(BattleDbDashboardPage.Html, "text/html; charset=utf-8"));
 app.MapGet("/users", () => Results.Content(BattleUsersDashboardPage.Html, "text/html; charset=utf-8"));
+app.MapGet("/weapons", () => Results.Content(BattleWeaponsDashboardPage.Html, "text/html; charset=utf-8"));
 
 // POST leave — только вне игровой сцены (отмена очереди с меню; в бою выход — disconnect WS + leave по сокету).
 app.MapPost("/api/battle/{battleId}/leave", (string battleId, string playerId, BattleRoomStore s) =>
@@ -373,6 +411,10 @@ public class BattleStateResponse
     public string[]? SpawnPlayerIds { get; set; }
     public int[]? SpawnCols { get; set; }
     public int[]? SpawnRows { get; set; }
+    public int[]? SpawnCurrentAps { get; set; }
+    public int[]? SpawnMaxHps { get; set; }
+    public int[]? SpawnCurrentHps { get; set; }
+    public string[]? SpawnCurrentPostures { get; set; }
 }
 
 public class PollResponse
@@ -386,6 +428,14 @@ public class PollResponse
 public class ErrorResponse
 {
     public string Error { get; set; } = "";
+}
+
+public class WeaponUpsertRequest
+{
+    public string code { get; set; } = "";
+    public string name { get; set; } = "";
+    public int damage { get; set; }
+    public int range { get; set; }
 }
 
 public static class BattleLogDashboardPage

@@ -16,15 +16,20 @@ public class GameSession : MonoBehaviour
         public int Row;
         public int CurrentAp;
         public float PenaltyFraction;
+        public string CurrentPosture;
         public bool IsLocal;
     }
 
     private sealed class LiveTurnDraftSnapshot
     {
         public int RoundIndex;
-        public List<(int col, int row)> Path = new();
-        public int ApSpent;
-        public int StepsTaken;
+        public BattleQueuedAction[] Actions = System.Array.Empty<BattleQueuedAction>();
+    }
+
+    private sealed class ExecutedActionPlaybackEntry
+    {
+        public BattleExecutedAction Action;
+        public int Order;
     }
 
     /// <summary>Сообщения для UI: «Не удалось отправить ход», «Клетка занята», rejectedReason и т.д.</summary>
@@ -35,6 +40,8 @@ public class GameSession : MonoBehaviour
     public static System.Action OnWebSocketRoundPushReceived;
     /// <summary>Ожидание отменено (ошибка отправки, конец боя).</summary>
     public static System.Action OnServerRoundWaitCancelled;
+    /// <summary>Итог боя: true = победа, false = поражение.</summary>
+    public static System.Action<bool> OnBattleFinished;
 
     [Header("Режим и идентификаторы")]
     [Tooltip("Включить отправку хода на сервер при завершении хода.")]
@@ -48,6 +55,12 @@ public class GameSession : MonoBehaviour
     [Header("Локальный юнит")]
     [Tooltip("Юнит локального игрока (для применения TurnResult и синхронизации раунда). Если не задан — ищется в сцене.")]
     [SerializeField] private Player _localPlayer;
+
+    [Header("Визуализация раунда")]
+    [Tooltip("Пауза после атакующего действия, чтобы было видно ритм тиков и разницу в ОД.")]
+    [SerializeField] private float _attackActionPauseSeconds = 0.08f;
+    [Tooltip("Короткая пауза между тиками action journal.")]
+    [SerializeField] private float _tickPauseSeconds = 0.03f;
 
     [Header("Debug")]
     [Tooltip("Для отладки: заспавнить моба рядом с локальным игроком на соседнем гексе.")]
@@ -77,6 +90,8 @@ public class GameSession : MonoBehaviour
     private readonly List<Coroutine> _activeReplayAnimationCoroutines = new();
     private LiveTurnDraftSnapshot _liveTurnDraftSnapshot;
     private bool _debugMobSpawned;
+    private bool _battleFinished;
+    private const int FistRange = 1;
 
     /// <summary>Блокировка ввода: ожидание результата раунда или анимация.</summary>
     public bool BlockPlayerInput => _waitingForServerRoundResolve || IsBattleAnimationPlaying || IsTurnHistoryReplayPlaying || IsViewingHistoricalTurn;
@@ -91,6 +106,7 @@ public class GameSession : MonoBehaviour
     public int DisplayedTurnNumber => _selectedTurnHistoryPointer >= 0 ? _selectedTurnHistoryPointer + 1 : _serverRoundIndex + 1;
     public bool CanViewPreviousTurn => _selectedTurnHistoryPointer > 0 || (_selectedTurnHistoryPointer < 0 && _currentTurnHistoryPointer >= 0);
     public bool CanViewNextTurn => _selectedTurnHistoryPointer >= 0;
+    public bool IsBattleFinished => _battleFinished;
 
     public bool IsInBattleWithServer() => _serverConnection != null && _serverConnection.IsInBattle;
     public bool IsObstacleCell(int col, int row) => _obstacleCells.Contains((col, row));
@@ -179,11 +195,15 @@ public class GameSession : MonoBehaviour
 
     public bool TryAutoSubmitTimedOutLiveTurn(bool animateResolvedRound)
     {
+        if (_battleFinished)
+            return false;
         return TrySubmitCurrentLiveTurnDraft(animateResolvedRound);
     }
 
     public bool TrySubmitCurrentLiveTurnDraft(bool animateResolvedRound)
     {
+        if (_battleFinished)
+            return false;
         if (_waitingForServerRoundResolve || !IsInBattleWithServer())
             return false;
 
@@ -202,7 +222,7 @@ public class GameSession : MonoBehaviour
             CancelTurnReplayPlayback();
 
         BeginWaitingForServerRoundResolve(animateResolvedRound);
-        SubmitTurnLocal(draft.Path, draft.ApSpent, draft.StepsTaken, _serverRoundIndex);
+        SubmitTurnLocal(draft.Actions, _serverRoundIndex);
         return true;
     }
 
@@ -249,6 +269,41 @@ public class GameSession : MonoBehaviour
 
         if (_debugSpawnMobNearLocalPlayer)
             StartCoroutine(SpawnDebugMobWhenReady());
+    }
+
+    public bool TryPerformSilhouetteAttack(RemoteBattleUnitView target, string bodyPartLabel)
+    {
+        if (_battleFinished || target == null) return false;
+        var local = _localPlayer != null ? _localPlayer : FindFirstObjectByType<Player>();
+        if (local == null) return false;
+
+        int dist = HexDistance(local.CurrentCol, local.CurrentRow, target.CurrentCol, target.CurrentRow);
+        if (dist > FistRange)
+        {
+            OnNetworkMessage?.Invoke("Цель вне дистанции");
+            return false;
+        }
+
+        if (!local.QueueAttackAction(target.NetworkPlayerId, bodyPartLabel, 1))
+        {
+            OnNetworkMessage?.Invoke("Недостаточно ОД");
+            return false;
+        }
+
+        OnNetworkMessage?.Invoke($"Атака в очередь: {bodyPartLabel}");
+        return true;
+    }
+
+    private static int HexDistance(int colA, int rowA, int colB, int rowB)
+    {
+        // odd-r offset -> cube
+        int ax = colA - (rowA - (rowA & 1)) / 2;
+        int az = rowA;
+        int ay = -ax - az;
+        int bx = colB - (rowB - (rowB & 1)) / 2;
+        int bz = rowB;
+        int by = -bx - bz;
+        return (Mathf.Abs(ax - bx) + Mathf.Abs(ay - by) + Mathf.Abs(az - bz)) / 2;
     }
 
     private IEnumerator SpawnDebugMobWhenReady()
@@ -327,9 +382,11 @@ public class GameSession : MonoBehaviour
     /// Собрать данные хода и отправить на сервер (или в заглушку).
     /// Вызывать до применения EndTurn у Player.
     /// </summary>
-    public void SubmitTurnLocal(List<(int col, int row)> path, int apSpentThisTurn, int stepsTakenThisTurn, int roundIndex)
+    public void SubmitTurnLocal(BattleQueuedAction[] actions, int roundIndex)
     {
-        var payload = BuildSubmitPayload(path, apSpentThisTurn, stepsTakenThisTurn, roundIndex);
+        if (_battleFinished)
+            return;
+        var payload = BuildSubmitPayload(actions, roundIndex);
         // Одиночный бой через меню тоже идёт по серверу при IsInBattle — без проверки только _isOnlineMode,
         // иначе UI ждёт раунд, а submit не уходит.
         if (_serverConnection != null && _serverConnection.IsInBattle)
@@ -363,13 +420,19 @@ public class GameSession : MonoBehaviour
 
     // Одиночная игра теперь тоже синхронизируется через сервер; локальный ИИ-ход больше не требуется.
 
-    /// <summary>Применить результат хода с сервера: все юниты + параллельная анимация по actualPath.</summary>
+    /// <summary>Применить результат хода с сервера: подготовить юнитов и проиграть action journal по тикам.</summary>
     public void ApplyTurnResult(TurnResultPayload result)
     {
         if (result == null || result.results == null) return;
+        AppendServerTurnLogs(result, showDamagePopupsImmediately: false);
         var animJobs = BuildTurnResultAnimationJobs(result, prepareForAnimation: true);
-        if (animJobs.Count > 0)
+        var playback = BuildExecutedActionPlayback(result);
+        if (playback.Count > 0)
+            StartCoroutine(PlayExecutedActionTimeline(result, playback));
+        else if (animJobs.Count > 0)
             StartCoroutine(PlayAllTurnAnimationsParallel(animJobs));
+        if (result.battleFinished)
+            HandleBattleFinishedFromServer(result);
     }
 
     /// <summary>Ожидали свой сабмит: скрыть бар → анимация → новый раунд и снятие блокировки.</summary>
@@ -378,8 +441,10 @@ public class GameSession : MonoBehaviour
         if (result == null || result.results == null) return;
         bool animateResolvedRound = _animateResolvedRoundForPendingSubmit;
         _animateResolvedRoundForPendingSubmit = true;
+        AppendServerTurnLogs(result, showDamagePopupsImmediately: !animateResolvedRound);
         var animJobs = BuildTurnResultAnimationJobs(result, animateResolvedRound);
-        StartCoroutine(DeferredRoundAfterAnimations(animJobs, nextRoundIndex, roundDeadlineUtcMs));
+        var playback = animateResolvedRound ? BuildExecutedActionPlayback(result) : null;
+        StartCoroutine(DeferredRoundAfterAnimations(animJobs, playback, nextRoundIndex, roundDeadlineUtcMs, result));
     }
 
     private List<(object unit, bool isLocal, HexPosition[] path)> BuildTurnResultAnimationJobs(TurnResultPayload result, bool prepareForAnimation)
@@ -397,14 +462,23 @@ public class GameSession : MonoBehaviour
             if (!isMob && r.playerId == _playerId)
             {
                 if (local == null) continue;
+                local.SetHidden(false);
                 if (!r.accepted && !string.IsNullOrEmpty(r.rejectedReason))
                     OnNetworkMessage?.Invoke(r.rejectedReason);
                 else if (!r.accepted)
                     OnNetworkMessage?.Invoke("Клетка занята");
 
-                local.ApplyServerTurnResult(r.finalPosition, r.actualPath, r.currentAp, r.penaltyFraction, prepareForAnimation);
+                local.ApplyServerTurnResult(r.finalPosition, r.actualPath, r.currentAp, r.penaltyFraction, r.currentPosture, prepareForAnimation);
+                local.SetHealth(r.currentHp, r.maxHp > 0 ? r.maxHp : local.MaxHp);
                 if (prepareForAnimation)
                     animJobs.Add((local, true, r.actualPath));
+                else if (r.isDead)
+                {
+                    if (_isTurnHistoryReplayPlaying)
+                        ApplyLocalHiddenDeadState(silent: true);
+                    else
+                        StartCoroutine(HandleLocalDeathAfterMessage());
+                }
                 continue;
             }
 
@@ -425,22 +499,43 @@ public class GameSession : MonoBehaviour
             if (remote != null)
             {
                 remote.ApplyServerTurnResult(r.finalPosition, r.actualPath, r.currentAp, r.penaltyFraction, prepareForAnimation);
+                remote.SetHealth(r.currentHp, r.maxHp > 0 ? r.maxHp : 10);
                 if (prepareForAnimation)
                     animJobs.Add((remote, false, r.actualPath));
+                if (r.isDead && !prepareForAnimation)
+                {
+                    _remoteUnits.Remove(id);
+                    Destroy(remote.gameObject);
+                }
             }
         }
 
         return animJobs;
     }
 
-    private IEnumerator DeferredRoundAfterAnimations(List<(object unit, bool isLocal, HexPosition[] path)> jobs, int nextRoundIndex, long roundDeadlineUtcMs)
+    private IEnumerator DeferredRoundAfterAnimations(
+        List<(object unit, bool isLocal, HexPosition[] path)> jobs,
+        List<ExecutedActionPlaybackEntry> playback,
+        int nextRoundIndex,
+        long roundDeadlineUtcMs,
+        TurnResultPayload result)
     {
-        if (jobs.Count > 0)
+        if (playback != null && playback.Count > 0)
+            yield return PlayExecutedActionTimeline(result, playback);
+        else if (jobs.Count > 0)
             yield return PlayAllTurnAnimationsParallel(jobs);
-        ApplyRoundState(nextRoundIndex, roundDeadlineUtcMs);
-        var p = _localPlayer != null ? _localPlayer : FindFirstObjectByType<Player>();
-        p?.SetTurnTimerPaused(false);
-        _waitingForServerRoundResolve = false;
+        if (result == null || !result.battleFinished)
+        {
+            ApplyRoundState(nextRoundIndex, roundDeadlineUtcMs);
+            var p = _localPlayer != null ? _localPlayer : FindFirstObjectByType<Player>();
+            p?.SetTurnTimerPaused(false);
+            _waitingForServerRoundResolve = false;
+        }
+        else
+        {
+            CancelWaitingForServerRoundResolve();
+            HandleBattleFinishedFromServer(result);
+        }
     }
 
     private static IEnumerator PlayTurnResultAnimationCoroutine(Player player, HexPosition[] path)
@@ -453,6 +548,108 @@ public class GameSession : MonoBehaviour
     {
         if (remote == null || path == null) yield break;
         yield return remote.PlayPathAnimation(path);
+    }
+
+    private List<ExecutedActionPlaybackEntry> BuildExecutedActionPlayback(TurnResultPayload result)
+    {
+        var playback = new List<ExecutedActionPlaybackEntry>();
+        if (result?.results == null)
+            return playback;
+
+        int order = 0;
+        foreach (var turnResult in result.results)
+        {
+            if (turnResult?.executedActions == null)
+                continue;
+
+            foreach (var action in turnResult.executedActions)
+            {
+                if (action == null)
+                    continue;
+
+                playback.Add(new ExecutedActionPlaybackEntry
+                {
+                    Action = action,
+                    Order = order++
+                });
+            }
+        }
+
+        playback.Sort((a, b) =>
+        {
+            int tickCompare = a.Action.tick.CompareTo(b.Action.tick);
+            return tickCompare != 0 ? tickCompare : a.Order.CompareTo(b.Order);
+        });
+
+        return playback;
+    }
+
+    private IEnumerator PlayExecutedActionTimeline(TurnResultPayload result, List<ExecutedActionPlaybackEntry> playback)
+    {
+        if (playback == null || playback.Count == 0)
+            yield break;
+
+        int currentTick = -1;
+        foreach (var entry in playback)
+        {
+            // После смерти/окончания боя мы не должны останавливать отображение уже сохраненной истории.
+            // Поэтому блокируем только "живую" анимацию, но не turn history replay.
+            if (_battleFinished && !_isTurnHistoryReplayPlaying)
+                yield break;
+            BattleExecutedAction action = entry != null ? entry.Action : null;
+            if (action == null)
+                continue;
+
+            if (currentTick >= 0 && action.tick != currentTick)
+                yield return new WaitForSecondsRealtime(Mathf.Max(0f, _tickPauseSeconds));
+
+            currentTick = action.tick;
+            yield return PlayExecutedAction(result, action);
+        }
+    }
+
+    private IEnumerator PlayExecutedAction(TurnResultPayload result, BattleExecutedAction action)
+    {
+        if (action == null)
+            yield break;
+
+        if (action.actionType == "MoveStep")
+        {
+            if (action.succeeded)
+                yield return PlayMoveStepAction(result, action);
+            yield break;
+        }
+
+        if (action.actionType == "Attack")
+        {
+            if (action.succeeded && action.damage > 0)
+                ShowDamagePopupForAction(result, action);
+
+            if (action.targetDied)
+                yield return HandleUnitDeathAtCurrentAction(result, action.targetUnitId);
+
+            float pause = Mathf.Max(0f, _attackActionPauseSeconds);
+            if (pause > 0f)
+                yield return new WaitForSecondsRealtime(pause);
+        }
+    }
+
+    private IEnumerator PlayMoveStepAction(TurnResultPayload result, BattleExecutedAction action)
+    {
+        if (action?.toPosition == null)
+            yield break;
+
+        if (!TryResolveAnimatedUnit(result, action.unitId, out var unit, out bool isLocal))
+            yield break;
+
+        HexPosition from = action.fromPosition ?? action.toPosition;
+        HexPosition to = action.toPosition;
+        var path = new[] { new HexPosition(from.col, from.row), new HexPosition(to.col, to.row) };
+
+        if (isLocal && unit is Player local)
+            yield return local.PlayPathAnimation(path);
+        else if (!isLocal && unit is RemoteBattleUnitView remote)
+            yield return remote.PlayPathAnimation(path);
     }
 
     /// <summary>Запускает анимацию пути для всех юнитов в одном кадре (параллельно по кадрам).</summary>
@@ -484,6 +681,7 @@ public class GameSession : MonoBehaviour
     {
         if (payload == null) return;
         CancelTurnReplayPlayback();
+        ClearAllDamagePopups();
         _battleId = payload.battleId ?? _battleId;
         _playerId = payload.playerId ?? _playerId;
 
@@ -503,6 +701,7 @@ public class GameSession : MonoBehaviour
         _liveTurnDraftSnapshot = null;
         _initialReplayState.Clear();
         CancelWaitingForServerRoundResolve();
+        _battleFinished = false;
 
         long deadlineUtcMs = payload.roundDeadlineUtcMs;
         if (deadlineUtcMs <= 0)
@@ -527,19 +726,28 @@ public class GameSession : MonoBehaviour
         foreach (var (pid, col, row) in spawnList)
         {
             bool isMob = !string.IsNullOrEmpty(pid) && pid.StartsWith("MOB_", System.StringComparison.OrdinalIgnoreCase);
-            int startAp = isMob ? 75 : 100;
+            int spawnIndex = FindSpawnIndex(payload, pid, col, row);
+            int startAp = GetSpawnInt(payload.spawnCurrentAps, spawnIndex, isMob ? 15 : 100);
+            int maxHp = GetSpawnInt(payload.spawnMaxHps, spawnIndex, 10);
+            int currentHp = GetSpawnInt(payload.spawnCurrentHps, spawnIndex, maxHp);
             if (pid == _playerId)
             {
                 if (local != null)
-                    local.ApplyServerTurnResult(new HexPosition(col, row), new[] { new HexPosition(col, row) }, 100, 0f);
+                {
+                    local.SetHidden(false);
+                    string posture = GetSpawnString(payload.spawnCurrentPostures, spawnIndex, MovementPostureUtility.WalkId);
+                    local.ApplyServerTurnResult(new HexPosition(col, row), new[] { new HexPosition(col, row) }, startAp, 0f, posture);
+                    local.SetHealth(currentHp, maxHp);
+                }
                 _initialReplayState[pid] = new ReplayUnitSnapshot
                 {
                     UnitId = pid,
                     UnitType = 0,
                     Col = col,
                     Row = row,
-                    CurrentAp = 100,
+                    CurrentAp = startAp,
                     PenaltyFraction = 0f,
+                    CurrentPosture = GetSpawnString(payload.spawnCurrentPostures, spawnIndex, MovementPostureUtility.WalkId),
                     IsLocal = true
                 };
                 continue;
@@ -548,6 +756,7 @@ public class GameSession : MonoBehaviour
             var go = new GameObject("Remote_" + pid);
             var rv = go.AddComponent<RemoteBattleUnitView>();
             rv.Initialize(pid, grid, col, row, moveDur);
+            rv.SetHealth(currentHp, maxHp);
             _remoteUnits[pid] = rv;
             _initialReplayState[pid] = new ReplayUnitSnapshot
             {
@@ -557,6 +766,7 @@ public class GameSession : MonoBehaviour
                 Row = row,
                 CurrentAp = startAp,
                 PenaltyFraction = 0f,
+                CurrentPosture = GetSpawnString(payload.spawnCurrentPostures, spawnIndex, MovementPostureUtility.WalkId),
                 IsLocal = false
             };
         }
@@ -675,8 +885,11 @@ public class GameSession : MonoBehaviour
             ApplyRoundState(_serverRoundIndex, _liveRoundDeadlineUtcMs);
 
         var jobs = BuildTurnResultAnimationJobs(targetTurn, prepareForAnimation: true);
-        if (jobs.Count > 0)
-            yield return PlayReplayAnimationsParallel(jobs);
+        var playback = BuildExecutedActionPlayback(targetTurn);
+        if (playback.Count > 0)
+            yield return PlayReplayAnimationsParallel(playback, targetTurn);
+        else if (jobs.Count > 0)
+            yield return PlayReplayAnimationsParallel(null, targetTurn, jobs);
 
         _isTurnHistoryReplayPlaying = false;
         _turnReplayCoroutine = null;
@@ -762,6 +975,7 @@ public class GameSession : MonoBehaviour
         foreach (var remote in _remoteUnits.Values)
             remote?.ForceStopMovement();
 
+        ClearAllDamagePopups();
         _isTurnHistoryReplayPlaying = false;
     }
 
@@ -777,9 +991,7 @@ public class GameSession : MonoBehaviour
         _liveTurnDraftSnapshot = new LiveTurnDraftSnapshot
         {
             RoundIndex = _serverRoundIndex,
-            Path = local.GetTurnPathCopy(),
-            ApSpent = local.ApSpentThisTurn,
-            StepsTaken = local.StepsTakenThisTurn
+            Actions = local.GetTurnActionsCopy()
         };
     }
 
@@ -792,15 +1004,58 @@ public class GameSession : MonoBehaviour
         if (local == null)
             return;
 
-        if (_liveTurnDraftSnapshot.Path == null || _liveTurnDraftSnapshot.Path.Count < 2)
-            return;
+        if (_liveTurnDraftSnapshot.Actions != null)
+        {
+            foreach (var action in _liveTurnDraftSnapshot.Actions)
+            {
+                if (action == null)
+                    continue;
 
-        local.MoveAlongPath(new List<(int col, int row)>(_liveTurnDraftSnapshot.Path), animate: false);
+                if (action.actionType == "MoveStep" && action.targetPosition != null)
+                {
+                    local.MoveAlongPath(new List<(int col, int row)>
+                    {
+                        (local.CurrentCol, local.CurrentRow),
+                        (action.targetPosition.col, action.targetPosition.row)
+                    }, animate: false);
+                    continue;
+                }
+
+                if (action.actionType == "ChangePosture")
+                {
+                    local.QueuePostureChange(MovementPostureUtility.FromId(action.posture));
+                    continue;
+                }
+
+                if (action.actionType == "Wait")
+                {
+                    local.QueueWaitAction(Mathf.Max(1, action.cost));
+                    continue;
+                }
+
+                if (action.actionType == "Attack" && !string.IsNullOrEmpty(action.targetUnitId))
+                    local.QueueAttackAction(action.targetUnitId, action.bodyPart, Mathf.Max(1, action.cost));
+            }
+        }
     }
 
-    private IEnumerator PlayReplayAnimationsParallel(List<(object unit, bool isLocal, HexPosition[] path)> jobs)
+    private IEnumerator PlayReplayAnimationsParallel(
+        List<ExecutedActionPlaybackEntry> playback,
+        TurnResultPayload result,
+        List<(object unit, bool isLocal, HexPosition[] path)> fallbackJobs = null)
     {
+        if (playback != null && playback.Count > 0)
+        {
+            var coroutine = StartCoroutine(PlayExecutedActionTimeline(result, playback));
+            _activeReplayAnimationCoroutines.Clear();
+            _activeReplayAnimationCoroutines.Add(coroutine);
+            yield return coroutine;
+            _activeReplayAnimationCoroutines.Clear();
+            yield break;
+        }
+
         _activeReplayAnimationCoroutines.Clear();
+        var jobs = fallbackJobs ?? new List<(object unit, bool isLocal, HexPosition[] path)>();
         foreach (var j in jobs)
         {
             if (j.isLocal && j.unit is Player pl)
@@ -808,7 +1063,6 @@ public class GameSession : MonoBehaviour
             else if (!j.isLocal && j.unit is RemoteBattleUnitView rv)
                 _activeReplayAnimationCoroutines.Add(StartCoroutine(PlayRemoteAnimationCoroutine(rv, j.path)));
         }
-
         foreach (var coroutine in _activeReplayAnimationCoroutines)
             yield return coroutine;
 
@@ -823,13 +1077,15 @@ public class GameSession : MonoBehaviour
         if (grid == null)
             return;
 
+        ClearAllDamagePopups();
         foreach (var snapshot in _initialReplayState.Values)
         {
             if (snapshot.IsLocal)
             {
                 if (local == null) continue;
+                local.SetHidden(false);
                 var point = new HexPosition(snapshot.Col, snapshot.Row);
-                local.ApplyServerTurnResult(point, new[] { point }, snapshot.CurrentAp, snapshot.PenaltyFraction, prepareForAnimation: false);
+                local.ApplyServerTurnResult(point, new[] { point }, snapshot.CurrentAp, snapshot.PenaltyFraction, snapshot.CurrentPosture, prepareForAnimation: false);
                 continue;
             }
 
@@ -904,13 +1160,277 @@ public class GameSession : MonoBehaviour
         return list;
     }
 
-    private SubmitTurnPayload BuildSubmitPayload(List<(int col, int row)> path, int apSpentThisTurn, int stepsTakenThisTurn, int roundIndex)
+    private static int FindSpawnIndex(BattleStartedPayload payload, string id, int col, int row)
     {
-        var pathArr = new HexPosition[path?.Count ?? 0];
-        if (path != null)
+        if (payload == null || payload.spawnPlayerIds == null || payload.spawnCols == null || payload.spawnRows == null)
+            return -1;
+        int len = Mathf.Min(payload.spawnPlayerIds.Length, Mathf.Min(payload.spawnCols.Length, payload.spawnRows.Length));
+        for (int i = 0; i < len; i++)
         {
-            for (int i = 0; i < path.Count; i++)
-                pathArr[i] = new HexPosition(path[i].col, path[i].row);
+            if (payload.spawnPlayerIds[i] == id && payload.spawnCols[i] == col && payload.spawnRows[i] == row)
+                return i;
+        }
+        return -1;
+    }
+
+    private static int GetSpawnInt(int[] values, int index, int fallback)
+    {
+        if (values == null || index < 0 || index >= values.Length)
+            return fallback;
+        return values[index];
+    }
+
+    private static string GetSpawnString(string[] values, int index, string fallback)
+    {
+        if (values == null || index < 0 || index >= values.Length || string.IsNullOrEmpty(values[index]))
+            return fallback;
+        return values[index];
+    }
+
+    private IEnumerator HandleLocalDeathAfterMessage()
+    {
+        if (_battleFinished) yield break;
+        _battleFinished = true;
+        OnNetworkMessage?.Invoke("Бой проигран");
+        OnBattleFinished?.Invoke(false);
+        _waitingForServerRoundResolve = false;
+        var p = _localPlayer != null ? _localPlayer : FindFirstObjectByType<Player>();
+        p?.SetTurnTimerPaused(true);
+        // Stop timeline immediately to prevent further animations/moves after fatal tick.
+        ApplyLocalHiddenDeadState(silent: true);
+        yield break;
+    }
+
+    private void ApplyLocalHiddenDeadState(bool silent)
+    {
+        var local = _localPlayer != null ? _localPlayer : FindFirstObjectByType<Player>();
+        if (local == null)
+            return;
+
+        local.ForceStopMovement();
+        local.SetHidden(true);
+        if (!silent)
+            _battleFinished = true;
+    }
+
+    private IEnumerator HandleUnitDeathAtCurrentAction(TurnResultPayload result, string deadUnitId)
+    {
+        if (string.IsNullOrEmpty(deadUnitId))
+            yield break;
+
+        if (!TryResolveAnimatedUnit(result, deadUnitId, out var unit, out bool isLocal))
+            yield break;
+
+        if (isLocal)
+        {
+            if (unit is Player local)
+                local.ForceStopMovement();
+            yield return HandleLocalDeathAfterMessage();
+            yield break;
+        }
+
+        if (unit is RemoteBattleUnitView remote)
+        {
+            string key = ResolveRemoteUnitKey(result, deadUnitId);
+            if (!string.IsNullOrEmpty(key))
+                _remoteUnits.Remove(key);
+            if (remote != null)
+                Destroy(remote.gameObject);
+        }
+    }
+
+    private void HandleBattleFinishedFromServer(TurnResultPayload result)
+    {
+        if (_battleFinished) return;
+
+        bool localDead = false;
+        if (result != null && result.results != null)
+        {
+            foreach (var item in result.results)
+            {
+                if (item == null) continue;
+                if (item.playerId == _playerId)
+                {
+                    localDead = item.isDead;
+                    break;
+                }
+            }
+        }
+
+        if (!localDead)
+        {
+            _battleFinished = true;
+            _waitingForServerRoundResolve = false;
+            var p = _localPlayer != null ? _localPlayer : FindFirstObjectByType<Player>();
+            p?.SetTurnTimerPaused(true);
+            OnBattleFinished?.Invoke(true);
+            OnNetworkMessage?.Invoke("Бой выигран");
+        }
+    }
+
+    private void AppendServerTurnLogs(TurnResultPayload result, bool showDamagePopupsImmediately)
+    {
+        if (result == null || result.results == null)
+            return;
+
+        foreach (var turnResult in result.results)
+        {
+            if (turnResult?.executedActions == null)
+                continue;
+
+            foreach (var action in turnResult.executedActions)
+            {
+                if (action == null)
+                    continue;
+
+                if (action.actionType == "Attack")
+                {
+                    if (action.succeeded)
+                    {
+                        string targetLabel = string.IsNullOrEmpty(action.targetUnitId) ? "цель" : action.targetUnitId;
+                        string bodyPart = string.IsNullOrEmpty(action.bodyPart) ? "корпус" : action.bodyPart;
+                        if (showDamagePopupsImmediately)
+                            ShowDamagePopupForAction(result, action);
+                        OnNetworkMessage?.Invoke($"[{action.unitId}] удар в {bodyPart}: {targetLabel} -{action.damage} HP");
+                        if (action.targetDied)
+                            OnNetworkMessage?.Invoke($"{targetLabel} погиб");
+                    }
+                }
+            }
+        }
+    }
+
+    private void ShowDamagePopupForAction(TurnResultPayload result, BattleExecutedAction action)
+    {
+        if (action == null || !action.succeeded || action.damage <= 0 || string.IsNullOrEmpty(action.targetUnitId))
+            return;
+
+        Transform target = ResolveDamagePopupTarget(result, action.targetUnitId);
+        if (target == null)
+            return;
+
+        DamagePopupStack stack = target.GetComponent<DamagePopupStack>();
+        if (stack == null)
+            stack = target.gameObject.AddComponent<DamagePopupStack>();
+        stack.ShowDamage(action.damage);
+    }
+
+    private Transform ResolveDamagePopupTarget(TurnResultPayload result, string targetUnitId)
+    {
+        if (string.IsNullOrEmpty(targetUnitId))
+            return null;
+
+        if (result?.results != null)
+        {
+            foreach (var item in result.results)
+            {
+                if (item == null || item.unitId != targetUnitId)
+                    continue;
+
+                if (item.playerId == _playerId)
+                    return _localPlayer != null ? _localPlayer.transform : null;
+
+                string remoteKey = item.unitType == 1 ? item.unitId : item.playerId;
+                if (!string.IsNullOrEmpty(remoteKey) && _remoteUnits.TryGetValue(remoteKey, out var remote) && remote != null)
+                    return remote.transform;
+            }
+        }
+
+        if (_remoteUnits.TryGetValue(targetUnitId, out var fallbackRemote) && fallbackRemote != null)
+            return fallbackRemote.transform;
+
+        return null;
+    }
+
+    private void ClearAllDamagePopups()
+    {
+        Player local = _localPlayer != null ? _localPlayer : FindFirstObjectByType<Player>();
+        if (local != null)
+        {
+            DamagePopupStack localStack = local.GetComponent<DamagePopupStack>();
+            localStack?.ClearAll();
+        }
+
+        foreach (var remote in _remoteUnits.Values)
+        {
+            if (remote == null)
+                continue;
+            DamagePopupStack stack = remote.GetComponent<DamagePopupStack>();
+            stack?.ClearAll();
+        }
+    }
+
+    private bool TryResolveAnimatedUnit(TurnResultPayload result, string unitId, out object unit, out bool isLocal)
+    {
+        unit = null;
+        isLocal = false;
+        if (string.IsNullOrEmpty(unitId) || result?.results == null)
+            return false;
+
+        foreach (var item in result.results)
+        {
+            if (item == null || item.unitId != unitId)
+                continue;
+
+            if (item.playerId == _playerId)
+            {
+                Player local = _localPlayer != null ? _localPlayer : FindFirstObjectByType<Player>();
+                if (local == null)
+                    return false;
+                unit = local;
+                isLocal = true;
+                return true;
+            }
+
+            string remoteKey = ResolveRemoteUnitKey(item);
+            if (!string.IsNullOrEmpty(remoteKey) && _remoteUnits.TryGetValue(remoteKey, out var remote) && remote != null)
+            {
+                unit = remote;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private string ResolveRemoteUnitKey(TurnResultPayload result, string unitId)
+    {
+        if (string.IsNullOrEmpty(unitId) || result?.results == null)
+            return null;
+
+        foreach (var item in result.results)
+        {
+            if (item == null || item.unitId != unitId)
+                continue;
+            return ResolveRemoteUnitKey(item);
+        }
+
+        return null;
+    }
+
+    private static string ResolveRemoteUnitKey(PlayerTurnResult item)
+    {
+        if (item == null)
+            return null;
+        return item.unitType == 1 ? item.unitId : item.playerId;
+    }
+
+    private SubmitTurnPayload BuildSubmitPayload(BattleQueuedAction[] actions, int roundIndex)
+    {
+        var source = actions ?? System.Array.Empty<BattleQueuedAction>();
+        var payloadActions = new BattleQueuedAction[source.Length];
+        for (int i = 0; i < source.Length; i++)
+        {
+            var action = source[i];
+            payloadActions[i] = new BattleQueuedAction
+            {
+                actionType = action.actionType,
+                targetPosition = action.targetPosition != null ? new HexPosition(action.targetPosition.col, action.targetPosition.row) : null,
+                targetUnitId = action.targetUnitId,
+                bodyPart = action.bodyPart,
+                posture = action.posture,
+                cost = action.cost
+            };
         }
 
         return new SubmitTurnPayload
@@ -918,9 +1438,7 @@ public class GameSession : MonoBehaviour
             battleId = _battleId,
             playerId = _playerId,
             roundIndex = roundIndex,
-            path = pathArr,
-            apSpentThisTurn = apSpentThisTurn,
-            stepsTakenThisTurn = stepsTakenThisTurn
+            actions = payloadActions
         };
     }
 }

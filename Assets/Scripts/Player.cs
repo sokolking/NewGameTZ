@@ -1,3 +1,4 @@
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
@@ -7,6 +8,12 @@ using UnityEngine;
 /// </summary>
 public class Player : MonoBehaviour
 {
+    private const int ChangePostureCost = 2;
+    private const float RunCostMultiplier = 0.5f;
+    private const float SitCostMultiplier = 1.5f;
+    private const float RunPenaltyThresholdFraction = 0.85f;
+    private const float MaxPenaltyFraction = 0.95f;
+
     [Header("Сетка")]
     [SerializeField] private HexGrid _grid;
 
@@ -15,30 +22,30 @@ public class Player : MonoBehaviour
 
     [Header("Очки действия")]
     [SerializeField] private int _maxAp = 100;
+    [Header("Жизни")]
+    [SerializeField] private int _maxHp = 10;
 
     [Header("Таймер хода, сек")]
     [SerializeField] private float _turnDurationSeconds = 100f;
-
-    private const float PrelastPenaltyFraction = 0.05f;  // штраф за предпоследний шаг при макс. ОД
-    private const float LastPenaltyFraction = 0.08f;      // штраф за последний шаг при макс. ОД
-    private const float RecoveryFraction = 0.05f;         // восстановление при завершении хода не на штрафном гексе
 
     private int _currentCol;
     private int _currentRow;
     private bool _isMoving;
     private int _currentAp;
     private int _turnCount;
+    private int _currentHp;
+    private int _runMovementApSpentThisTurn;
+    private MovementPosture _currentPosture = MovementPosture.Walk;
 
     // Накопленный штраф в долях от MaxAp (0–1): 0 = нет штрафа, 0.1 = -10% от MaxAp.
-    private float _penaltyFraction;
     // Сколько ОД уже потрачено в текущем ходу (используется для штрафа и подсчёта шагов).
     private int _apSpentThisTurn;
     // Сколько "шагов" уже совершено в этом ходу (независимо от направления).
     private int _stepsTakenThisTurn;
     // Эффективный максимум ОД в начале текущего хода (до трат в этом ходу).
-    private int _turnStartMaxAp;
     // Полный путь за текущий ход (все переходы по гексам, в порядке кликов).
     private List<(int col, int row)> _turnPath;
+    private List<BattleQueuedAction> _turnActions;
     // Остаток времени текущего хода (сек).
     private float _turnTimeLeft;
     // Абсолютный момент окончания хода по UTC timestamp от сервера.
@@ -46,11 +53,18 @@ public class Player : MonoBehaviour
     // Флаг, что таймер хода уже истёк (для внешней логики автозавершения).
     private bool _turnTimeExpired;
     private bool _turnTimerPaused;
+    private bool _isHidden;
+    private int _movementInterruptVersion;
 
     public int CurrentCol => _currentCol;
     public int CurrentRow => _currentRow;
     public bool IsMoving => _isMoving;
     public int MaxAp => _maxAp;
+    public int MaxHp => _maxHp;
+    public int CurrentHp => _currentHp;
+    public bool IsDead => _currentHp <= 0;
+    public MovementPosture CurrentMovementPosture => _currentPosture;
+    public MovementPosture PreviewMovementPosture => MovementPostureUtility.GetPreviewMovementPosture(_currentPosture);
     /// <summary>Текущие ОД.</summary>
     public int CurrentAp => _currentAp;
     public int TurnCount => _turnCount;
@@ -61,6 +75,7 @@ public class Player : MonoBehaviour
     /// <summary>Длительность хода (сек).</summary>
     public float TurnDurationSeconds => _turnDurationSeconds;
     public bool IsTurnTimerPaused => _turnTimerPaused;
+    public bool IsHidden => _isHidden;
     /// <summary>Истёк ли таймер хода.</summary>
     public bool TurnTimeExpired => _turnTimeExpired;
     /// <summary>Сколько "шагов" уже совершено в этом ходу.</summary>
@@ -71,18 +86,21 @@ public class Player : MonoBehaviour
     public delegate void PlayerMovedHandler(HexCell cell);
     /// <summary>Событие: игрок завершил перемещение в новую ячейку (после MoveAlongPath, телепорта или анимации).</summary>
     public event PlayerMovedHandler OnMovedToCell;
+    public event Action<MovementPosture> OnMovementPostureChanged;
 
     private void Awake()
     {
-        _penaltyFraction = 0f;
         _apSpentThisTurn = 0;
         _stepsTakenThisTurn = 0;
-        _turnStartMaxAp = GetEffectiveMaxAp();
-        _currentAp = _turnStartMaxAp;
+        _currentAp = _maxAp;
+        _currentHp = _maxHp;
+        _currentPosture = MovementPosture.Walk;
+        _runMovementApSpentThisTurn = 0;
         _turnTimeLeft = _turnDurationSeconds;
         _turnDeadlineUtcMs = BuildRoundDeadlineUtcMs(_turnDurationSeconds);
         _turnTimeExpired = false;
         _turnPath = new List<(int col, int row)>();
+        _turnActions = new List<BattleQueuedAction>();
     }
 
     private void Start()
@@ -122,7 +140,7 @@ public class Player : MonoBehaviour
         cap.transform.SetParent(transform);
         cap.transform.localPosition = Vector3.zero;
         cap.transform.localScale = new Vector3(0.8f, 0.5f, 0.8f);
-        Object.Destroy(cap.GetComponent<Collider>());
+        UnityEngine.Object.Destroy(cap.GetComponent<Collider>());
     }
 
     /// <summary>Запускает движение по пути (список (col, row)), ограничивая длину по ОД. animate=false – телепорт.
@@ -130,27 +148,23 @@ public class Player : MonoBehaviour
     public void MoveAlongPath(List<(int col, int row)> path, bool animate)
     {
         if (path == null || path.Count < 2 || _isMoving || _grid == null) return;
+        if (IsDead || _isHidden) return;
+        if (!MovementPostureUtility.CanMove(_currentPosture)) return;
 
         int stepsToMove = path.Count - 1;
         if (stepsToMove <= 0) return;
 
         int stepsAlready = _stepsTakenThisTurn;
-        int allowedSteps = GetAllowedSteps(stepsAlready, stepsToMove, _currentAp);
+        int allowedSteps = GetAllowedSteps(PreviewMovementPosture, stepsAlready, stepsToMove, _currentAp);
         if (allowedSteps <= 0) return;
 
-        int moveCost = GetMoveCost(stepsAlready, allowedSteps);
-        int prevSpent = _apSpentThisTurn;
-        int newSpent = prevSpent + moveCost;
-
-        GetPenaltyStepCosts(out int prelastCost, out int lastCost);
-        if (prelastCost > 0 && newSpent == prelastCost)
-            AddPenalty(PrelastPenaltyFraction);
-        if (lastCost > 0 && prevSpent < lastCost && newSpent >= lastCost)
-            AddPenalty(LastPenaltyFraction);
-
-        _apSpentThisTurn = newSpent;
+        MovementPosture posture = PreviewMovementPosture;
+        int moveCost = GetMoveCost(posture, stepsAlready, allowedSteps);
+        _apSpentThisTurn += moveCost;
         _stepsTakenThisTurn = stepsAlready + allowedSteps;
         _currentAp -= moveCost;
+        if (posture == MovementPosture.Run)
+            _runMovementApSpentThisTurn += moveCost;
 
         var subPath = path.GetRange(0, allowedSteps + 1);
 
@@ -158,10 +172,22 @@ public class Player : MonoBehaviour
         // при первом перемещении добавляем стартовую клетку, далее — только новые шаги.
         if (_turnPath == null)
             _turnPath = new List<(int col, int row)>();
+        if (_turnActions == null)
+            _turnActions = new List<BattleQueuedAction>();
         if (_turnPath.Count == 0)
             _turnPath.Add((_currentCol, _currentRow));
         for (int i = 1; i < subPath.Count; i++)
+        {
             _turnPath.Add(subPath[i]);
+            int stepCost = GetMoveCost(posture, stepsAlready + i - 1, 1);
+            _turnActions.Add(new BattleQueuedAction
+            {
+                actionType = "MoveStep",
+                targetPosition = new HexPosition(subPath[i].col, subPath[i].row),
+                posture = MovementPostureUtility.ToId(posture),
+                cost = stepCost
+            });
+        }
 
         if (!animate)
         {
@@ -182,10 +208,17 @@ public class Player : MonoBehaviour
 
     private IEnumerator MoveAlongPathCoroutine(List<(int col, int row)> path)
     {
+        int interruptVersion = _movementInterruptVersion;
         _isMoving = true;
 
         foreach (var step in path)
         {
+            if (interruptVersion != _movementInterruptVersion || IsDead || _isHidden)
+            {
+                _isMoving = false;
+                yield break;
+            }
+
             if (step.col == _currentCol && step.row == _currentRow)
                 continue;
 
@@ -194,6 +227,12 @@ public class Player : MonoBehaviour
 
             while (elapsed < _moveDurationPerHex)
             {
+                if (interruptVersion != _movementInterruptVersion || IsDead || _isHidden)
+                {
+                    _isMoving = false;
+                    yield break;
+                }
+
                 elapsed += Time.deltaTime;
                 float t = Mathf.Clamp01(elapsed / _moveDurationPerHex);
                 transform.position = Vector3.Lerp(transform.position, target, t);
@@ -221,22 +260,14 @@ public class Player : MonoBehaviour
     /// </summary>
     public void EndTurn()
     {
-        // Штрафный ход — закончили на предпоследнем или последнем шаге при макс. ОД.
-        GetPenaltyStepCosts(out int prelastCost, out int lastCost);
-        bool endedOnPenaltyHex = _apSpentThisTurn == prelastCost || _apSpentThisTurn == lastCost;
-
-        if (!endedOnPenaltyHex)
-            AddPenalty(-RecoveryFraction);
-
         _apSpentThisTurn = 0;
         _stepsTakenThisTurn = 0;
-
-        // Новый эффективный максимум на следующий ход с учётом изменённого штрафа.
-        int newTurnMaxAp = GetEffectiveMaxAp();
-        _turnStartMaxAp = newTurnMaxAp;
-        _currentAp = newTurnMaxAp;
+        _runMovementApSpentThisTurn = 0;
+        _currentAp = _maxAp;
+        SetMovementPostureInternal(MovementPosture.Walk, notify: true);
 
         _turnPath.Clear();
+        _turnActions.Clear();
         _turnCount++;
         _turnDeadlineUtcMs = BuildRoundDeadlineUtcMs(_turnDurationSeconds);
         _turnTimeLeft = GetRemainingTimeFromDeadline();
@@ -246,17 +277,40 @@ public class Player : MonoBehaviour
     /// <summary>Стоимость n-го шага в рамках одного перемещения.</summary>
     public int GetStepCost(int stepIndex)
     {
-        if (stepIndex <= 0) return 0;
+        if (stepIndex <= 0)
+            return 0;
+
         float n = stepIndex;
-        float val = (5f * n * n - 8f * n + 21f) / 3f;
-        return Mathf.Max(1, Mathf.RoundToInt(val));
+        float value = (5f * n * n - 8f * n + 21f) / 3f;
+        return Mathf.Max(1, Mathf.RoundToInt(value));
+    }
+
+    public int GetMoveStepCost(MovementPosture posture, int stepIndex)
+    {
+        int baseStepCost = GetStepCost(stepIndex) - GetStepCost(stepIndex - 1);
+        return posture switch
+        {
+            MovementPosture.Run => Mathf.Max(1, Mathf.CeilToInt(baseStepCost * RunCostMultiplier)),
+            MovementPosture.Sit or MovementPosture.Hide => Mathf.Max(1, Mathf.FloorToInt(baseStepCost * SitCostMultiplier)),
+            _ => Mathf.Max(1, baseStepCost)
+        };
     }
 
     /// <summary>Стоимость перехода на steps шагов, если уже сделано fromStepIndex шагов в этом ходу.</summary>
     public int GetMoveCost(int fromStepIndex, int steps)
     {
-        if (steps <= 0) return 0;
-        return GetStepCost(fromStepIndex + steps) - GetStepCost(fromStepIndex);
+        return GetMoveCost(PreviewMovementPosture, fromStepIndex, steps);
+    }
+
+    public int GetMoveCost(MovementPosture posture, int fromStepIndex, int steps)
+    {
+        if (steps <= 0)
+            return 0;
+
+        int total = 0;
+        for (int i = 1; i <= steps; i++)
+            total += GetMoveStepCost(posture, fromStepIndex + i);
+        return total;
     }
 
     /// <summary>Копия пути за текущий ход (для отправки на сервер). Вызывать до EndTurn().</summary>
@@ -266,52 +320,134 @@ public class Player : MonoBehaviour
         return new List<(int col, int row)>(_turnPath);
     }
 
-    /// <summary>При максимальных ОД — стоимость предпоследнего и последнего достижимого шага (для штрафных гексов).</summary>
-    public void GetPenaltyStepCosts(out int prelastCost, out int lastCost)
+    public BattleQueuedAction[] GetTurnActionsCopy()
     {
-        int N = 0;
-        while (GetStepCost(N + 1) <= _maxAp)
-            N++;
-        if (N <= 0)
+        if (_turnActions == null || _turnActions.Count == 0)
+            return Array.Empty<BattleQueuedAction>();
+
+        var copy = new BattleQueuedAction[_turnActions.Count];
+        for (int i = 0; i < _turnActions.Count; i++)
         {
-            prelastCost = 0;
-            lastCost = 0;
-            return;
+            var src = _turnActions[i];
+            copy[i] = new BattleQueuedAction
+            {
+                actionType = src.actionType,
+                targetPosition = src.targetPosition != null ? new HexPosition(src.targetPosition.col, src.targetPosition.row) : null,
+                targetUnitId = src.targetUnitId,
+                bodyPart = src.bodyPart,
+                posture = src.posture,
+                cost = src.cost
+            };
         }
-        lastCost = GetStepCost(N);
-        prelastCost = N >= 2 ? GetStepCost(N - 1) : 0;
+        return copy;
+    }
+
+    public bool QueuePostureChange(MovementPosture posture)
+    {
+        if (_currentPosture == posture)
+            return true;
+        if (_currentAp < ChangePostureCost)
+            return false;
+
+        if (_turnActions == null)
+            _turnActions = new List<BattleQueuedAction>();
+
+        _turnActions.Add(new BattleQueuedAction
+        {
+            actionType = "ChangePosture",
+            posture = MovementPostureUtility.ToId(posture),
+            cost = ChangePostureCost
+        });
+        _apSpentThisTurn += ChangePostureCost;
+        _currentAp -= ChangePostureCost;
+        SetMovementPostureInternal(posture, notify: true);
+        return true;
+    }
+
+    public bool QueueWaitAction(int cost)
+    {
+        int safeCost = Mathf.Max(1, cost);
+        if (_currentAp < safeCost)
+            return false;
+
+        if (_turnActions == null)
+            _turnActions = new List<BattleQueuedAction>();
+
+        _turnActions.Add(new BattleQueuedAction
+        {
+            actionType = "Wait",
+            cost = safeCost
+        });
+        _apSpentThisTurn += safeCost;
+        _currentAp -= safeCost;
+        return true;
+    }
+
+    public bool EnsureMovablePostureForMovement()
+    {
+        if (_currentPosture != MovementPosture.Hide)
+            return true;
+        return QueuePostureChange(MovementPosture.Sit);
+    }
+
+    public bool QueueAttackAction(string targetUnitId, string bodyPart, int cost = 1)
+    {
+        int safeCost = Mathf.Max(1, cost);
+        if (_currentAp < safeCost)
+            return false;
+
+        if (_turnActions == null)
+            _turnActions = new List<BattleQueuedAction>();
+
+        _turnActions.Add(new BattleQueuedAction
+        {
+            actionType = "Attack",
+            targetUnitId = targetUnitId,
+            bodyPart = bodyPart,
+            posture = MovementPostureUtility.ToId(_currentPosture),
+            cost = safeCost
+        });
+        _apSpentThisTurn += safeCost;
+        _currentAp -= safeCost;
+        return true;
+    }
+
+    public bool IsPenaltyHexAtDistance(int distanceFromCurrent)
+    {
+        if (distanceFromCurrent <= 0)
+            return false;
+
+        MovementPosture posture = PreviewMovementPosture;
+        if (posture != MovementPosture.Run)
+            return false;
+
+        int totalRunCost = _runMovementApSpentThisTurn + GetMoveCost(MovementPosture.Run, _stepsTakenThisTurn, distanceFromCurrent);
+        int threshold = Mathf.Max(1, Mathf.CeilToInt(_maxAp * RunPenaltyThresholdFraction));
+        return totalRunCost >= threshold;
     }
 
     /// <summary>Максимум шагов, которые можно пройти при текущих ОД (уже сделано stepsAlready, лимит stepsLimit).</summary>
-    private int GetAllowedSteps(int stepsAlready, int stepsLimit, int currentAp)
+    private int GetAllowedSteps(MovementPosture posture, int stepsAlready, int stepsLimit, int currentAp)
     {
         int allowed = 0;
-        for (int L = 1; L <= stepsLimit; L++)
+        for (int steps = 1; steps <= stepsLimit; steps++)
         {
-            if (GetMoveCost(stepsAlready, L) > currentAp)
+            if (GetMoveCost(posture, stepsAlready, steps) > currentAp)
                 break;
-            allowed = L;
+            allowed = steps;
         }
         return allowed;
-    }
-
-    /// <summary>Текущий максимальный ОД с учётом накопленного штрафа.</summary>
-    private int GetEffectiveMaxAp()
-    {
-        float factor = Mathf.Clamp01(1f - _penaltyFraction);
-        return Mathf.Max(0, Mathf.RoundToInt(_maxAp * factor));
-    }
-
-    /// <summary>Изменить штраф на delta (доля от MaxAp), с ограничением 0–0.9.</summary>
-    private void AddPenalty(float deltaFraction)
-    {
-        _penaltyFraction = Mathf.Clamp(_penaltyFraction + deltaFraction, 0f, 0.9f);
     }
 
     /// <summary>Установить штраф с сервера (доля 0–0.9).</summary>
     public void SetPenaltyFraction(float value)
     {
-        _penaltyFraction = Mathf.Clamp(value, 0f, 0.9f);
+        value = Mathf.Clamp(value, 0f, MaxPenaltyFraction);
+    }
+
+    public void SetMovementPostureFromServer(string postureId)
+    {
+        SetMovementPostureInternal(MovementPostureUtility.FromId(postureId), notify: true);
     }
 
     /// <summary>Пауза таймера хода (ожидание сервера после «Завершить ход»).</summary>
@@ -353,15 +489,17 @@ public class Player : MonoBehaviour
     }
 
     /// <summary>Применить результат хода с сервера: ОД, штраф, финальная позиция; визуал ставится в начало пути для последующей анимации.</summary>
-    public void ApplyServerTurnResult(HexPosition finalPosition, HexPosition[] actualPath, int currentAp, float penaltyFraction, bool prepareForAnimation = true)
+    public void ApplyServerTurnResult(HexPosition finalPosition, HexPosition[] actualPath, int currentAp, float penaltyFraction, string currentPosture, bool prepareForAnimation = true)
     {
         _currentAp = currentAp;
-        SetPenaltyFraction(penaltyFraction);
         _currentCol = finalPosition != null ? finalPosition.col : _currentCol;
         _currentRow = finalPosition != null ? finalPosition.row : _currentRow;
         _apSpentThisTurn = 0;
         _stepsTakenThisTurn = 0;
+        _runMovementApSpentThisTurn = 0;
+        SetMovementPostureInternal(MovementPostureUtility.FromId(currentPosture), notify: true);
         if (_turnPath != null) _turnPath.Clear();
+        if (_turnActions != null) _turnActions.Clear();
 
         if (_grid != null && actualPath != null && actualPath.Length > 0)
         {
@@ -382,17 +520,30 @@ public class Player : MonoBehaviour
             yield break;
         }
 
+        int interruptVersion = _movementInterruptVersion;
         _isMoving = true;
         transform.position = _grid.GetCellWorldPosition(path[0].col, path[0].row);
 
         for (int i = 1; i < path.Length; i++)
         {
+            if (interruptVersion != _movementInterruptVersion || IsDead || _isHidden)
+            {
+                _isMoving = false;
+                yield break;
+            }
+
             var step = path[i];
             Vector3 target = _grid.GetCellWorldPosition(step.col, step.row);
             float elapsed = 0f;
 
             while (elapsed < _moveDurationPerHex)
             {
+                if (interruptVersion != _movementInterruptVersion || IsDead || _isHidden)
+                {
+                    _isMoving = false;
+                    yield break;
+                }
+
                 elapsed += Time.deltaTime;
                 float t = Mathf.Clamp01(elapsed / _moveDurationPerHex);
                 transform.position = Vector3.Lerp(transform.position, target, t);
@@ -438,6 +589,38 @@ public class Player : MonoBehaviour
 
     public void ForceStopMovement()
     {
+        _movementInterruptVersion++;
+        StopAllCoroutines();
         _isMoving = false;
+    }
+
+    public void SetHidden(bool hidden)
+    {
+        if (_isHidden == hidden)
+            return;
+
+        _isHidden = hidden;
+
+        foreach (var renderer in GetComponentsInChildren<Renderer>(true))
+            renderer.enabled = !hidden;
+
+        foreach (var collider in GetComponentsInChildren<Collider>(true))
+            collider.enabled = !hidden;
+    }
+
+    public void SetHealth(int currentHp, int maxHp)
+    {
+        _maxHp = Mathf.Max(1, maxHp);
+        _currentHp = Mathf.Clamp(currentHp, 0, _maxHp);
+    }
+
+    private void SetMovementPostureInternal(MovementPosture posture, bool notify)
+    {
+        if (_currentPosture == posture)
+            return;
+
+        _currentPosture = posture;
+        if (notify)
+            OnMovementPostureChanged?.Invoke(_currentPosture);
     }
 }

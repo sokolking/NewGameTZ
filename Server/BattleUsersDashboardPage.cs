@@ -188,6 +188,9 @@ public static class BattleUsersDashboardPage
           <div class="meta">
             <span>id ${user.id}</span>
             <span>password ${escapeHtml(user.password)}</span>
+            <span>maxHp ${user.maxHp}</span>
+            <span>maxAp ${user.maxAp}</span>
+            <span>weapon ${escapeHtml(user.weaponCode || '')}</span>
           </div>
         `;
         userListEl.appendChild(row);
