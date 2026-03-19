@@ -217,6 +217,8 @@ public class GameSession : MonoBehaviour
 
     private void OnEnable()
     {
+        // Keep simulation running even when window loses focus.
+        Application.runInBackground = true;
         Active = this;
     }
 
