@@ -49,6 +49,14 @@ public class GameSession : MonoBehaviour
     [Tooltip("Юнит локального игрока (для применения TurnResult и синхронизации раунда). Если не задан — ищется в сцене.")]
     [SerializeField] private Player _localPlayer;
 
+    [Header("Debug")]
+    [Tooltip("Для отладки: заспавнить моба рядом с локальным игроком на соседнем гексе.")]
+    [SerializeField] private bool _debugSpawnMobNearLocalPlayer = false;
+    [Tooltip("Идентификатор debug-моба (должен начинаться с MOB_, чтобы считался мобом).")]
+    [SerializeField] private string _debugMobId = "MOB_DEBUG";
+    [Tooltip("Предпочтительное направление соседа (0..5). Если занято/вне поля — берётся следующий по кругу.")]
+    [SerializeField] private int _debugNeighborDirection = 0;
+
     // Ключ: идентификатор сущности в сети (для игроков — playerId, для мобов — unitId сервера).
     private readonly Dictionary<string, RemoteBattleUnitView> _remoteUnits = new();
     private readonly HashSet<(int col, int row)> _obstacleCells = new();
@@ -68,6 +76,7 @@ public class GameSession : MonoBehaviour
     private Coroutine _turnReplayCoroutine;
     private readonly List<Coroutine> _activeReplayAnimationCoroutines = new();
     private LiveTurnDraftSnapshot _liveTurnDraftSnapshot;
+    private bool _debugMobSpawned;
 
     /// <summary>Блокировка ввода: ожидание результата раунда или анимация.</summary>
     public bool BlockPlayerInput => _waitingForServerRoundResolve || IsBattleAnimationPlaying || IsTurnHistoryReplayPlaying || IsViewingHistoricalTurn;
@@ -237,6 +246,61 @@ public class GameSession : MonoBehaviour
         // поэтому не создаём локальный ChasingAiController, а подключаемся к серверу.
         if (_isOnlineMode && _serverConnection != null && !BattleSessionState.HasPendingBattle)
             _serverConnection.ConnectAndJoin(0, 0);
+
+        if (_debugSpawnMobNearLocalPlayer)
+            StartCoroutine(SpawnDebugMobWhenReady());
+    }
+
+    private IEnumerator SpawnDebugMobWhenReady()
+    {
+        const int maxFrames = 300; // ~5 сек при 60 FPS
+        for (int i = 0; i < maxFrames; i++)
+        {
+            if (TrySpawnDebugMobNearLocal())
+                yield break;
+            yield return null;
+        }
+    }
+
+    private bool TrySpawnDebugMobNearLocal()
+    {
+        if (_debugMobSpawned) return true;
+
+        Player local = _localPlayer != null ? _localPlayer : FindFirstObjectByType<Player>();
+        if (local == null) return false;
+
+        HexGrid grid = local.Grid != null ? local.Grid : FindFirstObjectByType<HexGrid>();
+        if (grid == null) return false;
+
+        string id = string.IsNullOrEmpty(_debugMobId) ? "MOB_DEBUG" : _debugMobId;
+        if (!id.StartsWith("MOB_", System.StringComparison.OrdinalIgnoreCase))
+            id = "MOB_" + id;
+
+        if (_remoteUnits.TryGetValue(id, out var existing) && existing != null)
+        {
+            _debugMobSpawned = true;
+            return true;
+        }
+
+        int startDir = ((_debugNeighborDirection % 6) + 6) % 6;
+        for (int step = 0; step < 6; step++)
+        {
+            int dir = (startDir + step) % 6;
+            HexGrid.GetNeighbor(local.CurrentCol, local.CurrentRow, dir, out int nc, out int nr);
+            if (!grid.IsInBounds(nc, nr))
+                continue;
+            if (IsObstacleCell(nc, nr))
+                continue;
+
+            var go = new GameObject("Mob_" + id);
+            var remote = go.AddComponent<RemoteBattleUnitView>();
+            remote.Initialize(id, grid, nc, nr, local.MoveDurationPerHex);
+            _remoteUnits[id] = remote;
+            _debugMobSpawned = true;
+            return true;
+        }
+
+        return false;
     }
 
     // Локальный ChasingAiController больше не используется: серверный моб управляется на стороне сервера.
@@ -274,7 +338,7 @@ public class GameSession : MonoBehaviour
             if (sock == null || !sock.IsSocketReady)
             {
                 CancelWaitingForServerRoundResolve();
-                OnNetworkMessage?.Invoke("Нет WebSocket к бою. Подождите подключения.");
+                OnNetworkMessage?.Invoke("Нет сокета к бою");
                 return;
             }
 
@@ -283,7 +347,7 @@ public class GameSession : MonoBehaviour
                 if (!success)
                 {
                     CancelWaitingForServerRoundResolve();
-                    OnNetworkMessage?.Invoke(errorMessage ?? "Не удалось отправить ход.");
+                    OnNetworkMessage?.Invoke(errorMessage ?? "Ошибка отправки хода");
                 }
                 else if (_waitingForServerRoundResolve)
                     OnSubmitTurnDeliveredToServer?.Invoke();
@@ -336,7 +400,7 @@ public class GameSession : MonoBehaviour
                 if (!r.accepted && !string.IsNullOrEmpty(r.rejectedReason))
                     OnNetworkMessage?.Invoke(r.rejectedReason);
                 else if (!r.accepted)
-                    OnNetworkMessage?.Invoke("Клетка занята, ход частично отменён.");
+                    OnNetworkMessage?.Invoke("Клетка занята");
 
                 local.ApplyServerTurnResult(r.finalPosition, r.actualPath, r.currentAp, r.penaltyFraction, prepareForAnimation);
                 if (prepareForAnimation)

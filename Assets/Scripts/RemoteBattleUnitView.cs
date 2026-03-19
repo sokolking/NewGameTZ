@@ -37,7 +37,10 @@ public class RemoteBattleUnitView : MonoBehaviour
         cap.transform.localScale = new Vector3(0.8f, 0.5f, 0.8f);
         var r = cap.GetComponent<Renderer>();
         if (r != null) r.material.color = new Color(0.85f, 0.35f, 0.25f, 1f);
-        UnityEngine.Object.Destroy(cap.GetComponent<Collider>());
+        // Оставляем коллайдер для raycast (удержание ПКМ по юниту).
+        Collider capCollider = cap.GetComponent<Collider>();
+        if (capCollider != null)
+            capCollider.isTrigger = true;
     }
 
     public void ApplyServerTurnResult(HexPosition finalPosition, HexPosition[] actualPath, int currentAp, float penaltyFraction, bool prepareForAnimation = true)

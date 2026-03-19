@@ -13,9 +13,11 @@ public class ActionPointsUI : MonoBehaviour
     [SerializeField] private Player _player;
     [SerializeField] private Button _endTurnButton;
     [Header("Лог ходов")]
-    [SerializeField] private Text _logText;
+    [SerializeField] private Text _loggerText;
+    [SerializeField] private Button _loggerUpButton;
+    [SerializeField] private Button _loggerDownButton;
     [SerializeField] private int _maxLogLines = 50;
-    [SerializeField] private ScrollRect _logScrollRect;
+    [SerializeField] private int _loggerVisibleLines = 6;
 
     [Header("Онлайн (сервер)")]
     [SerializeField] private GameSession _gameSession;
@@ -70,7 +72,8 @@ public class ActionPointsUI : MonoBehaviour
 
     private bool _endTurnInProgress;
     private bool _roundWaitVisible;
-    private readonly System.Collections.Generic.Queue<string> _logLines = new System.Collections.Generic.Queue<string>();
+    private readonly List<string> _logLines = new();
+    private int _loggerStartIndex;
     private readonly Dictionary<string, Image> _miniMapRemoteMarkers = new();
     private Image _miniMapLocalMarker;
     private RectTransform _miniMapViewportRect;
@@ -112,6 +115,10 @@ public class ActionPointsUI : MonoBehaviour
             _turnTrackerPrevButton.onClick.RemoveListener(OnTurnTrackerPrevClicked);
         if (_turnTrackerNextButton != null)
             _turnTrackerNextButton.onClick.RemoveListener(OnTurnTrackerNextClicked);
+        if (_loggerUpButton != null)
+            _loggerUpButton.onClick.RemoveListener(OnLoggerUpClicked);
+        if (_loggerDownButton != null)
+            _loggerDownButton.onClick.RemoveListener(OnLoggerDownClicked);
         GameSession.OnNetworkMessage -= AppendLog;
         GameSession.OnSubmitTurnDeliveredToServer -= ShowRoundWaitAfterSubmitDelivered;
         GameSession.OnWebSocketRoundPushReceived -= HideRoundWaitPanel;
@@ -149,7 +156,7 @@ public class ActionPointsUI : MonoBehaviour
                 if (_gameSession.TryAutoSubmitTimedOutLiveTurn(animateResolvedRound: true))
                 {
                     ShowRoundWaitPanel();
-                    AppendLog("Время live-хода почти истекло. Отправка текущего хода на сервер…");
+                    AppendLog("Автосабмит live хода");
                 }
             }
         }
@@ -170,7 +177,7 @@ public class ActionPointsUI : MonoBehaviour
                 if (_gameSession.TryAutoSubmitTimedOutLiveTurn(animateResolvedRound: true))
                 {
                     ShowRoundWaitPanel();
-                    AppendLog("Время хода истекло. Отправка текущего хода на сервер…");
+                    AppendLog("Время хода истекло");
                 }
             }
             else
@@ -285,7 +292,7 @@ public class ActionPointsUI : MonoBehaviour
             if (_gameSession.TrySubmitCurrentLiveTurnDraft(animate))
             {
                 ShowRoundWaitPanel();
-                AppendLog("Отправка текущего хода на сервер…");
+                AppendLog("Отправка хода...");
             }
             _endTurnInProgress = false;
             return;
@@ -314,14 +321,14 @@ public class ActionPointsUI : MonoBehaviour
             _gameSession.BeginWaitingForServerRoundResolve(animateResolvedRound: false);
             ShowRoundWaitPanel();
             SubmitTurnIfOnline();
-            AppendLog("Отправка хода на сервер…");
+            AppendLog("Отправка хода...");
             _endTurnInProgress = false;
             return;
         }
 
         // Оффлайн-режим без сервера больше не используется: одиночка тоже идёт через сервер.
         // Для совместимости оставляем только локальный лог без изменения состояния ОД/штрафов.
-        AppendLog("Локальный конец хода без сервера (устаревший режим).");
+        AppendLog("Локальный конец хода");
         _endTurnInProgress = false;
     }
 
@@ -334,13 +341,13 @@ public class ActionPointsUI : MonoBehaviour
             _gameSession.BeginWaitingForServerRoundResolve(animateResolvedRound: true);
             ShowRoundWaitPanel();
             SubmitTurnIfOnline();
-            AppendLog("Отправка хода на сервер…");
+            AppendLog("Отправка хода...");
             _endTurnInProgress = false;
             yield break;
         }
 
         // Оффлайн-режим без сервера больше не используется: одиночка тоже идёт через сервер.
-        AppendLog("Локальный анимированный конец хода без сервера (устаревший режим).");
+        AppendLog("Локал. аним. конец");
         _endTurnInProgress = false;
     }
 
@@ -364,7 +371,7 @@ public class ActionPointsUI : MonoBehaviour
         // Панель уже показана при нажатии «конец хода»; здесь только подтверждение по сокету.
         if (!_roundWaitVisible)
             ShowRoundWaitPanel();
-        AppendLog("Ход принят сервером. Ожидание результата раунда…");
+        AppendLog("Ход принят, ждём раунд");
     }
 
     private void SubmitTurnIfOnline()
@@ -391,16 +398,57 @@ public class ActionPointsUI : MonoBehaviour
     {
         if (cell == null) return;
         string tag = $"{cell.ColLabel}{cell.RowLabel}";
-        AppendLog($"Player перешёл на {tag}");
+        AppendLog($"Игрок -> {tag}");
     }
 
     private void AppendLog(string line)
     {
-        if (_logText == null) return;
-        _logLines.Enqueue(line);
+        if (string.IsNullOrEmpty(line)) return;
+        _logLines.Add(line);
         while (_logLines.Count > _maxLogLines)
-            _logLines.Dequeue();
-        _logText.text = string.Join("\n", _logLines);
+            _logLines.RemoveAt(0);
+
+        // При новом логе всегда прокручиваем к последним строкам.
+        _loggerStartIndex = Mathf.Max(0, _logLines.Count - Mathf.Max(1, _loggerVisibleLines));
+        RefreshLoggerView();
+    }
+
+    private void OnLoggerUpClicked()
+    {
+        _loggerStartIndex = Mathf.Max(0, _loggerStartIndex - 1);
+        RefreshLoggerView();
+    }
+
+    private void OnLoggerDownClicked()
+    {
+        int visible = Mathf.Max(1, _loggerVisibleLines);
+        int maxStart = Mathf.Max(0, _logLines.Count - visible);
+        _loggerStartIndex = Mathf.Min(maxStart, _loggerStartIndex + 1);
+        RefreshLoggerView();
+    }
+
+    private void RefreshLoggerView()
+    {
+        if (_loggerText == null) return;
+
+        int visible = Mathf.Max(1, _loggerVisibleLines);
+        int maxStart = Mathf.Max(0, _logLines.Count - visible);
+        _loggerStartIndex = Mathf.Clamp(_loggerStartIndex, 0, maxStart);
+
+        int count = Mathf.Min(visible, Mathf.Max(0, _logLines.Count - _loggerStartIndex));
+        if (count <= 0)
+        {
+            _loggerText.text = string.Empty;
+        }
+        else
+        {
+            _loggerText.text = string.Join("\n", _logLines.GetRange(_loggerStartIndex, count));
+        }
+
+        if (_loggerUpButton != null)
+            _loggerUpButton.interactable = _loggerStartIndex > 0;
+        if (_loggerDownButton != null)
+            _loggerDownButton.interactable = _loggerStartIndex < maxStart;
     }
 
     private void EnsureMiniMap()
@@ -755,6 +803,62 @@ public class ActionPointsUI : MonoBehaviour
             _turnTrackerPrevButton = FindChildComponent<Button>(frontContent, "TurnTrackerPrevButton");
         if (_turnTrackerNextButton == null)
             _turnTrackerNextButton = FindChildComponent<Button>(frontContent, "TurnTrackerNextButton");
+        if (_loggerText == null)
+            _loggerText = FindChildComponent<Text>(frontContent, "LoggerText");
+        if (_loggerText == null)
+            _loggerText = FindChildComponent<Text>(frontContent, "LogText"); // fallback: старое имя
+        if (_loggerUpButton == null)
+            _loggerUpButton = FindChildComponent<Button>(frontContent, "LoggerUp");
+        if (_loggerUpButton == null)
+            _loggerUpButton = FindChildComponent<Button>(frontContent, "LoggerUpButton");
+        if (_loggerDownButton == null)
+            _loggerDownButton = FindChildComponent<Button>(frontContent, "LoggerDown");
+        if (_loggerDownButton == null)
+            _loggerDownButton = FindChildComponent<Button>(frontContent, "LoggerDownButton");
+
+        // Глобальный fallback, если логгер находится вне Front Content Maker.
+        if (_loggerText == null)
+        {
+            Transform t = FindNamedTransform("LoggerText");
+            if (t == null) t = FindNamedTransform("LogText");
+            if (t != null) _loggerText = t.GetComponent<Text>();
+        }
+        if (_loggerUpButton == null)
+        {
+            Transform t = FindNamedTransform("LoggerUp");
+            if (t == null) t = FindNamedTransform("LoggerUpButton");
+            if (t != null) _loggerUpButton = t.GetComponent<Button>();
+        }
+        if (_loggerDownButton == null)
+        {
+            Transform t = FindNamedTransform("LoggerDown");
+            if (t == null) t = FindNamedTransform("LoggerDownButton");
+            if (t != null) _loggerDownButton = t.GetComponent<Button>();
+        }
+
+        // Дополнительный fallback: если компонент Button/Text висит на дочернем объекте внутри Logger*.
+        if (_loggerText == null)
+        {
+            Transform t = FindNamedTransform("LoggerText");
+            if (t != null)
+                _loggerText = t.GetComponent<Text>() ?? t.GetComponentInChildren<Text>(true);
+        }
+        if (_loggerUpButton == null)
+        {
+            Transform t = FindNamedTransform("LoggerUp");
+            if (t != null)
+                _loggerUpButton = t.GetComponent<Button>() ?? t.GetComponentInChildren<Button>(true);
+        }
+        if (_loggerDownButton == null)
+        {
+            Transform t = FindNamedTransform("LoggerDown");
+            if (t != null)
+                _loggerDownButton = t.GetComponent<Button>() ?? t.GetComponentInChildren<Button>(true);
+        }
+
+        // Если привязали LoggerText поздно, сразу отрисуем уже накопленные логи.
+        if (_loggerText != null)
+            RefreshLoggerView();
     }
 
     private void BindUiCallbacks()
@@ -776,6 +880,20 @@ public class ActionPointsUI : MonoBehaviour
             _turnTrackerNextButton.onClick.RemoveListener(OnTurnTrackerNextClicked);
             _turnTrackerNextButton.onClick.AddListener(OnTurnTrackerNextClicked);
         }
+
+        if (_loggerUpButton != null)
+        {
+            _loggerUpButton.onClick.RemoveListener(OnLoggerUpClicked);
+            _loggerUpButton.onClick.AddListener(OnLoggerUpClicked);
+        }
+
+        if (_loggerDownButton != null)
+        {
+            _loggerDownButton.onClick.RemoveListener(OnLoggerDownClicked);
+            _loggerDownButton.onClick.AddListener(OnLoggerDownClicked);
+        }
+
+        RefreshLoggerView();
     }
 
     private static T FindChildComponent<T>(Transform root, string childName) where T : Component

@@ -21,7 +21,7 @@ public class HexGridCamera : MonoBehaviour
 
     [Header("Перетаскивание камеры (drag)")]
     [Tooltip("0 = ЛКМ, 1 = ПКМ, 2 = СКМ. Рекомендуется СКМ или ПКМ, чтобы не мешать кликам по гексам.")]
-    [SerializeField] private int _panMouseButton = 2;
+    [SerializeField] private int _panMouseButton = 0;
     [Tooltip("Чувствительность сдвига при перетаскивании.")]
     [SerializeField] private float _panSensitivity = 0.35f;
     [Tooltip("Разрешать сдвиг только если зум ближе, чем «вся сетка» (orthographic size меньше максимума).")]
@@ -107,6 +107,10 @@ public class HexGridCamera : MonoBehaviour
     private void UpdatePan()
     {
         if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject())
+            return;
+
+        // Если ЛКМ удерживает индикатор цели на другом юните, не панорамируем карту.
+        if (_panMouseButton == 0 && HexInputManager.IsHoldingRemoteTargetWithLeftMouse)
             return;
 
         if (_panOnlyWhenZoomedIn && _cam.orthographicSize >= _orthoMax - 0.001f)
