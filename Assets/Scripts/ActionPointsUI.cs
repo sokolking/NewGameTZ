@@ -50,13 +50,34 @@ public class ActionPointsUI : MonoBehaviour
     [SerializeField] private Color _miniMapPlayerColor = Color.white;
     [SerializeField] private Color _miniMapEnemyColor = Color.red;
     [SerializeField] private Color _miniMapMobColor = new Color(1f, 0.55f, 0.15f, 1f);
+    [Tooltip("Цвет рамки прямоугольника видимости камеры на миникарте.")]
+    [SerializeField] private Color _miniMapViewportRectColor = new Color(1f, 1f, 1f, 0.9f);
+    [Tooltip("Толщина сторон прямоугольника видимости (в px).")]
+    [SerializeField] private float _miniMapViewportRectThickness = 1f;
+    [Header("Battle Start Intro")]
+    [Tooltip("Показывать интро при первом появлении игрового поля (HexGrid).")]
+    [SerializeField] private bool _playBattleBeginOnFieldAppear = true;
+    [Tooltip("Текст вступления перед авто-зумом.")]
+    [SerializeField] private string _battleBeginText = "your battle begin";
+    [Tooltip("Длительность показа вступительного текста (сек).")]
+    [SerializeField] private float _battleBeginTextDuration = 3f;
+    [Tooltip("Во сколько раз приблизить камеру после вступительного текста.")]
+    [SerializeField] private float _battleBeginZoomFactor = 2f;
+    [Tooltip("Длительность плавного авто-зума (сек).")]
+    [SerializeField] private float _battleBeginZoomDuration = 0.9f;
+    [Tooltip("Опциональный UI Text. Если не задан, создаётся автоматически по центру экрана.")]
+    [SerializeField] private Text _battleBeginOverlayText;
 
     private bool _endTurnInProgress;
     private bool _roundWaitVisible;
     private readonly System.Collections.Generic.Queue<string> _logLines = new System.Collections.Generic.Queue<string>();
     private readonly Dictionary<string, Image> _miniMapRemoteMarkers = new();
     private Image _miniMapLocalMarker;
+    private RectTransform _miniMapViewportRect;
     private static Sprite _miniMapCircleSprite;
+    private static Sprite _miniMapWhiteSprite;
+    private bool _battleBeginSequencePlayed;
+    private bool _battleBeginSequenceRunning;
 
     private void Awake()
     {
@@ -107,6 +128,10 @@ public class ActionPointsUI : MonoBehaviour
             _roundWaitSlider.normalizedValue = t;
         }
 
+        // Проверяем интро до раннего return, чтобы оно не пропускалось,
+        // даже если _player ещё не был проставлен в момент старта кадра.
+        TryRunBattleBeginSequence();
+
         if (_player == null) return;
         string timerStr = (_gameSession != null && _gameSession.IsWaitingForServerRoundResolve)
             ? "--:--"
@@ -151,6 +176,93 @@ public class ActionPointsUI : MonoBehaviour
             else
                 TryEndTurn(animate: true);
         }
+    }
+
+    private void TryRunBattleBeginSequence()
+    {
+        if (_battleBeginSequencePlayed || _battleBeginSequenceRunning)
+            return;
+        if (!_playBattleBeginOnFieldAppear)
+            return;
+
+        if (_gameSession == null)
+            _gameSession = FindFirstObjectByType<GameSession>();
+
+        if (_player == null)
+            _player = _gameSession != null ? _gameSession.LocalPlayer : FindFirstObjectByType<Player>();
+        if (_player == null)
+            return;
+
+        HexGrid grid = _player.Grid != null ? _player.Grid : FindFirstObjectByType<HexGrid>();
+        if (grid == null || grid.transform.childCount == 0)
+            return;
+
+        StartCoroutine(BattleBeginSequenceCoroutine());
+    }
+
+    private System.Collections.IEnumerator BattleBeginSequenceCoroutine()
+    {
+        _battleBeginSequenceRunning = true;
+
+        Text overlay = EnsureBattleBeginOverlayText();
+        if (overlay != null)
+        {
+            overlay.text = _battleBeginText;
+            overlay.gameObject.SetActive(true);
+        }
+
+        yield return new WaitForSecondsRealtime(Mathf.Max(0f, _battleBeginTextDuration));
+
+        if (overlay != null)
+            overlay.gameObject.SetActive(false);
+
+        HexGridCamera camController = FindFirstObjectByType<HexGridCamera>();
+        if (camController != null && _player != null)
+        {
+            yield return camController.StartCoroutine(
+                camController.FocusAndZoomSmooth(
+                    _player.transform.position,
+                    Mathf.Max(1f, _battleBeginZoomFactor),
+                    Mathf.Max(0.05f, _battleBeginZoomDuration)));
+        }
+
+        _battleBeginSequencePlayed = true;
+        _battleBeginSequenceRunning = false;
+    }
+
+    private Text EnsureBattleBeginOverlayText()
+    {
+        if (_battleBeginOverlayText != null)
+            return _battleBeginOverlayText;
+
+        Canvas canvas = GetComponentInParent<Canvas>();
+        if (canvas == null)
+            canvas = FindFirstObjectByType<Canvas>();
+        if (canvas == null)
+            return null;
+
+        GameObject go = new GameObject("BattleBeginOverlayText", typeof(RectTransform), typeof(Text));
+        go.transform.SetParent(canvas.transform, false);
+
+        RectTransform rt = go.GetComponent<RectTransform>();
+        rt.anchorMin = new Vector2(0.5f, 0.5f);
+        rt.anchorMax = new Vector2(0.5f, 0.5f);
+        rt.pivot = new Vector2(0.5f, 0.5f);
+        rt.anchoredPosition = Vector2.zero;
+        rt.sizeDelta = new Vector2(700f, 120f);
+
+        Text txt = go.GetComponent<Text>();
+        txt.alignment = TextAnchor.MiddleCenter;
+        txt.fontSize = 48;
+        txt.color = Color.white;
+        txt.raycastTarget = false;
+        Font font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+        if (font != null) txt.font = font;
+        txt.text = _battleBeginText;
+        txt.gameObject.SetActive(false);
+
+        _battleBeginOverlayText = txt;
+        return txt;
     }
 
     private void OnEndTurnClicked()
@@ -299,6 +411,93 @@ public class ActionPointsUI : MonoBehaviour
 
         if (_miniMapLocalMarker == null)
             _miniMapLocalMarker = CreateMiniMapMarker("LocalPlayerMarker", _miniMapPlayerColor);
+
+        if (_miniMapViewportRect == null)
+            _miniMapViewportRect = CreateMiniMapViewportRect();
+    }
+
+    private RectTransform CreateMiniMapViewportRect()
+    {
+        if (_miniMapPanel == null) return null;
+
+        GameObject go = new GameObject("MiniMapViewportRect", typeof(RectTransform), typeof(Image));
+        go.transform.SetParent(_miniMapPanel, false);
+
+        RectTransform rt = go.GetComponent<RectTransform>();
+        rt.anchorMin = new Vector2(0f, 0f);
+        rt.anchorMax = new Vector2(0f, 0f);
+        rt.pivot = new Vector2(0f, 0f);
+        rt.anchoredPosition = Vector2.zero;
+        rt.sizeDelta = new Vector2(50f, 50f);
+
+        Image img = go.GetComponent<Image>();
+        img.sprite = GetMiniMapWhiteSprite();
+        img.color = Color.clear;
+        img.raycastTarget = false;
+
+        float thickness = Mathf.Max(1f, _miniMapViewportRectThickness);
+        CreateMiniMapViewportTopBottomEdge(go.transform, "Top", _miniMapViewportRectColor, thickness, true);
+        CreateMiniMapViewportTopBottomEdge(go.transform, "Bottom", _miniMapViewportRectColor, thickness, false);
+        CreateMiniMapViewportLeftRightEdge(go.transform, "Left", _miniMapViewportRectColor, thickness, true);
+        CreateMiniMapViewportLeftRightEdge(go.transform, "Right", _miniMapViewportRectColor, thickness, false);
+
+        rt.SetAsLastSibling();
+        return rt;
+    }
+
+    private static void CreateMiniMapViewportTopBottomEdge(
+        Transform parent,
+        string edgeName,
+        Color color,
+        float thickness,
+        bool isTop)
+    {
+        GameObject edgeGo = new GameObject($"MiniMapViewport{edgeName}", typeof(RectTransform), typeof(Image));
+        edgeGo.transform.SetParent(parent, false);
+        RectTransform edgeRt = edgeGo.GetComponent<RectTransform>();
+        edgeRt.anchorMin = new Vector2(0f, isTop ? 1f : 0f);
+        edgeRt.anchorMax = new Vector2(1f, isTop ? 1f : 0f);
+        edgeRt.pivot = new Vector2(0.5f, isTop ? 1f : 0f);
+        edgeRt.anchoredPosition = Vector2.zero;
+        // Вписываем верх/низ между левым и правым краем, чтобы не было "усиков" в углах.
+        edgeRt.sizeDelta = new Vector2(-2f * thickness, thickness);
+
+        Image edgeImg = edgeGo.GetComponent<Image>();
+        edgeImg.sprite = GetMiniMapWhiteSprite();
+        edgeImg.color = color;
+        edgeImg.raycastTarget = false;
+    }
+
+    private static void CreateMiniMapViewportLeftRightEdge(
+        Transform parent,
+        string edgeName,
+        Color color,
+        float thickness,
+        bool isLeft)
+    {
+        GameObject edgeGo = new GameObject($"MiniMapViewport{edgeName}", typeof(RectTransform), typeof(Image));
+        edgeGo.transform.SetParent(parent, false);
+        RectTransform edgeRt = edgeGo.GetComponent<RectTransform>();
+        edgeRt.anchorMin = new Vector2(isLeft ? 0f : 1f, 0f);
+        edgeRt.anchorMax = new Vector2(isLeft ? 0f : 1f, 1f);
+        edgeRt.pivot = new Vector2(isLeft ? 0f : 1f, 0.5f);
+        edgeRt.anchoredPosition = Vector2.zero;
+        edgeRt.sizeDelta = new Vector2(thickness, 0f);
+
+        Image edgeImg = edgeGo.GetComponent<Image>();
+        edgeImg.sprite = GetMiniMapWhiteSprite();
+        edgeImg.color = color;
+        edgeImg.raycastTarget = false;
+    }
+
+    private static Sprite GetMiniMapWhiteSprite()
+    {
+        if (_miniMapWhiteSprite != null) return _miniMapWhiteSprite;
+        Texture2D tex = new Texture2D(1, 1);
+        tex.SetPixel(0, 0, Color.white);
+        tex.Apply();
+        _miniMapWhiteSprite = Sprite.Create(tex, new Rect(0, 0, 1, 1), new Vector2(0.5f, 0.5f));
+        return _miniMapWhiteSprite;
     }
 
     private static Sprite GetMiniMapCircleSprite()
@@ -403,21 +602,56 @@ public class ActionPointsUI : MonoBehaviour
         if (grid == null)
             return;
 
-        Camera miniMapCamera = ResolveMiniMapCamera();
-        if (miniMapCamera == null)
-            return;
-        if (!TryGetMiniMapViewportBounds(grid, miniMapCamera, out Vector2 minViewport, out Vector2 maxViewport))
+        HexGridCamera gridCamController = FindFirstObjectByType<HexGridCamera>();
+        Camera mainCam = ResolveMiniMapCamera();
+        if (mainCam == null)
             return;
 
-        float width = Mathf.Max(0.001f, maxViewport.x - minViewport.x);
-        float height = Mathf.Max(0.001f, maxViewport.y - minViewport.y);
-        float usableWidth = Mathf.Max(1f, _miniMapPanel.rect.width - _miniMapPadding * 2f);
-        float usableHeight = Mathf.Max(1f, _miniMapPanel.rect.height - _miniMapPadding * 2f);
+        grid.GetGridBoundsWorld(out float mapMinX, out float mapMaxX, out float mapMinZ, out float mapMaxZ);
+        float mapW = Mathf.Max(0.001f, mapMaxX - mapMinX);
+        float mapH = Mathf.Max(0.001f, mapMaxZ - mapMinZ);
+        float markerUsableWidth = Mathf.Max(1f, _miniMapPanel.rect.width - _miniMapPadding * 2f);
+        float markerUsableHeight = Mathf.Max(1f, _miniMapPanel.rect.height - _miniMapPadding * 2f);
+        float rectUsableWidth = Mathf.Max(1f, _miniMapPanel.rect.width);
+        float rectUsableHeight = Mathf.Max(1f, _miniMapPanel.rect.height);
 
+        // Прямоугольник видимости: текущий вид камеры в координатах всей карты
+        if (_miniMapViewportRect != null && mainCam.orthographic)
+        {
+            float halfW = mainCam.orthographicSize * mainCam.aspect;
+            float halfH = mainCam.orthographicSize;
+            Vector3 camPos = mainCam.transform.position;
+            float visMinX = camPos.x - halfW;
+            float visMaxX = camPos.x + halfW;
+            float visMinZ = camPos.z - halfH;
+            float visMaxZ = camPos.z + halfH;
+
+            float nMinX = Mathf.Clamp01((visMinX - mapMinX) / mapW);
+            float nMaxX = Mathf.Clamp01((visMaxX - mapMinX) / mapW);
+            float nMinY = Mathf.Clamp01((visMinZ - mapMinZ) / mapH);
+            float nMaxY = Mathf.Clamp01((visMaxZ - mapMinZ) / mapH);
+
+            float rectW = Mathf.Max(2f, (nMaxX - nMinX) * rectUsableWidth);
+            float rectH = Mathf.Max(2f, (nMaxY - nMinY) * rectUsableHeight);
+            float left = nMinX * rectUsableWidth;
+            float bottom = nMinY * rectUsableHeight;
+
+            _miniMapViewportRect.anchoredPosition = new Vector2(left, bottom);
+            _miniMapViewportRect.sizeDelta = new Vector2(rectW, rectH);
+            bool shouldShowRect = gridCamController != null
+                ? gridCamController.IsZoomApplied
+                : mainCam.orthographic;
+            _miniMapViewportRect.gameObject.SetActive(shouldShowRect);
+        }
+        else if (_miniMapViewportRect != null)
+            _miniMapViewportRect.gameObject.SetActive(false);
+
+        // Маркеры в координатах всей карты (0–1 по карте → позиция на миникарте)
         if (_miniMapLocalMarker != null && local != null)
         {
             _miniMapLocalMarker.gameObject.SetActive(true);
-            SetMiniMapMarkerPosition(_miniMapLocalMarker.rectTransform, local.transform.position, miniMapCamera, minViewport, width, height, usableWidth, usableHeight);
+            SetMiniMapMarkerPositionFullMap(_miniMapLocalMarker.rectTransform, local.transform.position,
+                mapMinX, mapMaxX, mapMinZ, mapMaxZ, markerUsableWidth, markerUsableHeight);
         }
 
         List<RemoteBattleUnitView> remotes = _gameSession.GetRemoteUnitsSnapshot();
@@ -438,7 +672,8 @@ public class ActionPointsUI : MonoBehaviour
             if (marker != null)
             {
                 marker.gameObject.SetActive(true);
-                SetMiniMapMarkerPosition(marker.rectTransform, remote.transform.position, miniMapCamera, minViewport, width, height, usableWidth, usableHeight);
+                SetMiniMapMarkerPositionFullMap(marker.rectTransform, remote.transform.position,
+                    mapMinX, mapMaxX, mapMinZ, mapMaxZ, markerUsableWidth, markerUsableHeight);
             }
         }
 
@@ -456,6 +691,24 @@ public class ActionPointsUI : MonoBehaviour
             _miniMapRemoteMarkers.Remove(id);
     }
 
+    private void SetMiniMapMarkerPositionFullMap(
+        RectTransform marker,
+        Vector3 worldPosition,
+        float mapMinX, float mapMaxX, float mapMinZ, float mapMaxZ,
+        float usableWidth, float usableHeight)
+    {
+        if (marker == null) return;
+
+        float mapW = Mathf.Max(0.001f, mapMaxX - mapMinX);
+        float mapH = Mathf.Max(0.001f, mapMaxZ - mapMinZ);
+        float normX = Mathf.Clamp01((worldPosition.x - mapMinX) / mapW);
+        float normY = Mathf.Clamp01((worldPosition.z - mapMinZ) / mapH);
+
+        marker.anchoredPosition = new Vector2(
+            _miniMapPadding + normX * usableWidth,
+            _miniMapPadding + normY * usableHeight);
+    }
+
     private Camera ResolveMiniMapCamera()
     {
         HexGridCamera gridCamera = FindFirstObjectByType<HexGridCamera>();
@@ -468,67 +721,6 @@ public class ActionPointsUI : MonoBehaviour
         return Camera.main;
     }
 
-    private bool TryGetMiniMapViewportBounds(HexGrid grid, Camera cam, out Vector2 minViewport, out Vector2 maxViewport)
-    {
-        minViewport = Vector2.zero;
-        maxViewport = Vector2.one;
-        if (grid == null || cam == null || grid.Width <= 0 || grid.Length <= 0)
-            return false;
-
-        Vector2[] points =
-        {
-            ProjectToViewport(cam, grid.GetCellWorldPosition(0, 0)),
-            ProjectToViewport(cam, grid.GetCellWorldPosition(0, grid.Length - 1)),
-            ProjectToViewport(cam, grid.GetCellWorldPosition(grid.Width - 1, 0)),
-            ProjectToViewport(cam, grid.GetCellWorldPosition(grid.Width - 1, grid.Length - 1)),
-        };
-
-        float minViewX = float.MaxValue;
-        float maxViewX = float.MinValue;
-        float minViewY = float.MaxValue;
-        float maxViewY = float.MinValue;
-        foreach (Vector2 p in points)
-        {
-            minViewX = Mathf.Min(minViewX, p.x);
-            maxViewX = Mathf.Max(maxViewX, p.x);
-            minViewY = Mathf.Min(minViewY, p.y);
-            maxViewY = Mathf.Max(maxViewY, p.y);
-        }
-
-        if (maxViewX - minViewX < 0.0001f || maxViewY - minViewY < 0.0001f)
-            return false;
-
-        minViewport = new Vector2(minViewX, minViewY);
-        maxViewport = new Vector2(maxViewX, maxViewY);
-        return true;
-    }
-
-    private static Vector2 ProjectToViewport(Camera cam, Vector3 worldPosition)
-    {
-        Vector3 viewport = cam.WorldToViewportPoint(worldPosition);
-        return new Vector2(viewport.x, viewport.y);
-    }
-
-    private void SetMiniMapMarkerPosition(
-        RectTransform marker,
-        Vector3 worldPosition,
-        Camera cam,
-        Vector2 minViewport,
-        float viewportWidth,
-        float viewportHeight,
-        float usableWidth,
-        float usableHeight)
-    {
-        if (marker == null || cam == null)
-            return;
-
-        Vector2 viewport = ProjectToViewport(cam, worldPosition);
-        float xNorm = Mathf.Clamp01((viewport.x - minViewport.x) / viewportWidth);
-        float yNorm = Mathf.Clamp01((viewport.y - minViewport.y) / viewportHeight);
-        marker.anchoredPosition = new Vector2(
-            _miniMapPadding + xNorm * usableWidth,
-            _miniMapPadding + yNorm * usableHeight);
-    }
 
     private static string FormatRoundTime(float secondsLeft)
     {
