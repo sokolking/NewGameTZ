@@ -32,6 +32,12 @@ CREATE TABLE IF NOT EXISTS battles (
     created_utc TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS users (
+    id BIGSERIAL PRIMARY KEY,
+    username TEXT NOT NULL UNIQUE,
+    password TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS battle_turns (
     turn_id TEXT PRIMARY KEY,
     battle_id TEXT NOT NULL REFERENCES battles(battle_id) ON DELETE CASCADE,
@@ -49,6 +55,13 @@ CREATE TABLE IF NOT EXISTS battle_turn_links (
 
 CREATE INDEX IF NOT EXISTS ix_battle_turn_links_battle_id_turn_index
     ON battle_turn_links (battle_id, turn_index);
+
+INSERT INTO users (username, password)
+VALUES
+    ('test', 'test'),
+    ('test2', 'test')
+ON CONFLICT (username) DO UPDATE
+SET password = EXCLUDED.password;
 """;
             command.ExecuteNonQuery();
         }

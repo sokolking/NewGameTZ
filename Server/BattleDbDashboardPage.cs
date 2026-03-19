@@ -65,6 +65,23 @@ public static class BattleDbDashboardPage
       padding: 9px 12px;
       cursor: pointer;
     }
+    .nav {
+      display: inline-flex;
+      gap: 8px;
+      margin-right: 8px;
+    }
+    .nav a {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      color: var(--text);
+      border-radius: 10px;
+      padding: 9px 12px;
+      text-decoration: none;
+    }
+    .nav a.active {
+      border-color: var(--accent);
+      background: var(--accent-soft);
+    }
     button:hover { border-color: #46506a; }
     .status {
       margin-left: auto;
@@ -172,6 +189,10 @@ public static class BattleDbDashboardPage
   <div class="topbar">
     <h1 class="title">Battle Database Browser</h1>
     <div class="controls">
+      <div class="nav">
+        <a href="/db" class="active">Battles</a>
+        <a href="/users">Users</a>
+      </div>
       <input id="battleSearch" type="search" placeholder="Search battleId">
       <input id="turnSearch" type="search" placeholder="Search turnId / resolve reason">
       <button id="refreshBtn" type="button">Refresh</button>

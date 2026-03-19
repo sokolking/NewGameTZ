@@ -157,3 +157,10 @@ public class BattleTurnDetailDto
     public string RawJson { get; set; } = "";
     public TurnResultPayloadDto TurnResult { get; set; } = new();
 }
+
+public class BattleUserBrowseRowDto
+{
+    public long Id { get; set; }
+    public string Username { get; set; } = "";
+    public string Password { get; set; } = "";
+}

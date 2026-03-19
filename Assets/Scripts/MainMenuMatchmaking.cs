@@ -18,6 +18,8 @@ public class MainMenuMatchmaking : MonoBehaviour
     private bool _searching;
     private string _queueBattleId;
     private string _queuePlayerId;
+    private string _username = "test";
+    private string _password = "test";
 
     private void OnDestroy()
     {
@@ -27,18 +29,22 @@ public class MainMenuMatchmaking : MonoBehaviour
         _queuePlayerId = null;
     }
 
-    public void FindGame()
+    public void FindGame(string username, string password)
     {
         if (_searching) return;
+        _username = username;
+        _password = password;
         _searching = true;
         SetStatus("Searching for opponent...");
         StartCoroutine(JoinAndWaitForBattleCoroutine());
     }
 
     /// <summary>Одиночный режим: запросить на сервере одиночный бой (1 игрок + моб) и сразу загрузить сцену.</summary>
-    public void StartSinglePlayerServerBattle()
+    public void StartSinglePlayerServerBattle(string username, string password)
     {
         if (_searching) return;
+        _username = username;
+        _password = password;
         _searching = true;
         SetStatus("Starting single-player battle...");
         StartCoroutine(JoinSoloAndStartBattleCoroutine());
@@ -51,7 +57,7 @@ public class MainMenuMatchmaking : MonoBehaviour
 
     private IEnumerator JoinAndWaitForBattleCoroutine()
     {
-        var body = new JoinRequest { startCol = 0, startRow = 0, solo = false };
+        var body = new JoinRequest { startCol = 0, startRow = 0, solo = false, username = _username, password = _password };
         var json = JsonUtility.ToJson(body);
         using (var req = new UnityWebRequest(_serverUrl + "/api/battle/join", "POST"))
         {
@@ -62,7 +68,7 @@ public class MainMenuMatchmaking : MonoBehaviour
 
             if (req.result != UnityWebRequest.Result.Success)
             {
-                SetStatus("Connection failed. Check server.");
+                SetStatus(ExtractRequestError(req, "Connection failed. Check server."));
                 _searching = false;
                 yield break;
             }
@@ -98,7 +104,7 @@ public class MainMenuMatchmaking : MonoBehaviour
     /// <summary>Запрос одиночного боя: сервер сразу создаёт бой и возвращает battleStarted без ожидания второго игрока.</summary>
     private IEnumerator JoinSoloAndStartBattleCoroutine()
     {
-        var body = new JoinRequest { startCol = 0, startRow = 0, solo = true };
+        var body = new JoinRequest { startCol = 0, startRow = 0, solo = true, username = _username, password = _password };
         var json = JsonUtility.ToJson(body);
         using (var req = new UnityWebRequest(_serverUrl + "/api/battle/join", "POST"))
         {
@@ -109,7 +115,7 @@ public class MainMenuMatchmaking : MonoBehaviour
 
             if (req.result != UnityWebRequest.Result.Success)
             {
-                SetStatus("Connection failed. Check server.");
+                SetStatus(ExtractRequestError(req, "Connection failed. Check server."));
                 _searching = false;
                 yield break;
             }
@@ -168,6 +174,8 @@ public class MainMenuMatchmaking : MonoBehaviour
         public int startCol;
         public int startRow;
         public bool solo;
+        public string username;
+        public string password;
     }
 
     [System.Serializable]
@@ -184,5 +192,34 @@ public class MainMenuMatchmaking : MonoBehaviour
     {
         public string status;
         public BattleStartedPayload battleStarted;
+    }
+
+    [System.Serializable]
+    private class ErrorResponse
+    {
+        public string error;
+    }
+
+    private static string ExtractRequestError(UnityWebRequest request, string fallback)
+    {
+        if (request == null)
+            return fallback;
+
+        string responseText = request.downloadHandler != null ? request.downloadHandler.text : null;
+        if (!string.IsNullOrWhiteSpace(responseText))
+        {
+            try
+            {
+                var error = JsonUtility.FromJson<ErrorResponse>(responseText);
+                if (error != null && !string.IsNullOrWhiteSpace(error.error))
+                    return error.error;
+            }
+            catch
+            {
+                // Ignore malformed error body and fall back to generic text.
+            }
+        }
+
+        return string.IsNullOrWhiteSpace(request.error) ? fallback : request.error;
     }
 }

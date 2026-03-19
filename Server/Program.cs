@@ -11,6 +11,7 @@ builder.Services.AddSingleton(logStore);
 builder.Services.AddSingleton<BattlePostgresDatabase>();
 builder.Services.AddSingleton<BattleHistoryDatabase>();
 builder.Services.AddSingleton<BattleTurnDatabase>();
+builder.Services.AddSingleton<BattleUserDatabase>();
 builder.Services.AddSingleton<BattleRoomStore>();
 builder.Services.AddCors(options =>
 {
@@ -42,6 +43,7 @@ var postgresDb = app.Services.GetRequiredService<BattlePostgresDatabase>();
 postgresDb.EnsureCreated();
 var battleHistoryDb = app.Services.GetRequiredService<BattleHistoryDatabase>();
 var battleTurnDb = app.Services.GetRequiredService<BattleTurnDatabase>();
+var battleUserDb = app.Services.GetRequiredService<BattleUserDatabase>();
 
 BattleRoom.RoundClosedForPush += room =>
 {
@@ -92,6 +94,11 @@ timer.Start();
 app.MapPost("/api/battle/join", (BattleRoomStore s, JoinRequest? body) =>
 {
     var (startCol, startRow, solo) = body is { } b ? (b.startCol, b.startRow, b.solo) : (0, 0, false);
+    string username = body?.username?.Trim() ?? "";
+    string password = body?.password ?? "";
+    if (!battleUserDb.ValidateCredentials(username, password))
+        return Results.Json(new ErrorResponse { Error = "Invalid username or password." }, jsonOpt, statusCode: 401);
+
     var resp = s.JoinOrCreate(startCol, startRow, solo);
     return Results.Json(resp, jsonOpt);
 });
@@ -266,6 +273,12 @@ app.MapGet("/api/db/turns/{turnId}", (string turnId, BattleTurnDatabase db) =>
     return Results.Json(detail, jsonOpt);
 });
 
+app.MapGet("/api/db/users", (BattleUserDatabase db, int? take) =>
+{
+    int requested = take ?? 100;
+    return Results.Json(db.ListUsers(requested), jsonOpt);
+});
+
 app.MapGet("/api/logs/recent", (BattleLogStore logs, int? take) =>
 {
     int requested = take ?? 200;
@@ -311,6 +324,7 @@ app.MapGet("/api/logs/stream", async (HttpContext ctx, BattleLogStore logs) =>
 
 app.MapGet("/logs", () => Results.Content(BattleLogDashboardPage.Html, "text/html; charset=utf-8"));
 app.MapGet("/db", () => Results.Content(BattleDbDashboardPage.Html, "text/html; charset=utf-8"));
+app.MapGet("/users", () => Results.Content(BattleUsersDashboardPage.Html, "text/html; charset=utf-8"));
 
 // POST leave — только вне игровой сцены (отмена очереди с меню; в бою выход — disconnect WS + leave по сокету).
 app.MapPost("/api/battle/{battleId}/leave", (string battleId, string playerId, BattleRoomStore s) =>
@@ -341,6 +355,8 @@ public class JoinRequest
     public int startRow { get; set; }
     /// <summary>Если true — создать одиночный бой (1 игрок + серверный моб) без ожидания оппонента.</summary>
     public bool solo { get; set; }
+    public string username { get; set; } = "";
+    public string password { get; set; } = "";
 }
 
 public class BattleStateResponse
@@ -365,6 +381,11 @@ public class PollResponse
     public BattleStartedPayloadDto? BattleStarted { get; set; }
     public int RoundIndex { get; set; }
     public float RoundDuration { get; set; }
+}
+
+public class ErrorResponse
+{
+    public string Error { get; set; } = "";
 }
 
 public static class BattleLogDashboardPage
