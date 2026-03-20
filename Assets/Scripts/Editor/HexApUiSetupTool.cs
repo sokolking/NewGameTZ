@@ -59,7 +59,7 @@ public static class HexApUiSetupTool
         textRt.sizeDelta = new Vector2(200f, 30f);
 
         // Button
-        GameObject buttonGo = new GameObject("EndTurn Button");
+        GameObject buttonGo = new GameObject(UiHierarchyNames.EndTurnButton);
         buttonGo.transform.SetParent(canvasGo.transform, false);
         Image buttonImg = buttonGo.AddComponent<Image>();
         buttonImg.color = new Color(0.2f, 0.2f, 0.2f, 0.8f);
@@ -192,10 +192,10 @@ public static class HexApUiSetupTool
             return;
         }
 
-        Transform old = canvas.Find("RoundWaitPanel");
+        Transform old = canvas.Find(UiHierarchyNames.RoundWaitPanel);
         if (old != null) Object.DestroyImmediate(old.gameObject);
 
-        GameObject panel = new GameObject("RoundWaitPanel", typeof(RectTransform), typeof(Image));
+        GameObject panel = new GameObject(UiHierarchyNames.RoundWaitPanel, typeof(RectTransform), typeof(Image));
         panel.transform.SetParent(canvas, false);
         RectTransform prt = panel.GetComponent<RectTransform>();
         prt.anchorMin = Vector2.zero;
@@ -270,6 +270,219 @@ public static class HexApUiSetupTool
 
         Selection.activeGameObject = panel;
         Debug.Log("Hex Grid: RoundWaitPanel добавлен (последний дочерний у Canvas — поверх UI). Перемести в конец иерархии Canvas при необходимости.");
+    }
+
+    private const string SkipDialogMenu = "Tools/Hex Grid/Add Skip Dialog (пропуск ОД)";
+
+    /// <summary>
+    /// Создаёт панель «Сколько ОД пропустить» в Canvas и проставляет ссылки в ActionPointsUI (без runtime-генерации).
+    /// </summary>
+    [MenuItem(SkipDialogMenu)]
+    public static void AddSkipDialog()
+    {
+#if UNITY_2023_1_OR_NEWER
+        ActionPointsUI apUi = Object.FindFirstObjectByType<ActionPointsUI>();
+#else
+        ActionPointsUI apUi = Object.FindObjectOfType<ActionPointsUI>();
+#endif
+        if (apUi == null)
+        {
+            Debug.LogError("Hex Grid: не найден ActionPointsUI.");
+            return;
+        }
+
+        Transform canvas = apUi.transform;
+        while (canvas != null && canvas.GetComponent<Canvas>() == null)
+            canvas = canvas.parent;
+        if (canvas == null)
+        {
+            Debug.LogError("Hex Grid: нет Canvas.");
+            return;
+        }
+
+        Transform existing = canvas.Find(UiHierarchyNames.SkipDialogPanel);
+        if (existing != null)
+            Object.DestroyImmediate(existing.gameObject);
+
+        Font legacyFont = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+
+        // Как в сцене: SkipDialogPanel → прямые дети SkipDialogQuestionText, SkipDialogInput, кнопки (без фона/обёрток).
+        GameObject panel = new GameObject(UiHierarchyNames.SkipDialogPanel, typeof(RectTransform));
+        Undo.RegisterCreatedObjectUndo(panel, "Skip Dialog");
+        panel.transform.SetParent(canvas, false);
+        RectTransform prt = panel.GetComponent<RectTransform>();
+        prt.anchorMin = Vector2.zero;
+        prt.anchorMax = Vector2.one;
+        prt.offsetMin = Vector2.zero;
+        prt.offsetMax = Vector2.zero;
+
+        Transform panelTf = panel.transform;
+
+        GameObject qGo = new GameObject(UiHierarchyNames.SkipDialogQuestionText, typeof(RectTransform), typeof(Text));
+        qGo.transform.SetParent(panelTf, false);
+        RectTransform qrt = qGo.GetComponent<RectTransform>();
+        qrt.anchorMin = new Vector2(0.5f, 0.5f);
+        qrt.anchorMax = new Vector2(0.5f, 0.5f);
+        qrt.pivot = new Vector2(0.5f, 0.5f);
+        qrt.sizeDelta = new Vector2(420f, 44f);
+        qrt.anchoredPosition = new Vector2(0f, 52f);
+        Text qt = qGo.GetComponent<Text>();
+        qt.text = "Сколько ОД пропустить?";
+        qt.alignment = TextAnchor.MiddleCenter;
+        qt.color = Color.white;
+        qt.fontSize = 24;
+        if (legacyFont != null)
+            qt.font = legacyFont;
+
+        GameObject inputGo = new GameObject(UiHierarchyNames.SkipDialogInput, typeof(RectTransform), typeof(Image), typeof(InputField));
+        inputGo.transform.SetParent(panelTf, false);
+        RectTransform irt = inputGo.GetComponent<RectTransform>();
+        irt.anchorMin = new Vector2(0.5f, 0.5f);
+        irt.anchorMax = new Vector2(0.5f, 0.5f);
+        irt.pivot = new Vector2(0.5f, 0.5f);
+        irt.sizeDelta = new Vector2(200f, 40f);
+        irt.anchoredPosition = new Vector2(0f, -6f);
+        Image iBg = inputGo.GetComponent<Image>();
+        iBg.color = new Color(1f, 1f, 1f, 0.12f);
+
+        GameObject inputTextGo = new GameObject("Text", typeof(RectTransform), typeof(Text));
+        inputTextGo.transform.SetParent(inputGo.transform, false);
+        RectTransform inputTextRt = inputTextGo.GetComponent<RectTransform>();
+        inputTextRt.anchorMin = Vector2.zero;
+        inputTextRt.anchorMax = Vector2.one;
+        inputTextRt.offsetMin = new Vector2(10f, 6f);
+        inputTextRt.offsetMax = new Vector2(-10f, -6f);
+        Text inputText = inputTextGo.GetComponent<Text>();
+        inputText.alignment = TextAnchor.MiddleCenter;
+        inputText.color = Color.white;
+        inputText.fontSize = 22;
+        if (legacyFont != null)
+            inputText.font = legacyFont;
+        inputText.raycastTarget = false;
+
+        InputField inputField = inputGo.GetComponent<InputField>();
+        inputField.targetGraphic = iBg;
+        inputField.textComponent = inputText;
+        inputField.contentType = InputField.ContentType.IntegerNumber;
+        inputField.lineType = InputField.LineType.SingleLine;
+        inputField.text = "1";
+
+        Button okBtn = CreateSkipDialogUiButton(panelTf, UiHierarchyNames.SkipDialogOkButton, "OK", new Vector2(-70f, -64f), legacyFont);
+        Button cancelBtn = CreateSkipDialogUiButton(panelTf, UiHierarchyNames.SkipDialogCancelButton, "Отмена", new Vector2(70f, -64f), legacyFont);
+
+        panel.SetActive(false);
+
+        SerializedObject so = new SerializedObject(apUi);
+        so.FindProperty("_skipDialogPanel").objectReferenceValue = panel;
+        so.FindProperty("_skipDialogQuestionText").objectReferenceValue = qt;
+        so.FindProperty("_skipDialogInput").objectReferenceValue = inputField;
+        so.FindProperty("_skipDialogOkButton").objectReferenceValue = okBtn;
+        so.FindProperty("_skipDialogCancelButton").objectReferenceValue = cancelBtn;
+        SerializedProperty init = so.FindProperty("_skipDialogInitialInput");
+        if (init != null)
+            init.stringValue = "1";
+        so.ApplyModifiedPropertiesWithoutUndo();
+
+        Selection.activeGameObject = panel;
+        Debug.Log("Hex Grid: SkipDialogPanel добавлен на Canvas и привязан к ActionPointsUI. При необходимости перенеси в конец иерархии Canvas (поверх остального UI).");
+    }
+
+    private static Button CreateSkipDialogUiButton(Transform parent, string name, string caption, Vector2 anchoredPos, Font font)
+    {
+        GameObject go = new GameObject(name, typeof(RectTransform), typeof(Image), typeof(Button));
+        go.transform.SetParent(parent, false);
+        RectTransform rt = go.GetComponent<RectTransform>();
+        rt.anchorMin = new Vector2(0.5f, 0.5f);
+        rt.anchorMax = new Vector2(0.5f, 0.5f);
+        rt.pivot = new Vector2(0.5f, 0.5f);
+        rt.anchoredPosition = anchoredPos;
+        rt.sizeDelta = new Vector2(120f, 40f);
+        Image bg = go.GetComponent<Image>();
+        bg.color = new Color(0.2f, 0.2f, 0.2f, 1f);
+        Button button = go.GetComponent<Button>();
+
+        GameObject labelGo = new GameObject("Text", typeof(RectTransform), typeof(Text));
+        labelGo.transform.SetParent(go.transform, false);
+        RectTransform labelRt = labelGo.GetComponent<RectTransform>();
+        labelRt.anchorMin = Vector2.zero;
+        labelRt.anchorMax = Vector2.one;
+        labelRt.offsetMin = Vector2.zero;
+        labelRt.offsetMax = Vector2.zero;
+        Text label = labelGo.GetComponent<Text>();
+        label.text = caption;
+        label.alignment = TextAnchor.MiddleCenter;
+        label.color = Color.white;
+        label.fontSize = 20;
+        if (font != null)
+            label.font = font;
+        return button;
+    }
+
+    private const string BlockOverlayMenuPath = "Tools/Hex Grid/Setup Block Overlay";
+
+    /// <summary>
+    /// Создаёт <see cref="UiHierarchyNames.BlockOverlay"/> под корневым Canvas и вешает <see cref="UiBlockOverlaySync"/>.
+    /// </summary>
+    [MenuItem(BlockOverlayMenuPath)]
+    public static void SetupBlockOverlay()
+    {
+        // Не FindFirstObjectByType<Canvas> — в сцене много Canvas; нужен тот же, что и ActionPointsUI.
+        ActionPointsUI apUi;
+#if UNITY_2023_1_OR_NEWER
+        apUi = Object.FindFirstObjectByType<ActionPointsUI>();
+#else
+        apUi = Object.FindObjectOfType<ActionPointsUI>();
+#endif
+        Canvas canvas = apUi != null ? apUi.GetComponent<Canvas>() : null;
+        if (canvas == null)
+        {
+#if UNITY_2023_1_OR_NEWER
+            canvas = Object.FindFirstObjectByType<Canvas>();
+#else
+            canvas = Object.FindObjectOfType<Canvas>();
+#endif
+        }
+        if (canvas == null)
+        {
+            Debug.LogError("Hex Grid: Canvas с ActionPointsUI не найден в сцене.");
+            return;
+        }
+
+        Transform root = canvas.transform;
+        if (root.Find(UiHierarchyNames.BlockOverlay) != null)
+        {
+            Debug.LogWarning("Hex Grid: объект BlockOverlay уже есть на Canvas.");
+            if (canvas.GetComponent<UiBlockOverlaySync>() == null)
+                Undo.AddComponent<UiBlockOverlaySync>(canvas.gameObject);
+            return;
+        }
+
+        GameObject go = new GameObject(UiHierarchyNames.BlockOverlay, typeof(RectTransform), typeof(Image));
+        Undo.RegisterCreatedObjectUndo(go, "Block Overlay");
+        go.transform.SetParent(root, false);
+
+        Transform front = root.Find(UiHierarchyNames.FrontContentMaker);
+        int insertIndex = front != null ? front.GetSiblingIndex() + 1 : 0;
+        go.transform.SetSiblingIndex(insertIndex);
+
+        RectTransform rt = go.GetComponent<RectTransform>();
+        rt.anchorMin = Vector2.zero;
+        rt.anchorMax = Vector2.one;
+        rt.offsetMin = Vector2.zero;
+        rt.offsetMax = Vector2.zero;
+
+        Image img = go.GetComponent<Image>();
+        // Как в UiBlockOverlaySync: лёгкое затемнение, чтобы оверлей был виден под неполноэкранными панелями.
+        img.color = new Color(0f, 0f, 0f, 0.35f);
+        img.raycastTarget = true;
+
+        go.SetActive(false);
+
+        if (canvas.GetComponent<UiBlockOverlaySync>() == null)
+            Undo.AddComponent<UiBlockOverlaySync>(canvas.gameObject);
+
+        Selection.activeGameObject = go;
+        Debug.Log("Hex Grid: BlockOverlay добавлен (прозрачный raycast-слой над Front Content Maker). Запусти сцену — оверлей включается вместе с паузой / ожиданием раунда / диалогом пропуска.");
     }
 }
 

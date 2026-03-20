@@ -56,6 +56,12 @@ public class Player : MonoBehaviour
     private bool _isHidden;
     private int _movementInterruptVersion;
 
+    /// <summary>Код оружия (сервер / локальный каталог).</summary>
+    private string _weaponCode = WeaponCatalog.FistCode;
+    private int _weaponDamage = 1;
+    /// <summary>Макс. дистанция атаки в шагах гекса (как на сервере <see cref="UnitStateDto.WeaponRange"/>).</summary>
+    private int _weaponRangeHexes = 1;
+
     public int CurrentCol => _currentCol;
     public int CurrentRow => _currentRow;
     public bool IsMoving => _isMoving;
@@ -82,6 +88,19 @@ public class Player : MonoBehaviour
     public int StepsTakenThisTurn => _stepsTakenThisTurn;
     public HexGrid Grid => _grid;
     public float MoveDurationPerHex => _moveDurationPerHex;
+
+    public string WeaponCode => _weaponCode;
+    public int WeaponDamage => _weaponDamage;
+    /// <summary>Радиус атаки в гексах (hex distance), как у текущего оружия.</summary>
+    public int WeaponRangeHexes => Mathf.Max(0, _weaponRangeHexes);
+
+    /// <summary>Синхронизация с сервером или локальная смена (кулак / камень и т.д.).</summary>
+    public void SetEquippedWeapon(string code, int damage, int rangeHexes)
+    {
+        _weaponCode = string.IsNullOrWhiteSpace(code) ? WeaponCatalog.FistCode : code.Trim().ToLowerInvariant();
+        _weaponDamage = Mathf.Max(0, damage);
+        _weaponRangeHexes = Mathf.Max(0, rangeHexes);
+    }
 
     public delegate void PlayerMovedHandler(HexCell cell);
     /// <summary>Событие: игрок завершил перемещение в новую ячейку (после MoveAlongPath, телепорта или анимации).</summary>
@@ -336,6 +355,7 @@ public class Player : MonoBehaviour
                 targetUnitId = src.targetUnitId,
                 bodyPart = src.bodyPart,
                 posture = src.posture,
+                previousPosture = src.previousPosture,
                 cost = src.cost
             };
         }
@@ -356,6 +376,7 @@ public class Player : MonoBehaviour
         {
             actionType = "ChangePosture",
             posture = MovementPostureUtility.ToId(posture),
+            previousPosture = MovementPostureUtility.ToId(_currentPosture),
             cost = ChangePostureCost
         });
         _apSpentThisTurn += ChangePostureCost;
@@ -410,6 +431,87 @@ public class Player : MonoBehaviour
         _apSpentThisTurn += safeCost;
         _currentAp -= safeCost;
         return true;
+    }
+
+    /// <summary>Отменить последнее действие в очереди текущего хода (движение, атака, смена позы, ожидание).</summary>
+    public bool TryUndoLastQueuedAction(out string failureReason)
+    {
+        failureReason = null;
+        if (IsDead || _isHidden)
+        {
+            failureReason = "Недоступно";
+            return false;
+        }
+
+        if (_isMoving)
+        {
+            failureReason = "Дождитесь окончания движения";
+            return false;
+        }
+
+        if (_turnActions == null || _turnActions.Count == 0)
+        {
+            failureReason = "Нет действий для отмены";
+            return false;
+        }
+
+        BattleQueuedAction last = _turnActions[_turnActions.Count - 1];
+        _turnActions.RemoveAt(_turnActions.Count - 1);
+
+        string type = last.actionType ?? string.Empty;
+        if (string.Equals(type, "MoveStep", StringComparison.OrdinalIgnoreCase))
+        {
+            int cost = Mathf.Max(0, last.cost);
+            _currentAp += cost;
+            _apSpentThisTurn -= cost;
+            if (_stepsTakenThisTurn > 0)
+                _stepsTakenThisTurn--;
+
+            MovementPosture stepPosture = MovementPostureUtility.FromId(last.posture);
+            if (stepPosture == MovementPosture.Run && cost > 0)
+                _runMovementApSpentThisTurn = Mathf.Max(0, _runMovementApSpentThisTurn - cost);
+
+            if (_turnPath != null && _turnPath.Count > 1)
+                _turnPath.RemoveAt(_turnPath.Count - 1);
+
+            if (_turnPath != null && _turnPath.Count > 0)
+            {
+                var back = _turnPath[_turnPath.Count - 1];
+                _currentCol = back.col;
+                _currentRow = back.row;
+                if (_grid != null)
+                {
+                    transform.position = _grid.GetCellWorldPosition(_currentCol, _currentRow);
+                    HexCell cell = _grid.GetCell(_currentCol, _currentRow);
+                    OnMovedToCell?.Invoke(cell);
+                }
+            }
+
+            return true;
+        }
+
+        if (string.Equals(type, "ChangePosture", StringComparison.OrdinalIgnoreCase))
+        {
+            int cost = Mathf.Max(0, last.cost);
+            _currentAp += cost;
+            _apSpentThisTurn -= cost;
+            MovementPosture restore = MovementPostureUtility.FromId(last.previousPosture);
+            SetMovementPostureInternal(restore, notify: true);
+            return true;
+        }
+
+        if (string.Equals(type, "Wait", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(type, "Attack", StringComparison.OrdinalIgnoreCase))
+        {
+            int cost = Mathf.Max(0, last.cost);
+            _currentAp += cost;
+            _apSpentThisTurn -= cost;
+            return true;
+        }
+
+        _turnActions.Add(last);
+        failureReason = "Неизвестный тип действия";
+        return false;
     }
 
     public bool IsPenaltyHexAtDistance(int distanceFromCurrent)

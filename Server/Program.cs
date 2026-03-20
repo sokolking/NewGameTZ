@@ -240,7 +240,7 @@ app.MapGet("/api/battle/{battleId}", (string battleId, BattleRoomStore s) =>
     if (room == null) return Results.Json(new { error = "Battle not found" }, statusCode: 404);
     var battleRecord = battleHistoryDb.GetBattle(battleId);
 
-    room.FillSpawnArrays(out var spawnIds, out var spawnCols, out var spawnRows, out var spawnCurrentAps, out var spawnMaxHps, out var spawnCurrentHps, out var spawnCurrentPostures);
+    room.FillSpawnArrays(out var spawnIds, out var spawnCols, out var spawnRows, out var spawnCurrentAps, out var spawnMaxHps, out var spawnCurrentHps, out var spawnCurrentPostures, out var spawnWeaponCodes, out var spawnWeaponDamages, out var spawnWeaponRanges);
     var response = new BattleStateResponse
     {
         RoundIndex = room.RoundIndex,
@@ -258,9 +258,26 @@ app.MapGet("/api/battle/{battleId}", (string battleId, BattleRoomStore s) =>
         SpawnCurrentAps = spawnCurrentAps,
         SpawnMaxHps = spawnMaxHps,
         SpawnCurrentHps = spawnCurrentHps,
-        SpawnCurrentPostures = spawnCurrentPostures
+        SpawnCurrentPostures = spawnCurrentPostures,
+        SpawnWeaponCodes = spawnWeaponCodes,
+        SpawnWeaponDamages = spawnWeaponDamages,
+        SpawnWeaponRanges = spawnWeaponRanges
     };
     return Results.Json(response, jsonOpt);
+});
+
+app.MapPost("/api/battle/{battleId}/equip-weapon", (string battleId, EquipWeaponHttpRequest? body, BattleRoomStore store, BattleWeaponDatabase weapons) =>
+{
+    if (body == null || string.IsNullOrWhiteSpace(body.PlayerId) || string.IsNullOrWhiteSpace(body.WeaponCode))
+        return Results.Json(new { error = "playerId and weaponCode required" }, statusCode: 400);
+    var room = store.GetRoom(battleId);
+    if (room == null)
+        return Results.Json(new { error = "Battle not found" }, statusCode: 404);
+    if (!weapons.TryGetWeaponByCode(body.WeaponCode.Trim(), out var w))
+        return Results.Json(new { error = "Unknown weapon" }, statusCode: 400);
+    if (!room.TryEquipWeapon(body.PlayerId.Trim(), w.Code, w.Damage, w.Range, out var fail))
+        return Results.Json(new { error = fail ?? "equip_failed" }, statusCode: 400);
+    return Results.Json(new { ok = true, weaponCode = w.Code, weaponDamage = w.Damage, weaponRange = w.Range });
 });
 
 app.MapGet("/api/battle/{battleId}/turns/{turnId}", (string battleId, string turnId) =>
@@ -415,6 +432,9 @@ public class BattleStateResponse
     public int[]? SpawnMaxHps { get; set; }
     public int[]? SpawnCurrentHps { get; set; }
     public string[]? SpawnCurrentPostures { get; set; }
+    public string[]? SpawnWeaponCodes { get; set; }
+    public int[]? SpawnWeaponDamages { get; set; }
+    public int[]? SpawnWeaponRanges { get; set; }
 }
 
 public class PollResponse
@@ -436,6 +456,12 @@ public class WeaponUpsertRequest
     public string name { get; set; } = "";
     public int damage { get; set; }
     public int range { get; set; }
+}
+
+public class EquipWeaponHttpRequest
+{
+    public string PlayerId { get; set; } = "";
+    public string WeaponCode { get; set; } = "";
 }
 
 public static class BattleLogDashboardPage

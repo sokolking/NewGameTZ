@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Rendering;
@@ -54,6 +55,7 @@ public class HexInputManager : MonoBehaviour
     private bool _hasHoldIndicatorAnchor;
     private float _holdCompositeHalfWidth = 0.5f;
     private float _holdCompositeHalfHeight = 0.5f;
+    [SerializeField] private AttackRangeHexOutline _attackRangeOutline;
     public static bool IsHoldingRemoteTargetWithLeftMouse { get; private set; }
 
     private void Update()
@@ -61,8 +63,20 @@ public class HexInputManager : MonoBehaviour
         if (_grid == null) return;
         if (_camera == null) _camera = Camera.main;
         if (_camera == null) return;
+        UpdateWeaponToggleKey();
         if (Mouse.current == null) return;
-        if (ActionPointsUI.IsModalDialogOpen) return;
+        if (GameplayMapInputBlock.IsBlocked)
+        {
+            if (_lastHoveredCell != null)
+            {
+                _lastHoveredCell.SetHighlight(false);
+                _lastHoveredCell.SetCostLabel(-1);
+                _lastHoveredCell = null;
+            }
+            IsHoldingRemoteTargetWithLeftMouse = false;
+            HideAttackRangeOutline();
+            return;
+        }
         if (_player != null && (_player.IsDead || _player.IsHidden))
         {
             if (_lastHoveredCell != null)
@@ -83,12 +97,34 @@ public class HexInputManager : MonoBehaviour
                 _lastHoveredCell = null;
             }
             IsHoldingRemoteTargetWithLeftMouse = false;
+            HideAttackRangeOutline();
             return;
         }
 
         UpdateHover();
         UpdateDoubleClick();
         UpdateLeftHoldIndicator();
+    }
+
+    /// <summary>X — переключение кулак / камень (статы с сервера при онлайн-бое).</summary>
+    private void UpdateWeaponToggleKey()
+    {
+        if (Keyboard.current == null || !Keyboard.current.xKey.wasPressedThisFrame)
+            return;
+        if (GameplayMapInputBlock.IsBlocked)
+            return;
+        if (GameSession.Active != null && GameSession.Active.BlockPlayerInput)
+            return;
+        if (_player == null || _player.IsDead || _player.IsHidden)
+            return;
+        GameSession gs = GameSession.Active;
+        if (gs == null)
+            return;
+
+        string next = string.Equals(_player.WeaponCode, WeaponCatalog.StoneCode, StringComparison.OrdinalIgnoreCase)
+            ? WeaponCatalog.FistCode
+            : WeaponCatalog.StoneCode;
+        gs.RequestEquipWeapon(next);
     }
 
     private void UpdateHover()
@@ -228,8 +264,13 @@ public class HexInputManager : MonoBehaviour
         if (_heldRemoteTarget == null)
         {
             IsHoldingRemoteTargetWithLeftMouse = false;
+            SetHoldIndicatorVisible(false);
             return;
         }
+
+        EnsureAttackRangeOutline();
+        if (_attackRangeOutline != null && _player != null)
+            _attackRangeOutline.ShowFromPlayer(_player);
 
         EnsureHoldIndicator();
         if (_holdIndicatorGo == null) return;
@@ -242,6 +283,34 @@ public class HexInputManager : MonoBehaviour
         UpdateHoldIndicatorBodyPartHighlight();
         SetHoldIndicatorVisible(true);
         IsHoldingRemoteTargetWithLeftMouse = true;
+    }
+
+    private void EnsureAttackRangeOutline()
+    {
+        if (_attackRangeOutline != null)
+            return;
+#if UNITY_2023_1_OR_NEWER
+        _attackRangeOutline = UnityEngine.Object.FindFirstObjectByType<AttackRangeHexOutline>();
+#else
+        _attackRangeOutline = UnityEngine.Object.FindObjectOfType<AttackRangeHexOutline>();
+#endif
+        if (_attackRangeOutline == null && _grid != null)
+            _attackRangeOutline = _grid.gameObject.AddComponent<AttackRangeHexOutline>();
+    }
+
+    /// <summary>Скрывает контур дальности; при первом вызове находит компонент в сцене (без создания нового).</summary>
+    private void HideAttackRangeOutline()
+    {
+        if (_attackRangeOutline == null)
+        {
+#if UNITY_2023_1_OR_NEWER
+            _attackRangeOutline = UnityEngine.Object.FindFirstObjectByType<AttackRangeHexOutline>();
+#else
+            _attackRangeOutline = UnityEngine.Object.FindObjectOfType<AttackRangeHexOutline>();
+#endif
+        }
+        if (_attackRangeOutline != null)
+            _attackRangeOutline.Hide();
     }
 
     private RemoteBattleUnitView GetRemoteUnitUnderCursor(out Vector3 hitPoint)
@@ -323,6 +392,8 @@ public class HexInputManager : MonoBehaviour
     {
         if (_holdIndicatorGo != null && _holdIndicatorGo.activeSelf != visible)
             _holdIndicatorGo.SetActive(visible);
+        if (!visible)
+            HideAttackRangeOutline();
     }
 
     private void CreateBodyPartBlock(BodyPart part, Rect uvRect)
@@ -487,7 +558,10 @@ public class HexInputManager : MonoBehaviour
                 break;
         }
 
-        bool applied = GameSession.Active != null && GameSession.Active.TryPerformSilhouetteAttack(target, label);
+        bool shiftRepeat = Keyboard.current != null &&
+            (Keyboard.current.leftShiftKey.isPressed || Keyboard.current.rightShiftKey.isPressed);
+        bool applied = GameSession.Active != null &&
+            GameSession.Active.TryPerformSilhouetteAttack(target, label, shiftRepeat);
         if (!applied)
             GameSession.OnNetworkMessage?.Invoke("Атака не применена");
     }

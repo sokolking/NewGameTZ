@@ -355,7 +355,8 @@ public class BattleRoom
         }
 
         var finalPos = bestRoute != null && bestRoute.Count > 0 ? bestRoute[^1] : start;
-        bool inRange = HexSpawn.HexDistance(finalPos.col, finalPos.row, targetPos.col, targetPos.row) <= DefaultWeaponRange;
+        int mobRange = Math.Max(0, mob.WeaponRange);
+        bool inRange = HexSpawn.HexDistance(finalPos.col, finalPos.row, targetPos.col, targetPos.row) <= mobRange;
         while (apLeft > 0 && inRange)
         {
             actions.Add(new QueuedBattleActionDto
@@ -783,22 +784,101 @@ public class BattleRoom
             Math.Max(0, weaponRange));
     }
 
-    public void FillSpawnArrays(out string[] ids, out int[] cols, out int[] rows, out int[] currentAps, out int[] maxHps, out int[] currentHps, out string[] currentPostures)
+    /// <summary>Смена оружия вне очереди хода (до отправки хода в текущем раунде). Статы берутся из БД оружия на сервере.</summary>
+    public bool TryEquipWeapon(string playerId, string weaponCode, int weaponDamage, int weaponRange, out string? failureReason)
+    {
+        failureReason = null;
+        EnsureUnitsInitialized();
+        if (string.IsNullOrWhiteSpace(playerId) || !Players.ContainsKey(playerId))
+        {
+            failureReason = "player_not_in_battle";
+            return false;
+        }
+
+        if (Submissions.ContainsKey(playerId))
+        {
+            failureReason = "already_submitted";
+            return false;
+        }
+
+        if (!PlayerToUnitId.TryGetValue(playerId, out var unitId) || !Units.TryGetValue(unitId, out var unit))
+        {
+            failureReason = "no_unit";
+            return false;
+        }
+
+        if (unit.UnitType != UnitType.Player)
+        {
+            failureReason = "not_player_unit";
+            return false;
+        }
+
+        string code = string.IsNullOrWhiteSpace(weaponCode) ? DefaultWeaponCode : weaponCode.Trim().ToLowerInvariant();
+        unit.WeaponCode = code;
+        unit.WeaponDamage = Math.Max(0, weaponDamage);
+        unit.WeaponRange = Math.Max(0, weaponRange);
+        Units[unitId] = unit;
+
+        if (PlayerCombatProfiles.TryGetValue(playerId, out var prof))
+            PlayerCombatProfiles[playerId] = (prof.Item1, prof.Item2, code, unit.WeaponDamage, unit.WeaponRange);
+        else
+            PlayerCombatProfiles[playerId] = (DefaultPlayerMaxHp, MaxAp, code, unit.WeaponDamage, unit.WeaponRange);
+
+        return true;
+    }
+
+    public void FillSpawnArrays(out string[] ids, out int[] cols, out int[] rows, out int[] currentAps, out int[] maxHps, out int[] currentHps, out string[] currentPostures, out string[] weaponCodes, out int[] weaponDamages, out int[] weaponRanges)
     {
         EnsureUnitsInitialized();
 
-        var items = new List<(string id, int col, int row, int currentAp, int maxHp, int currentHp, string posture)>();
+        var items = new List<(string id, int col, int row, int currentAp, int maxHp, int currentHp, string posture, string wc, int wd, int wr)>();
 
         foreach (var playerId in ParticipantIds.Where(Players.ContainsKey))
         {
             if (PlayerToUnitId.TryGetValue(playerId, out var unitId) && Units.TryGetValue(unitId, out var unit))
-                items.Add((playerId, unit.Col, unit.Row, unit.CurrentAp, unit.MaxHp, unit.CurrentHp, NormalizePosture(unit.Posture)));
+            {
+                items.Add((
+                    playerId,
+                    unit.Col,
+                    unit.Row,
+                    unit.CurrentAp,
+                    unit.MaxHp,
+                    unit.CurrentHp,
+                    NormalizePosture(unit.Posture),
+                    unit.WeaponCode ?? DefaultWeaponCode,
+                    unit.WeaponDamage,
+                    unit.WeaponRange));
+            }
             else
-                items.Add((playerId, Players[playerId].col, Players[playerId].row, MaxAp, DefaultPlayerMaxHp, DefaultPlayerMaxHp, PostureWalk));
+            {
+                string wc = DefaultWeaponCode;
+                int wd = DefaultWeaponDamage;
+                int wr = DefaultWeaponRange;
+                if (PlayerCombatProfiles.TryGetValue(playerId, out var prof))
+                {
+                    wc = prof.Item3;
+                    wd = prof.Item4;
+                    wr = prof.Item5;
+                }
+
+                items.Add((playerId, Players[playerId].col, Players[playerId].row, MaxAp, DefaultPlayerMaxHp, DefaultPlayerMaxHp, PostureWalk, wc, wd, wr));
+            }
         }
 
         foreach (var unit in Units.Values.Where(u => u.UnitType == UnitType.Mob))
-            items.Add((unit.UnitId, unit.Col, unit.Row, unit.CurrentAp, unit.MaxHp, unit.CurrentHp, NormalizePosture(unit.Posture)));
+        {
+            items.Add((
+                unit.UnitId,
+                unit.Col,
+                unit.Row,
+                unit.CurrentAp,
+                unit.MaxHp,
+                unit.CurrentHp,
+                NormalizePosture(unit.Posture),
+                unit.WeaponCode ?? DefaultWeaponCode,
+                unit.WeaponDamage,
+                unit.WeaponRange));
+        }
 
         ids = items.Select(x => x.id).ToArray();
         cols = items.Select(x => x.col).ToArray();
@@ -807,6 +887,9 @@ public class BattleRoom
         maxHps = items.Select(x => x.maxHp).ToArray();
         currentHps = items.Select(x => x.currentHp).ToArray();
         currentPostures = items.Select(x => x.posture).ToArray();
+        weaponCodes = items.Select(x => x.wc).ToArray();
+        weaponDamages = items.Select(x => x.wd).ToArray();
+        weaponRanges = items.Select(x => x.wr).ToArray();
     }
 
     public BattleStartedPayloadDto BuildBattleStartedFor(string playerId)
@@ -818,7 +901,7 @@ public class BattleRoom
             Col = p.Value.col,
             Row = p.Value.row
         }).ToArray();
-        FillSpawnArrays(out var sid, out var sc, out var sr, out var sap, out var smh, out var sch, out var spos);
+        FillSpawnArrays(out var sid, out var sc, out var sr, out var sap, out var smh, out var sch, out var spos, out var swc, out var swd, out var swr);
         var obstacleCols = Obstacles.Select(x => x.col).ToArray();
         var obstacleRows = Obstacles.Select(x => x.row).ToArray();
         return new BattleStartedPayloadDto
@@ -835,6 +918,9 @@ public class BattleRoom
             SpawnMaxHps = smh,
             SpawnCurrentHps = sch,
             SpawnCurrentPostures = spos,
+            SpawnWeaponCodes = swc,
+            SpawnWeaponDamages = swd,
+            SpawnWeaponRanges = swr,
             ObstacleCols = obstacleCols,
             ObstacleRows = obstacleRows
         };
@@ -1152,26 +1238,55 @@ public class BattleRoom
                         {
                             executed.FailureReason = "Attack target is not an enemy";
                         }
-                        else if (HexSpawn.HexDistance(currentPos.col, currentPos.row, targetPos.col, targetPos.row) > Math.Max(0, unit.WeaponRange))
-                        {
-                            executed.FailureReason = "Attack target out of range";
-                        }
                         else
                         {
-                            int damage = Math.Max(0, unit.WeaponDamage);
-                            targetUnit.CurrentHp = Math.Max(0, targetUnit.CurrentHp - damage);
-                            Units[resolvedTargetId] = targetUnit;
-                            executed.Succeeded = true;
-                            executed.TargetUnitId = resolvedTargetId;
-                            executed.Damage = damage;
-                            attackTargetByUnit[uid] = resolvedTargetId;
-                            damageByUnit[uid] = damageByUnit.GetValueOrDefault(uid) + damage;
-
-                            if (targetUnit.CurrentHp <= 0)
+                            int dist = HexSpawn.HexDistance(currentPos.col, currentPos.row, targetPos.col, targetPos.row);
+                            int weaponRange = Math.Max(0, unit.WeaponRange);
+                            int rawDamage = Math.Max(0, unit.WeaponDamage);
+                            bool hit;
+                            if (dist > weaponRange)
                             {
-                                alive[resolvedTargetId] = false;
-                                occupied.Remove(targetPos);
-                                executed.TargetDied = true;
+                                // Вне дальности оружия — шанс попадания 0 % (всегда промах).
+                                hit = false;
+                            }
+                            else if (dist == 1)
+                            {
+                                // Смежный гекс — 100 % (база для будущих модификаторов оружия).
+                                hit = true;
+                            }
+                            else
+                            {
+                                // Внутри range, но дальше 1 гекса: линейное снижение шанса к краю дальности.
+                                double p = (weaponRange + 1 - dist) / (double)Math.Max(1, weaponRange);
+                                if (p < 0) p = 0;
+                                if (p > 1) p = 1;
+                                hit = _rng.NextDouble() < p;
+                            }
+
+                            if (!hit)
+                            {
+                                executed.Succeeded = true;
+                                executed.TargetUnitId = resolvedTargetId;
+                                executed.Damage = 0;
+                                attackTargetByUnit[uid] = resolvedTargetId;
+                            }
+                            else
+                            {
+                                int damage = rawDamage;
+                                targetUnit.CurrentHp = Math.Max(0, targetUnit.CurrentHp - damage);
+                                Units[resolvedTargetId] = targetUnit;
+                                executed.Succeeded = true;
+                                executed.TargetUnitId = resolvedTargetId;
+                                executed.Damage = damage;
+                                attackTargetByUnit[uid] = resolvedTargetId;
+                                damageByUnit[uid] = damageByUnit.GetValueOrDefault(uid) + damage;
+
+                                if (targetUnit.CurrentHp <= 0)
+                                {
+                                    alive[resolvedTargetId] = false;
+                                    occupied.Remove(targetPos);
+                                    executed.TargetDied = true;
+                                }
                             }
                         }
                     }
@@ -1255,6 +1370,9 @@ public class BattleRoom
                 AttackTargetUnitId = attackTargetByUnit.TryGetValue(uid, out var targetId) ? targetId : null,
                 DamageDealt = damageByUnit.TryGetValue(uid, out var dealt) ? dealt : 0,
                 CurrentPosture = us.Posture,
+                WeaponCode = us.WeaponCode ?? DefaultWeaponCode,
+                WeaponDamage = us.WeaponDamage,
+                WeaponRange = us.WeaponRange,
                 ExecutedActions = unitActions.ToArray()
             });
         }

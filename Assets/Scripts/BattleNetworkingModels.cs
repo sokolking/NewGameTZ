@@ -38,6 +38,8 @@ public class BattleQueuedAction
     public string targetUnitId;
     public string bodyPart;
     public string posture;
+    /// <summary>Для ChangePosture: поза до смены (клиент, отмена последнего действия).</summary>
+    public string previousPosture;
     public int cost;
 }
 
@@ -78,6 +80,10 @@ public class PlayerTurnResult
     public string attackTargetUnitId;
     public int damageDealt;
     public string currentPosture;
+    /// <summary>Состояние оружия после раунда (сервер).</summary>
+    public string weaponCode;
+    public int weaponDamage;
+    public int weaponRange;
     public BattleExecutedAction[] executedActions;
 }
 
@@ -168,6 +174,27 @@ public class BattleStartedPayload
     public int[] spawnMaxHps;
     public int[] spawnCurrentHps;
     public string[] spawnCurrentPostures;
+    public string[] spawnWeaponCodes;
+    public int[] spawnWeaponDamages;
+    public int[] spawnWeaponRanges;
     public int[] obstacleCols;
     public int[] obstacleRows;
+}
+
+/// <summary>POST /api/battle/.../equip-weapon (клиент).</summary>
+[Serializable]
+public class EquipWeaponRequestPayload
+{
+    public string playerId;
+    public string weaponCode;
+}
+
+[Serializable]
+public class EquipWeaponResponsePayload
+{
+    public bool ok;
+    public string error;
+    public string weaponCode;
+    public int weaponDamage;
+    public int weaponRange;
 }

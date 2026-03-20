@@ -31,7 +31,8 @@ public class MovementRangeHighlighter : MonoBehaviour
             _wasMoving = false;
             return;
         }
-        bool isBlocked = GameSession.Active != null && GameSession.Active.BlockPlayerInput;
+        bool isBlocked = GameplayMapInputBlock.IsBlocked
+            || (GameSession.Active != null && GameSession.Active.BlockPlayerInput);
         if (isBlocked)
         {
             ClearMask();

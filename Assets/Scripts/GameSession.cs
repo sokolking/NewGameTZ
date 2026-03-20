@@ -1,6 +1,7 @@
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.Networking;
 
 /// <summary>
 /// Сессия боя: отправка хода на сервер и применение результата (по плану ServerSyncPlan).
@@ -91,8 +92,6 @@ public class GameSession : MonoBehaviour
     private LiveTurnDraftSnapshot _liveTurnDraftSnapshot;
     private bool _debugMobSpawned;
     private bool _battleFinished;
-    private const int FistRange = 1;
-
     /// <summary>Блокировка ввода: ожидание результата раунда или анимация.</summary>
     public bool BlockPlayerInput => _waitingForServerRoundResolve || IsBattleAnimationPlaying || IsTurnHistoryReplayPlaying || IsViewingHistoricalTurn;
 
@@ -228,6 +227,69 @@ public class GameSession : MonoBehaviour
 
     public static GameSession Active { get; private set; }
 
+    public string BattleId => _battleId;
+    public string PlayerId => _playerId;
+
+    /// <summary>Смена оружия по коду (серверная БД при онлайн-бое).</summary>
+    public void RequestEquipWeapon(string weaponCode)
+    {
+        if (string.IsNullOrWhiteSpace(weaponCode))
+            return;
+        weaponCode = weaponCode.Trim().ToLowerInvariant();
+        if (IsInBattleWithServer())
+            StartCoroutine(EquipWeaponHttpCoroutine(weaponCode));
+        else
+            ApplyLocalWeaponOnly(weaponCode);
+    }
+
+    private void ApplyLocalWeaponOnly(string weaponCode)
+    {
+        WeaponCatalog.GetStats(weaponCode, out string code, out int dmg, out int range);
+        var pl = LocalPlayer;
+        pl?.SetEquippedWeapon(code, dmg, range);
+    }
+
+    private IEnumerator EquipWeaponHttpCoroutine(string weaponCode)
+    {
+        if (_serverConnection == null)
+            _serverConnection = FindFirstObjectByType<BattleServerConnection>();
+        string baseUrl = _serverConnection != null ? _serverConnection.ServerUrl.TrimEnd('/') : "";
+        if (string.IsNullOrEmpty(baseUrl))
+        {
+            ApplyLocalWeaponOnly(weaponCode);
+            yield break;
+        }
+
+        string url = $"{baseUrl}/api/battle/{UnityWebRequest.EscapeURL(_battleId)}/equip-weapon";
+        var body = JsonUtility.ToJson(new EquipWeaponRequestPayload { playerId = _playerId, weaponCode = weaponCode });
+        using (var req = new UnityWebRequest(url, "POST"))
+        {
+            req.uploadHandler = new UploadHandlerRaw(System.Text.Encoding.UTF8.GetBytes(body));
+            req.downloadHandler = new DownloadHandlerBuffer();
+            req.SetRequestHeader("Content-Type", "application/json");
+            yield return req.SendWebRequest();
+
+            if (req.result != UnityWebRequest.Result.Success)
+            {
+                OnNetworkMessage?.Invoke("Не удалось сменить оружие");
+                yield break;
+            }
+
+            string text = req.downloadHandler.text;
+            var resp = JsonUtility.FromJson<EquipWeaponResponsePayload>(text);
+            if (resp != null && resp.ok)
+            {
+                var pl = LocalPlayer;
+                pl?.SetEquippedWeapon(resp.weaponCode, resp.weaponDamage, resp.weaponRange);
+            }
+            else
+            {
+                string msg = resp != null && !string.IsNullOrEmpty(resp.error) ? resp.error : "Не удалось сменить оружие";
+                OnNetworkMessage?.Invoke(msg);
+            }
+        }
+    }
+
     /// <summary>Включён ли онлайн-режим (отправка хода при завершении). True также при загрузке через Find Game (сессия в бою).</summary>
     public bool IsOnlineMode => _isOnlineMode || (_serverConnection != null && _serverConnection.IsInBattle);
 
@@ -271,26 +333,40 @@ public class GameSession : MonoBehaviour
             StartCoroutine(SpawnDebugMobWhenReady());
     }
 
-    public bool TryPerformSilhouetteAttack(RemoteBattleUnitView target, string bodyPartLabel)
+    /// <param name="shiftRepeat">Зажат Shift: поставить в очередь атак столько раз, сколько <c>текущие ОД / стоимость атаки</c> (целочисленно).</param>
+    public bool TryPerformSilhouetteAttack(RemoteBattleUnitView target, string bodyPartLabel, bool shiftRepeat = false)
     {
         if (_battleFinished || target == null) return false;
         var local = _localPlayer != null ? _localPlayer : FindFirstObjectByType<Player>();
         if (local == null) return false;
 
-        int dist = HexDistance(local.CurrentCol, local.CurrentRow, target.CurrentCol, target.CurrentRow);
-        if (dist > FistRange)
-        {
-            OnNetworkMessage?.Invoke("Цель вне дистанции");
-            return false;
-        }
-
-        if (!local.QueueAttackAction(target.NetworkPlayerId, bodyPartLabel, 1))
+        const int attackCost = 1;
+        int apBefore = local.CurrentAp;
+        int repeatCount = shiftRepeat ? apBefore / attackCost : 1;
+        if (repeatCount <= 0)
         {
             OnNetworkMessage?.Invoke("Недостаточно ОД");
             return false;
         }
 
-        OnNetworkMessage?.Invoke($"Атака в очередь: {bodyPartLabel}");
+        int queued = 0;
+        for (int i = 0; i < repeatCount; i++)
+        {
+            if (!local.QueueAttackAction(target.NetworkPlayerId, bodyPartLabel, attackCost))
+                break;
+            queued++;
+        }
+
+        if (queued <= 0)
+        {
+            OnNetworkMessage?.Invoke("Недостаточно ОД");
+            return false;
+        }
+
+        if (queued > 1)
+            OnNetworkMessage?.Invoke($"Атака x{queued} в очередь ({bodyPartLabel})");
+        else
+            OnNetworkMessage?.Invoke($"Атака в очередь: {bodyPartLabel}");
         return true;
     }
 
@@ -470,6 +546,8 @@ public class GameSession : MonoBehaviour
 
                 local.ApplyServerTurnResult(r.finalPosition, r.actualPath, r.currentAp, r.penaltyFraction, r.currentPosture, prepareForAnimation);
                 local.SetHealth(r.currentHp, r.maxHp > 0 ? r.maxHp : local.MaxHp);
+                if (!string.IsNullOrEmpty(r.weaponCode))
+                    local.SetEquippedWeapon(r.weaponCode, r.weaponDamage, r.weaponRange);
                 if (prepareForAnimation)
                     animJobs.Add((local, true, r.actualPath));
                 else if (r.isDead)
@@ -738,6 +816,10 @@ public class GameSession : MonoBehaviour
                     string posture = GetSpawnString(payload.spawnCurrentPostures, spawnIndex, MovementPostureUtility.WalkId);
                     local.ApplyServerTurnResult(new HexPosition(col, row), new[] { new HexPosition(col, row) }, startAp, 0f, posture);
                     local.SetHealth(currentHp, maxHp);
+                    string wCode = GetSpawnString(payload.spawnWeaponCodes, spawnIndex, WeaponCatalog.FistCode);
+                    int wDmg = GetSpawnInt(payload.spawnWeaponDamages, spawnIndex, 1);
+                    int wRng = GetSpawnInt(payload.spawnWeaponRanges, spawnIndex, 1);
+                    local.SetEquippedWeapon(wCode, wDmg, wRng);
                 }
                 _initialReplayState[pid] = new ReplayUnitSnapshot
                 {

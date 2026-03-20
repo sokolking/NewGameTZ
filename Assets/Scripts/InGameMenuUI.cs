@@ -12,7 +12,13 @@ public class InGameMenuUI : MonoBehaviour
     [Header("Панель меню паузы")]
     [SerializeField] private GameObject _menuPanel;
 
+    [Tooltip("Серый фон (Image). Если не задан, ищется дочерний объект «Background». Его отправляем первым в иерархии, чтобы кнопки получали клики.")]
+    [SerializeField] private Transform _backdropTransform;
+
     private bool _visible;
+
+    /// <summary>Меню паузы открыто — блокирует ввод по карте (<see cref="GameplayMapInputBlock"/>).</summary>
+    public static bool IsPauseMenuOpen { get; private set; }
     private Button _btnResume;
     private Button _btnMainMenu;
 
@@ -24,6 +30,32 @@ public class InGameMenuUI : MonoBehaviour
         if (_menuPanel != null)
             _menuPanel.SetActive(false);
         _visible = false;
+        IsPauseMenuOpen = false;
+        SendBackdropToBack();
+    }
+
+    private void OnDestroy()
+    {
+        IsPauseMenuOpen = false;
+    }
+
+    /// <summary>Фон должен быть первым в иерархии, иначе полноэкранный Image перехватывает raycast и кнопки не работают.</summary>
+    private void SendBackdropToBack()
+    {
+        if (_menuPanel == null)
+            return;
+
+        Transform bg = _backdropTransform;
+        if (bg == null)
+        {
+            Transform found = _menuPanel.transform.Find("Background");
+            if (found == null) found = _menuPanel.transform.Find("Backdrop");
+            if (found == null) found = _menuPanel.transform.Find("GrayBG");
+            bg = found;
+        }
+
+        if (bg != null)
+            bg.SetAsFirstSibling();
     }
 
     private void CacheButtons()
@@ -34,16 +66,30 @@ public class InGameMenuUI : MonoBehaviour
             Canvas canvas = GetComponentInParent<Canvas>();
             if (canvas != null)
             {
-                Transform p = canvas.transform.Find("PauseMenuPanel");
+                Transform p = canvas.transform.Find(UiHierarchyNames.PauseMenuPanel);
                 if (p != null) _menuPanel = p.gameObject;
             }
         }
 
         if (_menuPanel != null)
         {
-            _btnResume = _menuPanel.transform.Find("Button_Resume")?.GetComponent<Button>();
-            _btnMainMenu = _menuPanel.transform.Find("Button_MainMenu")?.GetComponent<Button>();
+            // Кнопки могут быть не прямыми детьми (например PauseMenuPanel → Canvas → Button_Resume).
+            // Transform.Find ищет только среди непосредственных дочерних объектов.
+            _btnResume = FindPauseMenuButton(UiHierarchyNames.PauseButtonResume);
+            _btnMainMenu = FindPauseMenuButton(UiHierarchyNames.PauseButtonMainMenu);
         }
+    }
+
+    private Button FindPauseMenuButton(string objectName)
+    {
+        if (_menuPanel == null)
+            return null;
+        foreach (Button b in _menuPanel.GetComponentsInChildren<Button>(true))
+        {
+            if (b != null && b.name == objectName)
+                return b;
+        }
+        return null;
     }
 
     private void WireButtonEvents()
@@ -77,6 +123,9 @@ public class InGameMenuUI : MonoBehaviour
 
         _visible = !_visible;
         _menuPanel.SetActive(_visible);
+        IsPauseMenuOpen = _visible;
+        if (_visible)
+            SendBackdropToBack();
 
         // При открытом меню — пауза, при закрытии — продолжить.
         Time.timeScale = _visible ? 0f : 1f;
@@ -86,6 +135,7 @@ public class InGameMenuUI : MonoBehaviour
     public void OnResumeClicked()
     {
         _visible = false;
+        IsPauseMenuOpen = false;
         if (_menuPanel != null)
             _menuPanel.SetActive(false);
         Time.timeScale = 1f;
@@ -93,6 +143,7 @@ public class InGameMenuUI : MonoBehaviour
 
     public void OnMainMenuClicked()
     {
+        IsPauseMenuOpen = false;
         Time.timeScale = 1f;
         SceneManager.LoadScene("MainMenu");
     }

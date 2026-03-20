@@ -106,6 +106,9 @@ public class PlayerTurnResultDto
     public string? AttackTargetUnitId { get; set; }
     public int DamageDealt { get; set; }
     public string CurrentPosture { get; set; } = "walk";
+    public string WeaponCode { get; set; } = "fist";
+    public int WeaponDamage { get; set; } = 1;
+    public int WeaponRange { get; set; } = 1;
     public ExecutedBattleActionDto[]? ExecutedActions { get; set; }
 }
 
@@ -150,6 +153,9 @@ public class BattleStartedPayloadDto
     public int[]? SpawnMaxHps { get; set; }
     public int[]? SpawnCurrentHps { get; set; }
     public string[]? SpawnCurrentPostures { get; set; }
+    public string[]? SpawnWeaponCodes { get; set; }
+    public int[]? SpawnWeaponDamages { get; set; }
+    public int[]? SpawnWeaponRanges { get; set; }
     public int[]? ObstacleCols { get; set; }
     public int[]? ObstacleRows { get; set; }
 }

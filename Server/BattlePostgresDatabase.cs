@@ -82,7 +82,9 @@ SET password = EXCLUDED.password,
     weapon_code = EXCLUDED.weapon_code;
 
 INSERT INTO weapons (code, name, damage, range)
-VALUES ('fist', 'Fist', 1, 1)
+VALUES
+    ('fist', 'Fist', 1, 1),
+    ('stone', 'Камень', 3, 2)
 ON CONFLICT (code) DO UPDATE
 SET name = EXCLUDED.name,
     damage = EXCLUDED.damage,

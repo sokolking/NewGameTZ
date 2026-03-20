@@ -19,6 +19,7 @@ public class BattleServerConnection : MonoBehaviour
     public bool IsInBattle => _inBattle;
     public string BattleId => _battleId;
     public string PlayerId => _playerId;
+    public string ServerUrl => _serverUrl;
 
     /// <summary>Только отмена очереди с главного меню (нет WebSocket). В бою не вызывать.</summary>
     public static void NotifyLeaveBlocking(string serverUrl, string battleId, string playerId)

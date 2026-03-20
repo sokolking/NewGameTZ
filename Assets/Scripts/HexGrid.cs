@@ -28,6 +28,13 @@ public class HexGrid : MonoBehaviour
     public int Width => _width;
     public int Length => _length;
 
+    /// <summary>Размер шага гекса (как в <see cref="CubeToWorldFlatTop"/>).</summary>
+    public float HexSize => Mathf.Max(MinHexSize, _hexSize);
+
+    /// <summary>Радиус визуального шестиугольника (как у меша <see cref="Hexagon"/>), для контуров дальности.</summary>
+    public float HexVisualRadius =>
+        Mathf.Max(MinVisualRadius, HexSize - Mathf.Max(0f, _edgeInset) * EdgeInsetToRadiusFactor);
+
     private void Start()
     {
         if (_generateOnPlay)

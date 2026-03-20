@@ -4,6 +4,7 @@ using UnityEngine.InputSystem;
 using System.Collections.Generic;
 using UnityEngine.SceneManagement;
 using UnityEngine.EventSystems;
+using TMPro;
 
 /// <summary>
 /// UI для отображения очков действия и кнопки \"Закончить ход\".
@@ -20,16 +21,25 @@ public class ActionPointsUI : MonoBehaviour
     [SerializeField] private Button _sitButton;
     [SerializeField] private Button _hideButton;
     [SerializeField] private Button _skipButton;
+    [SerializeField] private Button _stepBackButton;
     [SerializeField] private Image _walkBG;
     [SerializeField] private Image _runBG;
     [SerializeField] private Image _sitBG;
     [SerializeField] private Image _hideBG;
     [SerializeField] private Image _skipBG;
+    [Header("Диалог «Сколько ОД пропустить»")]
+    [Tooltip("Корень: UiHierarchyNames.SkipDialogPanel. Дочерние: вопрос, поле ввода, OK/Отмена (по именам в UiHierarchyNames).")]
     [SerializeField] private GameObject _skipDialogPanel;
     [SerializeField] private Text _skipDialogQuestionText;
+    [Tooltip("Вариант вопроса на TextMeshPro (если не используете UI.Text).")]
+    [SerializeField] private TextMeshProUGUI _skipDialogQuestionTmpText;
     [SerializeField] private InputField _skipDialogInput;
+    [Tooltip("Поле ввода на TMP (если не используете legacy InputField).")]
+    [SerializeField] private TMP_InputField _skipDialogTmpInput;
     [SerializeField] private Button _skipDialogOkButton;
     [SerializeField] private Button _skipDialogCancelButton;
+    [Tooltip("Подставляется в поле при открытии диалога.")]
+    [SerializeField] private string _skipDialogInitialInput = "1";
     [Header("Лог ходов")]
     [SerializeField] private Text _loggerText;
     [SerializeField] private Button _loggerUpButton;
@@ -63,6 +73,8 @@ public class ActionPointsUI : MonoBehaviour
     [SerializeField] private float _miniMapTimeWarningThresholdSeconds = 5f;
     [Header("Трекинг ходов")]
     [SerializeField] private Text _turnTrackerText;
+    [Tooltip("Если подпись сделана на TextMeshPro вместо UI.Text.")]
+    [SerializeField] private TextMeshProUGUI _turnTrackerTmpText;
     [SerializeField] private Button _turnTrackerPrevButton;
     [SerializeField] private Button _turnTrackerNextButton;
     private float _miniMapPadding = 4f;
@@ -106,12 +118,17 @@ public class ActionPointsUI : MonoBehaviour
     private bool _battleBeginSequenceRunning;
     private MovementPosture _skipReturnPosture = MovementPosture.Walk;
 
+    /// <summary>Подавление рекурсии при подрезке текста в диалоге пропуска ОД.</summary>
+    private bool _skipDialogInputClampSuppressed;
+
     public static bool IsModalDialogOpen { get; private set; }
+
+    /// <summary>Ожидание раунда (RoundWaitPanel) — блокирует ввод по карте вместе с <see cref="GameplayMapInputBlock"/>.</summary>
+    public static bool IsRoundWaitPanelVisible { get; private set; }
 
     private void Awake()
     {
         AutoBindSceneReferences();
-        BindUiCallbacks();
 
         if (_roundWaitBarCycleSeconds <= 0.05f)
             _roundWaitBarCycleSeconds = 1.25f;
@@ -130,14 +147,24 @@ public class ActionPointsUI : MonoBehaviour
         if (_battleEndPanel != null) _battleEndPanel.SetActive(false);
         if (_skipDialogPanel != null) _skipDialogPanel.SetActive(false);
         IsModalDialogOpen = false;
+        IsRoundWaitPanelVisible = false;
+
+        EnsureUiBlockOverlaySync();
+    }
+
+    /// <summary>
+    /// BlockOverlay + UiBlockOverlaySync часто не добавляют в сцену — без них оверлей не показывается.
+    /// </summary>
+    private void EnsureUiBlockOverlaySync()
+    {
+        if (GetComponent<UiBlockOverlaySync>() == null)
+            gameObject.AddComponent<UiBlockOverlaySync>();
     }
 
     private void Start()
     {
         AutoBindSceneReferences();
-        BindUiCallbacks();
         EnsureMiniMap();
-        EnsureSkipDialog();
         if (_player != null)
         {
             _player.OnMovedToCell -= HandlePlayerMoved;
@@ -170,10 +197,19 @@ public class ActionPointsUI : MonoBehaviour
             _hideButton.onClick.RemoveListener(OnHideClicked);
         if (_skipButton != null)
             _skipButton.onClick.RemoveListener(OnSkipClicked);
+        if (_stepBackButton != null)
+            _stepBackButton.onClick.RemoveListener(OnStepBackClicked);
         if (_skipDialogOkButton != null)
             _skipDialogOkButton.onClick.RemoveListener(OnSkipDialogOkClicked);
         if (_skipDialogCancelButton != null)
             _skipDialogCancelButton.onClick.RemoveListener(OnSkipDialogCancelClicked);
+        if (_skipDialogInput != null)
+        {
+            _skipDialogInput.onValueChanged.RemoveListener(OnSkipDialogLegacyInputValueChanged);
+            _skipDialogInput.onValidateInput = null;
+        }
+        if (_skipDialogTmpInput != null)
+            _skipDialogTmpInput.onValueChanged.RemoveListener(OnSkipDialogTmpInputValueChanged);
         GameSession.OnNetworkMessage -= AppendLog;
         GameSession.OnSubmitTurnDeliveredToServer -= ShowRoundWaitAfterSubmitDelivered;
         GameSession.OnWebSocketRoundPushReceived -= HideRoundWaitPanel;
@@ -224,6 +260,20 @@ public class ActionPointsUI : MonoBehaviour
 
         if (_roundWaitVisible) return;
         if (_gameSession != null && _gameSession.IsBattleFinished) return;
+
+        // 1–4: режимы передвижения (как кнопки ходьба/бег/присед/укрытие).
+        if (!IsKeyboardInputFocusedOnTextField() && CanInteractWithMovementUi())
+        {
+            Keyboard kb = Keyboard.current;
+            if (kb[Key.Digit1].wasPressedThisFrame)
+                ChangeMovementPosture(MovementPosture.Walk);
+            else if (kb[Key.Digit2].wasPressedThisFrame)
+                ChangeMovementPosture(MovementPosture.Run);
+            else if (kb[Key.Digit3].wasPressedThisFrame)
+                ChangeMovementPosture(MovementPosture.Sit);
+            else if (kb[Key.Digit4].wasPressedThisFrame)
+                ChangeMovementPosture(MovementPosture.Hide);
+        }
 
         if (Keyboard.current.dKey.wasPressedThisFrame)
             TryEndTurn(animate: false);
@@ -360,19 +410,24 @@ public class ActionPointsUI : MonoBehaviour
 
     private void OnSkipClicked()
     {
+        AutoBindSceneReferences();
+
         if (!CanInteractWithMovementUi())
             return;
 
-        EnsureSkipDialog();
-        if (_skipDialogPanel == null || _player == null)
+        if (_player == null)
             return;
+
+        if (!HasSkipDialogUi())
+        {
+            AppendLog($"Не настроен диалог пропуска ОД ({UiHierarchyNames.SkipDialogPanel}, поле ввода, OK/Отмена).");
+            return;
+        }
 
         _skipReturnPosture = _player.CurrentMovementPosture;
         RefreshMovementButtons(_skipReturnPosture, skipSelected: true);
-        if (_skipDialogQuestionText != null)
-            _skipDialogQuestionText.text = "Сколько ОД пропустить?";
-        if (_skipDialogInput != null)
-            _skipDialogInput.text = "1";
+        SetSkipDialogInputText(_skipDialogInitialInput);
+        ClampSkipDialogInputsToCurrentAp();
         _skipDialogPanel.SetActive(true);
         IsModalDialogOpen = true;
         ActivateSkipInputField();
@@ -380,13 +435,15 @@ public class ActionPointsUI : MonoBehaviour
 
     private void OnSkipDialogOkClicked()
     {
+        AutoBindSceneReferences();
+
         if (_player == null)
         {
             CloseSkipDialog(restoreSelection: true);
             return;
         }
 
-        if (!int.TryParse(_skipDialogInput != null ? _skipDialogInput.text : string.Empty, out int skipCost) || skipCost <= 0)
+        if (!int.TryParse(GetSkipDialogInputText(), out int skipCost) || skipCost <= 0)
         {
             AppendLog("Введите положительное число ОД");
             return;
@@ -405,6 +462,23 @@ public class ActionPointsUI : MonoBehaviour
     private void OnSkipDialogCancelClicked()
     {
         CloseSkipDialog(restoreSelection: true);
+    }
+
+    private void OnStepBackClicked()
+    {
+        if (ActionPointsUI.IsModalDialogOpen)
+            return;
+        if (!CanInteractWithMovementUi() || _player == null)
+            return;
+
+        if (!_player.TryUndoLastQueuedAction(out string reason))
+        {
+            if (!string.IsNullOrEmpty(reason))
+                AppendLog(reason);
+            return;
+        }
+
+        RefreshMovementButtons(_player.CurrentMovementPosture, skipSelected: false);
     }
 
     private void ChangeMovementPosture(MovementPosture posture)
@@ -499,7 +573,9 @@ public class ActionPointsUI : MonoBehaviour
     {
         if (_roundWaitPanel == null) return;
         _roundWaitPanel.SetActive(true);
+        UiModalBackdropUtility.SendBackdropToBack(_roundWaitPanel.transform);
         _roundWaitVisible = true;
+        IsRoundWaitPanelVisible = true;
         if (_endTurnButton != null) _endTurnButton.interactable = false;
     }
 
@@ -507,6 +583,7 @@ public class ActionPointsUI : MonoBehaviour
     {
         if (_roundWaitPanel != null) _roundWaitPanel.SetActive(false);
         _roundWaitVisible = false;
+        IsRoundWaitPanelVisible = false;
         if (_endTurnButton != null) _endTurnButton.interactable = true;
     }
 
@@ -612,6 +689,16 @@ public class ActionPointsUI : MonoBehaviour
         return _player != null;
     }
 
+    /// <summary>Чтобы цифры 1–4 не переключали позу во время ввода в поле (например, диалог пропуска ОД).</summary>
+    private static bool IsKeyboardInputFocusedOnTextField()
+    {
+        if (EventSystem.current == null || EventSystem.current.currentSelectedGameObject == null)
+            return false;
+
+        GameObject go = EventSystem.current.currentSelectedGameObject;
+        return go.GetComponent<InputField>() != null || go.GetComponent<TMP_InputField>() != null;
+    }
+
     private void RefreshMovementButtons(MovementPosture posture, bool skipSelected)
     {
         SetMovementBg(_walkBG, !skipSelected && posture == MovementPosture.Walk);
@@ -645,132 +732,216 @@ public class ActionPointsUI : MonoBehaviour
         }
     }
 
-    private void EnsureSkipDialog()
+    private bool HasSkipDialogUi()
     {
-        if (_skipDialogPanel != null && _skipDialogInput != null && _skipDialogOkButton != null && _skipDialogCancelButton != null)
-            return;
+        if (_skipDialogPanel == null || _skipDialogOkButton == null || _skipDialogCancelButton == null)
+            return false;
+        return _skipDialogInput != null || _skipDialogTmpInput != null;
+    }
 
-        Canvas canvas = GetComponentInParent<Canvas>();
-        if (canvas == null)
-            canvas = FindFirstObjectByType<Canvas>();
-        if (canvas == null)
-            return;
-
-        if (_skipDialogPanel == null)
+    private string GetSkipDialogInputText()
+    {
+        if (_skipDialogInput != null)
         {
-            _skipDialogPanel = new GameObject("SkipDialogPanel", typeof(RectTransform), typeof(Image));
-            _skipDialogPanel.transform.SetParent(canvas.transform, false);
-            RectTransform rt = _skipDialogPanel.GetComponent<RectTransform>();
-            rt.anchorMin = new Vector2(0.5f, 0.5f);
-            rt.anchorMax = new Vector2(0.5f, 0.5f);
-            rt.pivot = new Vector2(0.5f, 0.5f);
-            rt.sizeDelta = new Vector2(360f, 180f);
-            Image bg = _skipDialogPanel.GetComponent<Image>();
-            bg.color = new Color(0f, 0f, 0f, 0.88f);
+            string main = (_skipDialogInput.text ?? string.Empty).Trim();
+            if (!string.IsNullOrEmpty(main))
+                return main;
+            // В части сцен значение задаётся только на дочернем Placeholder (Legacy), а text остаётся пустым.
+            return GetLegacyInputFieldPlaceholderText(_skipDialogInput);
         }
 
-        if (_skipDialogQuestionText == null)
+        if (_skipDialogTmpInput != null)
         {
-            GameObject go = new GameObject("SkipDialogQuestionText", typeof(RectTransform), typeof(Text));
-            go.transform.SetParent(_skipDialogPanel.transform, false);
-            RectTransform rt = go.GetComponent<RectTransform>();
-            rt.anchorMin = new Vector2(0.1f, 0.65f);
-            rt.anchorMax = new Vector2(0.9f, 0.92f);
-            rt.offsetMin = Vector2.zero;
-            rt.offsetMax = Vector2.zero;
-            _skipDialogQuestionText = go.GetComponent<Text>();
-            _skipDialogQuestionText.alignment = TextAnchor.MiddleCenter;
-            _skipDialogQuestionText.color = Color.white;
-            _skipDialogQuestionText.fontSize = 24;
-            _skipDialogQuestionText.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+            string main = (_skipDialogTmpInput.text ?? string.Empty).Trim();
+            if (!string.IsNullOrEmpty(main))
+                return main;
+            if (_skipDialogTmpInput.placeholder != null)
+            {
+                if (_skipDialogTmpInput.placeholder is TMP_Text tmpPh)
+                    return (tmpPh.text ?? string.Empty).Trim();
+            }
         }
 
+        return string.Empty;
+    }
+
+    /// <summary>
+    /// На объекте SkipDialogInput часто два InputField: оболочка без Text Component и дочерний «InputField (Legacy)» с Text/Placeholder.
+    /// Без textComponent ввод с клавиатуры не работает.
+    /// </summary>
+    private static InputField ResolveBestInputFieldUnderSkipDialogInput(Transform skipDialogInputRoot)
+    {
+        if (skipDialogInputRoot == null)
+            return null;
+
+        InputField[] fields = skipDialogInputRoot.GetComponentsInChildren<InputField>(true);
+        foreach (InputField f in fields)
+        {
+            if (f != null && f.textComponent != null)
+                return f;
+        }
+
+        return skipDialogInputRoot.GetComponent<InputField>();
+    }
+
+    private static string GetLegacyInputFieldPlaceholderText(InputField input)
+    {
+        if (input == null)
+            return string.Empty;
+
+        if (input.placeholder != null)
+        {
+            if (input.placeholder is Text t)
+                return (t.text ?? string.Empty).Trim();
+            Text onGraphic = input.placeholder.GetComponent<Text>();
+            if (onGraphic != null)
+                return (onGraphic.text ?? string.Empty).Trim();
+        }
+
+        // Если ссылка Placeholder в инспекторе не задана — ищем дочерний объект по имени.
+        Transform ph = input.transform.Find("Placeholder");
+        if (ph != null)
+        {
+            Text childText = ph.GetComponent<Text>();
+            if (childText != null)
+                return (childText.text ?? string.Empty).Trim();
+        }
+
+        return string.Empty;
+    }
+
+    private void SetSkipDialogInputText(string value)
+    {
+        string v = value ?? string.Empty;
+        if (_skipDialogInput != null)
+            SetSkipDialogLegacyTextWithoutNotify(v);
+        if (_skipDialogTmpInput != null)
+            SetSkipDialogTmpTextWithoutNotify(v);
+    }
+
+    private void SetSkipDialogLegacyTextWithoutNotify(string value)
+    {
         if (_skipDialogInput == null)
-            _skipDialogInput = CreateSkipDialogInputField();
-        if (_skipDialogOkButton == null)
-            _skipDialogOkButton = CreateSkipDialogButton("SkipDialogOkButton", "OK", new Vector2(-70f, -55f), OnSkipDialogOkClicked);
-        if (_skipDialogCancelButton == null)
-            _skipDialogCancelButton = CreateSkipDialogButton("SkipDialogCancelButton", "Отмена", new Vector2(70f, -55f), OnSkipDialogCancelClicked);
+            return;
+        _skipDialogInputClampSuppressed = true;
+        try
+        {
+            _skipDialogInput.SetTextWithoutNotify(value ?? string.Empty);
+        }
+        finally
+        {
+            _skipDialogInputClampSuppressed = false;
+        }
+    }
 
-        BindUiCallbacks();
-        _skipDialogPanel.SetActive(false);
+    private void SetSkipDialogTmpTextWithoutNotify(string value)
+    {
+        if (_skipDialogTmpInput == null)
+            return;
+        _skipDialogInputClampSuppressed = true;
+        try
+        {
+            _skipDialogTmpInput.SetTextWithoutNotify(value ?? string.Empty);
+        }
+        finally
+        {
+            _skipDialogInputClampSuppressed = false;
+        }
+    }
+
+    /// <summary>Только символы 0–9, подрезка до текущих ОД при вводе.</summary>
+    private void ApplySkipDialogInputFieldRules()
+    {
+        if (_skipDialogInput != null)
+        {
+            _skipDialogInput.contentType = InputField.ContentType.IntegerNumber;
+            _skipDialogInput.characterValidation = InputField.CharacterValidation.Integer;
+            _skipDialogInput.lineType = InputField.LineType.SingleLine;
+            _skipDialogInput.onValidateInput = ValidateSkipDialogDigitOnlyChar;
+
+            _skipDialogInput.onValueChanged.RemoveListener(OnSkipDialogLegacyInputValueChanged);
+            _skipDialogInput.onValueChanged.AddListener(OnSkipDialogLegacyInputValueChanged);
+        }
+
+        if (_skipDialogTmpInput != null)
+        {
+            _skipDialogTmpInput.contentType = TMP_InputField.ContentType.IntegerNumber;
+            _skipDialogTmpInput.characterValidation = TMP_InputField.CharacterValidation.Integer;
+            _skipDialogTmpInput.lineType = TMP_InputField.LineType.SingleLine;
+
+            _skipDialogTmpInput.onValueChanged.RemoveListener(OnSkipDialogTmpInputValueChanged);
+            _skipDialogTmpInput.onValueChanged.AddListener(OnSkipDialogTmpInputValueChanged);
+        }
+    }
+
+    private static char ValidateSkipDialogDigitOnlyChar(string text, int charIndex, char addedChar)
+    {
+        return char.IsDigit(addedChar) ? addedChar : '\0';
+    }
+
+    private void OnSkipDialogLegacyInputValueChanged(string _)
+    {
+        if (_skipDialogInputClampSuppressed)
+            return;
+        ClampSkipDialogInputsToCurrentAp();
+    }
+
+    private void OnSkipDialogTmpInputValueChanged(string _)
+    {
+        if (_skipDialogInputClampSuppressed)
+            return;
+        ClampSkipDialogInputsToCurrentAp();
+    }
+
+    /// <summary>Если введено число больше текущих ОД — подставляем текущие ОД.</summary>
+    private void ClampSkipDialogInputsToCurrentAp()
+    {
+        if (_player == null)
+            return;
+
+        int maxAp = Mathf.Max(0, _player.CurrentAp);
+
+        if (_skipDialogInput != null)
+        {
+            string t = (_skipDialogInput.text ?? string.Empty).Trim();
+            if (string.IsNullOrEmpty(t))
+                return;
+            if (!int.TryParse(t, out int v))
+                return;
+            if (v > maxAp)
+                SetSkipDialogLegacyTextWithoutNotify(maxAp.ToString());
+        }
+
+        if (_skipDialogTmpInput != null)
+        {
+            string t = (_skipDialogTmpInput.text ?? string.Empty).Trim();
+            if (string.IsNullOrEmpty(t))
+                return;
+            if (!int.TryParse(t, out int v))
+                return;
+            if (v > maxAp)
+                SetSkipDialogTmpTextWithoutNotify(maxAp.ToString());
+        }
     }
 
     private void ActivateSkipInputField()
     {
-        if (_skipDialogInput == null)
+        if (_skipDialogInput != null)
+        {
+            if (EventSystem.current != null)
+                EventSystem.current.SetSelectedGameObject(_skipDialogInput.gameObject);
+            _skipDialogInput.Select();
+            _skipDialogInput.ActivateInputField();
             return;
+        }
 
-        if (EventSystem.current != null)
-            EventSystem.current.SetSelectedGameObject(_skipDialogInput.gameObject);
-        _skipDialogInput.Select();
-        _skipDialogInput.ActivateInputField();
-    }
-
-    private InputField CreateSkipDialogInputField()
-    {
-        GameObject go = new GameObject("SkipDialogInput", typeof(RectTransform), typeof(Image), typeof(InputField));
-        go.transform.SetParent(_skipDialogPanel.transform, false);
-        RectTransform rt = go.GetComponent<RectTransform>();
-        rt.anchorMin = new Vector2(0.2f, 0.42f);
-        rt.anchorMax = new Vector2(0.8f, 0.58f);
-        rt.offsetMin = Vector2.zero;
-        rt.offsetMax = Vector2.zero;
-        Image bg = go.GetComponent<Image>();
-        bg.color = new Color(1f, 1f, 1f, 0.12f);
-
-        GameObject textGo = new GameObject("Text", typeof(RectTransform), typeof(Text));
-        textGo.transform.SetParent(go.transform, false);
-        RectTransform textRt = textGo.GetComponent<RectTransform>();
-        textRt.anchorMin = Vector2.zero;
-        textRt.anchorMax = Vector2.one;
-        textRt.offsetMin = new Vector2(10f, 6f);
-        textRt.offsetMax = new Vector2(-10f, -6f);
-        Text text = textGo.GetComponent<Text>();
-        text.alignment = TextAnchor.MiddleCenter;
-        text.color = Color.white;
-        text.fontSize = 22;
-        text.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
-        text.raycastTarget = false;
-
-        InputField input = go.GetComponent<InputField>();
-        input.targetGraphic = bg;
-        input.textComponent = text;
-        input.contentType = InputField.ContentType.IntegerNumber;
-        input.lineType = InputField.LineType.SingleLine;
-        input.text = "1";
-        return input;
-    }
-
-    private Button CreateSkipDialogButton(string name, string caption, Vector2 anchoredPos, UnityEngine.Events.UnityAction onClick)
-    {
-        GameObject go = new GameObject(name, typeof(RectTransform), typeof(Image), typeof(Button));
-        go.transform.SetParent(_skipDialogPanel.transform, false);
-        RectTransform rt = go.GetComponent<RectTransform>();
-        rt.anchorMin = new Vector2(0.5f, 0.5f);
-        rt.anchorMax = new Vector2(0.5f, 0.5f);
-        rt.pivot = new Vector2(0.5f, 0.5f);
-        rt.anchoredPosition = anchoredPos;
-        rt.sizeDelta = new Vector2(120f, 40f);
-        Image bg = go.GetComponent<Image>();
-        bg.color = new Color(0.2f, 0.2f, 0.2f, 1f);
-        Button button = go.GetComponent<Button>();
-        button.onClick.AddListener(onClick);
-
-        GameObject labelGo = new GameObject("Text", typeof(RectTransform), typeof(Text));
-        labelGo.transform.SetParent(go.transform, false);
-        RectTransform labelRt = labelGo.GetComponent<RectTransform>();
-        labelRt.anchorMin = Vector2.zero;
-        labelRt.anchorMax = Vector2.one;
-        labelRt.offsetMin = Vector2.zero;
-        labelRt.offsetMax = Vector2.zero;
-        Text label = labelGo.GetComponent<Text>();
-        label.text = caption;
-        label.alignment = TextAnchor.MiddleCenter;
-        label.color = Color.white;
-        label.fontSize = 20;
-        label.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
-        return button;
+        if (_skipDialogTmpInput != null)
+        {
+            if (EventSystem.current != null)
+                EventSystem.current.SetSelectedGameObject(_skipDialogTmpInput.gameObject);
+            _skipDialogTmpInput.Select();
+            _skipDialogTmpInput.ActivateInputField();
+        }
     }
 
     private void EnsureMiniMap()
@@ -952,8 +1123,11 @@ public class ActionPointsUI : MonoBehaviour
         else if (_player != null)
             displayedTurn = _player.TurnCount + 1;
 
+        string turnLabel = $"Ход {displayedTurn}";
         if (_turnTrackerText != null)
-            _turnTrackerText.text = $"Ход {displayedTurn}";
+            _turnTrackerText.text = turnLabel;
+        if (_turnTrackerTmpText != null)
+            _turnTrackerTmpText.text = turnLabel;
 
         if (_turnTrackerPrevButton != null)
             _turnTrackerPrevButton.interactable = _gameSession != null && _gameSession.CanViewPreviousTurn;
@@ -1107,100 +1281,266 @@ public class ActionPointsUI : MonoBehaviour
         if (_gameSession == null)
             _gameSession = FindFirstObjectByType<GameSession>();
 
-        Transform frontContent = FindNamedTransform("Front Content Maker");
+        Transform frontContent = FindNamedTransform(UiHierarchyNames.FrontContentMaker);
         if (frontContent == null)
+        {
+            BindSkipDialogReferences(null);
+            BindGlobalUiFallbacks();
+            BindUiCallbacks();
             return;
+        }
 
         if (_miniMapPanel == null)
-            _miniMapPanel = FindChildComponent<RectTransform>(frontContent, "MiniMapPanel");
+            _miniMapPanel = FindChildComponent<RectTransform>(frontContent, UiHierarchyNames.MiniMapPanel);
         if (_miniMapStatsPanel == null)
-            _miniMapStatsPanel = FindChildComponent<RectTransform>(frontContent, "MiniMapStatsPanel");
+            _miniMapStatsPanel = FindChildComponent<RectTransform>(frontContent, UiHierarchyNames.MiniMapStatsPanel);
         if (_miniMapTimeText == null)
-            _miniMapTimeText = FindChildComponent<Text>(frontContent, "MiniMapTimeText");
+            _miniMapTimeText = FindChildComponent<Text>(frontContent, UiHierarchyNames.MiniMapTimeText);
         if (_miniMapApText == null)
-            _miniMapApText = FindChildComponent<Text>(frontContent, "MiniMapApText");
-        if (_turnTrackerText == null)
-            _turnTrackerText = FindChildComponent<Text>(frontContent, "TurnTrackerText");
+            _miniMapApText = FindChildComponent<Text>(frontContent, UiHierarchyNames.MiniMapApText);
+        BindTurnTrackerTextReferences(frontContent);
+        BindSkipDialogReferences(frontContent);
         if (_turnTrackerPrevButton == null)
-            _turnTrackerPrevButton = FindChildComponent<Button>(frontContent, "TurnTrackerPrevButton");
+            _turnTrackerPrevButton = FindChildComponent<Button>(frontContent, UiHierarchyNames.TurnTrackerPrevButton);
         if (_turnTrackerNextButton == null)
-            _turnTrackerNextButton = FindChildComponent<Button>(frontContent, "TurnTrackerNextButton");
+            _turnTrackerNextButton = FindChildComponent<Button>(frontContent, UiHierarchyNames.TurnTrackerNextButton);
+        if (_endTurnButton == null)
+        {
+            _endTurnButton = FindChildComponent<Button>(frontContent, UiHierarchyNames.EndTurnButton)
+                ?? FindChildComponent<Button>(frontContent, UiHierarchyNames.EndTurnButtonCompact);
+        }
         if (_walkButton == null)
-            _walkButton = FindChildComponent<Button>(frontContent, "walkButton") ?? FindChildComponent<Button>(frontContent, "WalkButton");
+            _walkButton = FindChildComponent<Button>(frontContent, UiHierarchyNames.WalkButton)
+                ?? FindChildComponent<Button>(frontContent, UiHierarchyNames.WalkButtonPascal);
         if (_runButton == null)
-            _runButton = FindChildComponent<Button>(frontContent, "runButton") ?? FindChildComponent<Button>(frontContent, "RunButton");
+            _runButton = FindChildComponent<Button>(frontContent, UiHierarchyNames.RunButton)
+                ?? FindChildComponent<Button>(frontContent, UiHierarchyNames.RunButtonPascal);
         if (_sitButton == null)
-            _sitButton = FindChildComponent<Button>(frontContent, "sitButton") ?? FindChildComponent<Button>(frontContent, "SitButton");
+            _sitButton = FindChildComponent<Button>(frontContent, UiHierarchyNames.SitButton)
+                ?? FindChildComponent<Button>(frontContent, UiHierarchyNames.SitButtonPascal);
         if (_hideButton == null)
-            _hideButton = FindChildComponent<Button>(frontContent, "hideButton") ?? FindChildComponent<Button>(frontContent, "HideButton");
+            _hideButton = FindChildComponent<Button>(frontContent, UiHierarchyNames.HideButton)
+                ?? FindChildComponent<Button>(frontContent, UiHierarchyNames.HideButtonPascal);
         if (_skipButton == null)
-            _skipButton = FindChildComponent<Button>(frontContent, "skipButton") ?? FindChildComponent<Button>(frontContent, "SkipButton");
+            _skipButton = FindChildComponent<Button>(frontContent, UiHierarchyNames.SkipButton)
+                ?? FindChildComponent<Button>(frontContent, UiHierarchyNames.SkipButtonPascal);
+        if (_stepBackButton == null)
+            _stepBackButton = FindChildComponent<Button>(frontContent, UiHierarchyNames.StepBackButton)
+                ?? FindChildComponent<Button>(frontContent, UiHierarchyNames.StepBackButtonCamel);
         if (_walkBG == null)
-            _walkBG = FindChildComponent<Image>(frontContent, "walkBG") ?? FindChildComponent<Image>(frontContent, "WalkBG");
+            _walkBG = FindChildComponent<Image>(frontContent, UiHierarchyNames.WalkBg)
+                ?? FindChildComponent<Image>(frontContent, UiHierarchyNames.WalkBgPascal);
         if (_runBG == null)
-            _runBG = FindChildComponent<Image>(frontContent, "runBG") ?? FindChildComponent<Image>(frontContent, "RunBG");
+            _runBG = FindChildComponent<Image>(frontContent, UiHierarchyNames.RunBg)
+                ?? FindChildComponent<Image>(frontContent, UiHierarchyNames.RunBgPascal);
         if (_sitBG == null)
-            _sitBG = FindChildComponent<Image>(frontContent, "sitBG") ?? FindChildComponent<Image>(frontContent, "SitBG");
+            _sitBG = FindChildComponent<Image>(frontContent, UiHierarchyNames.SitBg)
+                ?? FindChildComponent<Image>(frontContent, UiHierarchyNames.SitBgPascal);
         if (_hideBG == null)
-            _hideBG = FindChildComponent<Image>(frontContent, "hideBG") ?? FindChildComponent<Image>(frontContent, "HideBG");
+            _hideBG = FindChildComponent<Image>(frontContent, UiHierarchyNames.HideBg)
+                ?? FindChildComponent<Image>(frontContent, UiHierarchyNames.HideBgPascal);
         if (_skipBG == null)
-            _skipBG = FindChildComponent<Image>(frontContent, "skipBG") ?? FindChildComponent<Image>(frontContent, "SkipBG");
+            _skipBG = FindChildComponent<Image>(frontContent, UiHierarchyNames.SkipBg)
+                ?? FindChildComponent<Image>(frontContent, UiHierarchyNames.SkipBgPascal);
         if (_loggerText == null)
-            _loggerText = FindChildComponent<Text>(frontContent, "LoggerText");
+            _loggerText = FindChildComponent<Text>(frontContent, UiHierarchyNames.LoggerText);
         if (_loggerText == null)
-            _loggerText = FindChildComponent<Text>(frontContent, "LogText"); // fallback: старое имя
+            _loggerText = FindChildComponent<Text>(frontContent, UiHierarchyNames.LogTextLegacy);
         if (_loggerUpButton == null)
-            _loggerUpButton = FindChildComponent<Button>(frontContent, "LoggerUp");
+            _loggerUpButton = FindChildComponent<Button>(frontContent, UiHierarchyNames.LoggerUp);
         if (_loggerUpButton == null)
-            _loggerUpButton = FindChildComponent<Button>(frontContent, "LoggerUpButton");
+            _loggerUpButton = FindChildComponent<Button>(frontContent, UiHierarchyNames.LoggerUpButton);
         if (_loggerDownButton == null)
-            _loggerDownButton = FindChildComponent<Button>(frontContent, "LoggerDown");
+            _loggerDownButton = FindChildComponent<Button>(frontContent, UiHierarchyNames.LoggerDown);
         if (_loggerDownButton == null)
-            _loggerDownButton = FindChildComponent<Button>(frontContent, "LoggerDownButton");
+            _loggerDownButton = FindChildComponent<Button>(frontContent, UiHierarchyNames.LoggerDownButton);
 
         // Глобальный fallback, если логгер находится вне Front Content Maker.
         if (_loggerText == null)
         {
-            Transform t = FindNamedTransform("LoggerText");
-            if (t == null) t = FindNamedTransform("LogText");
+            Transform t = FindNamedTransform(UiHierarchyNames.LoggerText);
+            if (t == null) t = FindNamedTransform(UiHierarchyNames.LogTextLegacy);
             if (t != null) _loggerText = t.GetComponent<Text>();
         }
         if (_loggerUpButton == null)
         {
-            Transform t = FindNamedTransform("LoggerUp");
-            if (t == null) t = FindNamedTransform("LoggerUpButton");
+            Transform t = FindNamedTransform(UiHierarchyNames.LoggerUp);
+            if (t == null) t = FindNamedTransform(UiHierarchyNames.LoggerUpButton);
             if (t != null) _loggerUpButton = t.GetComponent<Button>();
         }
         if (_loggerDownButton == null)
         {
-            Transform t = FindNamedTransform("LoggerDown");
-            if (t == null) t = FindNamedTransform("LoggerDownButton");
+            Transform t = FindNamedTransform(UiHierarchyNames.LoggerDown);
+            if (t == null) t = FindNamedTransform(UiHierarchyNames.LoggerDownButton);
             if (t != null) _loggerDownButton = t.GetComponent<Button>();
         }
 
         // Дополнительный fallback: если компонент Button/Text висит на дочернем объекте внутри Logger*.
         if (_loggerText == null)
         {
-            Transform t = FindNamedTransform("LoggerText");
+            Transform t = FindNamedTransform(UiHierarchyNames.LoggerText);
             if (t != null)
                 _loggerText = t.GetComponent<Text>() ?? t.GetComponentInChildren<Text>(true);
         }
         if (_loggerUpButton == null)
         {
-            Transform t = FindNamedTransform("LoggerUp");
+            Transform t = FindNamedTransform(UiHierarchyNames.LoggerUp);
             if (t != null)
                 _loggerUpButton = t.GetComponent<Button>() ?? t.GetComponentInChildren<Button>(true);
         }
         if (_loggerDownButton == null)
         {
-            Transform t = FindNamedTransform("LoggerDown");
+            Transform t = FindNamedTransform(UiHierarchyNames.LoggerDown);
             if (t != null)
                 _loggerDownButton = t.GetComponent<Button>() ?? t.GetComponentInChildren<Button>(true);
         }
 
-        // Если привязали LoggerText поздно, сразу отрисуем уже накопленные логи.
-        if (_loggerText != null)
-            RefreshLoggerView();
+        BindGlobalUiFallbacks();
+        BindUiCallbacks();
+    }
+
+    /// <summary>
+    /// Глобальный поиск по сцене (MainScene: кнопки могут быть не под Front Content Maker).
+    /// </summary>
+    private void BindGlobalUiFallbacks()
+    {
+        if (_skipButton == null)
+        {
+            Transform t = FindNamedTransform(UiHierarchyNames.SkipButton);
+            if (t == null) t = FindNamedTransform(UiHierarchyNames.SkipButtonPascal);
+            if (t == null) t = FindNamedTransform(UiHierarchyNames.SkipGlobalNameShort);
+            if (t == null) t = FindNamedTransform(UiHierarchyNames.SkipGlobalNameBtn);
+            if (t != null)
+                _skipButton = t.GetComponent<Button>() ?? t.GetComponentInChildren<Button>(true);
+        }
+
+        if (_skipBG == null)
+        {
+            Transform t = FindNamedTransform(UiHierarchyNames.SkipBg);
+            if (t == null) t = FindNamedTransform(UiHierarchyNames.SkipBgPascal);
+            if (t != null)
+                _skipBG = t.GetComponent<Image>();
+        }
+
+        if (_endTurnButton == null)
+        {
+            Transform t = FindNamedTransform(UiHierarchyNames.EndTurnButton);
+            if (t == null) t = FindNamedTransform(UiHierarchyNames.EndTurnButtonCompact);
+            if (t != null)
+                _endTurnButton = t.GetComponent<Button>() ?? t.GetComponentInChildren<Button>(true);
+        }
+    }
+
+    /// <summary>
+    /// UI.Text ищется только на самом объекте; подпись часто лежит на дочернем «Text» или в TMP — подхватываем и то и другое.
+    /// </summary>
+    private void BindTurnTrackerTextReferences(Transform frontContent)
+    {
+        if (_turnTrackerText != null && _turnTrackerTmpText != null)
+            return;
+
+        Transform t = FindNamedTransform(UiHierarchyNames.TurnTrackerText, frontContent);
+        if (t == null)
+            t = FindNamedTransform(UiHierarchyNames.TurnTrackerText);
+        if (t == null)
+            return;
+
+        if (_turnTrackerText == null)
+            _turnTrackerText = t.GetComponent<Text>() ?? t.GetComponentInChildren<Text>(true);
+        if (_turnTrackerTmpText == null)
+            _turnTrackerTmpText = t.GetComponent<TextMeshProUGUI>() ?? t.GetComponentInChildren<TextMeshProUGUI>(true);
+    }
+
+    private Transform FindSkipDialogNamedTransform(string objectName, Transform frontContent, Transform skipPanelTransform)
+    {
+        if (skipPanelTransform != null)
+        {
+            Transform t = FindNamedTransform(objectName, skipPanelTransform);
+            if (t != null)
+                return t;
+        }
+
+        if (frontContent != null)
+        {
+            Transform t = FindNamedTransform(objectName, frontContent);
+            if (t != null)
+                return t;
+        }
+
+        return FindNamedTransform(objectName);
+    }
+
+    private void BindSkipDialogReferences(Transform frontContent)
+    {
+        // Корень должен называться SkipDialogPanel (полноэкранный Canvas). Частая ошибка в инспекторе —
+        // ссылка на дочерний SkipDialogDialog: тогда SetActive не включает родителя и диалог не в иерархии.
+        Transform skipRoot = FindNamedTransform(UiHierarchyNames.SkipDialogPanel);
+        if (skipRoot != null)
+            _skipDialogPanel = skipRoot.gameObject;
+        else if (_skipDialogPanel != null && _skipDialogPanel.name != UiHierarchyNames.SkipDialogPanel)
+        {
+            Transform t = _skipDialogPanel.transform;
+            while (t != null)
+            {
+                if (t.name == UiHierarchyNames.SkipDialogPanel)
+                {
+                    _skipDialogPanel = t.gameObject;
+                    break;
+                }
+                t = t.parent;
+            }
+        }
+        else if (_skipDialogPanel == null)
+        {
+            Transform t = frontContent != null ? FindNamedTransform(UiHierarchyNames.SkipDialogPanel, frontContent) : null;
+            if (t != null)
+                _skipDialogPanel = t.gameObject;
+        }
+
+        Transform skipPanelTransform = _skipDialogPanel != null ? _skipDialogPanel.transform : null;
+
+        if (_skipDialogQuestionText == null)
+        {
+            Transform t = FindSkipDialogNamedTransform(UiHierarchyNames.SkipDialogQuestionText, frontContent, skipPanelTransform);
+            if (t != null)
+                _skipDialogQuestionText = t.GetComponent<Text>() ?? t.GetComponentInChildren<Text>(true);
+        }
+
+        if (_skipDialogQuestionTmpText == null)
+        {
+            Transform t = FindSkipDialogNamedTransform(UiHierarchyNames.SkipDialogQuestionText, frontContent, skipPanelTransform);
+            if (t != null)
+                _skipDialogQuestionTmpText = t.GetComponent<TextMeshProUGUI>() ?? t.GetComponentInChildren<TextMeshProUGUI>(true);
+        }
+
+        Transform tSkipIn = FindSkipDialogNamedTransform(UiHierarchyNames.SkipDialogInput, frontContent, skipPanelTransform);
+        if (tSkipIn != null)
+        {
+            InputField resolved = ResolveBestInputFieldUnderSkipDialogInput(tSkipIn);
+            if (resolved != null && (_skipDialogInput == null || _skipDialogInput.textComponent == null))
+                _skipDialogInput = resolved;
+        }
+
+        if (_skipDialogTmpInput == null)
+        {
+            Transform t = FindSkipDialogNamedTransform(UiHierarchyNames.SkipDialogInput, frontContent, skipPanelTransform);
+            if (t != null)
+                _skipDialogTmpInput = t.GetComponent<TMP_InputField>() ?? t.GetComponentInChildren<TMP_InputField>(true);
+        }
+
+        if (_skipDialogOkButton == null)
+        {
+            Transform t = FindSkipDialogNamedTransform(UiHierarchyNames.SkipDialogOkButton, frontContent, skipPanelTransform);
+            if (t != null)
+                _skipDialogOkButton = t.GetComponent<Button>() ?? t.GetComponentInChildren<Button>(true);
+        }
+
+        if (_skipDialogCancelButton == null)
+        {
+            Transform t = FindSkipDialogNamedTransform(UiHierarchyNames.SkipDialogCancelButton, frontContent, skipPanelTransform);
+            if (t != null)
+                _skipDialogCancelButton = t.GetComponent<Button>() ?? t.GetComponentInChildren<Button>(true);
+        }
     }
 
     private void BindUiCallbacks()
@@ -1235,6 +1575,12 @@ public class ActionPointsUI : MonoBehaviour
         {
             _skipButton.onClick.RemoveListener(OnSkipClicked);
             _skipButton.onClick.AddListener(OnSkipClicked);
+        }
+
+        if (_stepBackButton != null)
+        {
+            _stepBackButton.onClick.RemoveListener(OnStepBackClicked);
+            _stepBackButton.onClick.AddListener(OnStepBackClicked);
         }
 
         if (_turnTrackerPrevButton != null)
@@ -1283,6 +1629,8 @@ public class ActionPointsUI : MonoBehaviour
             _skipDialogCancelButton.onClick.RemoveListener(OnSkipDialogCancelClicked);
             _skipDialogCancelButton.onClick.AddListener(OnSkipDialogCancelClicked);
         }
+
+        ApplySkipDialogInputFieldRules();
 
         RefreshLoggerView();
     }

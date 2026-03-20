@@ -37,7 +37,7 @@ public static class InGameMenuSetupTool
         }
 
         // Удалить старую панель паузы, если была
-        Transform oldPanel = canvasGo.transform.Find("PauseMenuPanel");
+        Transform oldPanel = canvasGo.transform.Find(UiHierarchyNames.PauseMenuPanel);
         if (oldPanel != null)
             Object.DestroyImmediate(oldPanel.gameObject);
 
@@ -47,7 +47,7 @@ public static class InGameMenuSetupTool
             controller = canvasGo.AddComponent<InGameMenuUI>();
 
         // Панель паузы
-        GameObject panelGo = new GameObject("PauseMenuPanel", typeof(RectTransform), typeof(Image));
+        GameObject panelGo = new GameObject(UiHierarchyNames.PauseMenuPanel, typeof(RectTransform), typeof(Image));
         panelGo.transform.SetParent(canvasGo.transform, false);
         RectTransform panelRt = panelGo.GetComponent<RectTransform>();
         panelRt.anchorMin = new Vector2(0.5f, 0.5f);
@@ -108,8 +108,8 @@ public static class InGameMenuSetupTool
             return btnGo.GetComponent<Button>();
         }
 
-        Button resumeBtn = CreateButton("Button_Resume", "Resume", 20f);
-        Button mainMenuBtn = CreateButton("Button_MainMenu", "Main Menu", -20f);
+        Button resumeBtn = CreateButton(UiHierarchyNames.PauseButtonResume, "Resume", 20f);
+        Button mainMenuBtn = CreateButton(UiHierarchyNames.PauseButtonMainMenu, "Main Menu", -20f);
 
         // Привязка панели к контроллеру
         SerializedObject so = new SerializedObject(controller);

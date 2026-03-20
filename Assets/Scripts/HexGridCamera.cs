@@ -82,6 +82,8 @@ public class HexGridCamera : MonoBehaviour
     {
         if (_cam == null || !_cam.orthographic) return;
         if (Mouse.current == null) return;
+        if (GameplayMapInputBlock.IsBlocked)
+            return;
 
         UpdateZoom();
         UpdatePan();
