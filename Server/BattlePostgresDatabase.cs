@@ -73,13 +73,16 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS weapon_code TEXT NOT NULL DEFAULT 'fi
 
 INSERT INTO users (username, password, max_hp, max_ap, weapon_code)
 VALUES
-    ('test', 'test', 10, 270, 'fist'),
-    ('test2', 'test', 10, 39, 'fist')
+    ('test', 'test', 10, 100, 'fist'),
+    ('test2', 'test', 10, 100, 'fist')
 ON CONFLICT (username) DO UPDATE
 SET password = EXCLUDED.password,
     max_hp = EXCLUDED.max_hp,
     max_ap = EXCLUDED.max_ap,
     weapon_code = EXCLUDED.weapon_code;
+
+-- На случай уже существующих строк до смены сида:
+UPDATE users SET max_ap = 100 WHERE username IN ('test', 'test2');
 
 INSERT INTO weapons (code, name, damage, range)
 VALUES
@@ -89,6 +92,30 @@ ON CONFLICT (code) DO UPDATE
 SET name = EXCLUDED.name,
     damage = EXCLUDED.damage,
     range = EXCLUDED.range;
+
+ALTER TABLE weapons ADD COLUMN IF NOT EXISTS icon_key TEXT NOT NULL DEFAULT 'fist';
+UPDATE weapons SET icon_key = 'fist' WHERE code = 'fist';
+UPDATE weapons SET icon_key = 'stone' WHERE code = 'stone';
+
+ALTER TABLE weapons ADD COLUMN IF NOT EXISTS attack_ap_cost INT NOT NULL DEFAULT 1;
+UPDATE weapons SET attack_ap_cost = 3 WHERE code = 'fist';
+UPDATE weapons SET attack_ap_cost = 7 WHERE code = 'stone';
+ALTER TABLE weapons ALTER COLUMN attack_ap_cost SET DEFAULT 1;
+
+CREATE TABLE IF NOT EXISTS user_inventory_slots (
+    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    slot_index INT NOT NULL CHECK (slot_index >= 0 AND slot_index < 12),
+    weapon_id BIGINT REFERENCES weapons(id) ON DELETE SET NULL,
+    PRIMARY KEY (user_id, slot_index)
+);
+
+INSERT INTO user_inventory_slots (user_id, slot_index, weapon_id)
+SELECT u.id, 0, w.id FROM users u CROSS JOIN weapons w WHERE w.code = 'fist'
+ON CONFLICT (user_id, slot_index) DO NOTHING;
+
+INSERT INTO user_inventory_slots (user_id, slot_index, weapon_id)
+SELECT u.id, 1, w.id FROM users u CROSS JOIN weapons w WHERE w.code = 'stone'
+ON CONFLICT (user_id, slot_index) DO NOTHING;
 """;
             command.ExecuteNonQuery();
         }

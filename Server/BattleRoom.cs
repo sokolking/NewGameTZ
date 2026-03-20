@@ -13,6 +13,7 @@ public class BattleRoom
     private const string ActionAttack = "Attack";
     private const string ActionChangePosture = "ChangePosture";
     private const string ActionWait = "Wait";
+    private const string ActionEquipWeapon = "EquipWeapon";
     private const int ChangePostureCost = 2;
     private const float RunCostMultiplier = 0.5f;
     private const float SitCostMultiplier = 1.5f;
@@ -61,7 +62,7 @@ public class BattleRoom
 
     /// <summary>Текущее состояние каждого игрока (позиция, ОД, штраф). Обновляется после каждого раунда.</summary>
     public Dictionary<string, PlayerBattleState> CurrentState { get; } = new();
-    public Dictionary<string, (int maxHp, int maxAp, string weaponCode, int weaponDamage, int weaponRange)> PlayerCombatProfiles { get; } = new();
+    public Dictionary<string, (int maxHp, int maxAp, string weaponCode, int weaponDamage, int weaponRange, int weaponAttackApCost)> PlayerCombatProfiles { get; } = new();
 
     /// <summary>Порядок отправки хода в текущем раунде (кто раньше отправил — выше приоритет на клетку).</summary>
     public List<string> SubmissionOrder { get; } = new();
@@ -74,6 +75,14 @@ public class BattleRoom
     public HashSet<(int col, int row)> Obstacles { get; } = new();
 
     private readonly Random _rng;
+    private readonly BattleWeaponDatabase? _weaponDb;
+
+    private int GetWeaponAttackApCostFromDb(string weaponCode)
+    {
+        if (_weaponDb != null && _weaponDb.TryGetWeaponByCode(weaponCode, out var w))
+            return Math.Max(1, w.AttackApCost);
+        return 1;
+    }
 
     /// <summary>Стоимость n-го шага (как в клиентском Player.GetStepCost).</summary>
     public static int GetStepCost(int stepIndex)
@@ -536,10 +545,11 @@ public class BattleRoom
         return actions.ToArray();
     }
 
-    public BattleRoom(string battleId)
+    public BattleRoom(string battleId, BattleWeaponDatabase? weaponDb = null)
     {
         BattleId = battleId;
         _rng = new Random(Guid.NewGuid().GetHashCode());
+        _weaponDb = weaponDb;
     }
 
     private static long GetUtcNowMs() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
@@ -663,7 +673,7 @@ public class BattleRoom
             var unitId = playerId + "_UNIT";
             var profile = PlayerCombatProfiles.TryGetValue(playerId, out var p)
                 ? p
-                : (DefaultPlayerMaxHp, MaxAp, DefaultWeaponCode, DefaultWeaponDamage, DefaultWeaponRange);
+                : (DefaultPlayerMaxHp, MaxAp, DefaultWeaponCode, DefaultWeaponDamage, DefaultWeaponRange, GetWeaponAttackApCostFromDb(DefaultWeaponCode));
             PlayerToUnitId[playerId] = unitId;
             Units[unitId] = new UnitStateDto
             {
@@ -679,6 +689,7 @@ public class BattleRoom
                 WeaponCode = profile.Item3,
                 WeaponDamage = profile.Item4,
                 WeaponRange = profile.Item5,
+                WeaponAttackApCost = Math.Max(1, profile.Item6),
                 Posture = PostureWalk
             };
         }
@@ -711,6 +722,7 @@ public class BattleRoom
                     WeaponCode = DefaultWeaponCode,
                     WeaponDamage = DefaultWeaponDamage,
                     WeaponRange = DefaultWeaponRange,
+                    WeaponAttackApCost = GetWeaponAttackApCostFromDb(DefaultWeaponCode),
                     Posture = PostureWalk
                 };
             }
@@ -774,18 +786,19 @@ public class BattleRoom
             ParticipantIds.Add(playerId);
     }
 
-    public void SetPlayerCombatProfile(string playerId, int maxHp, int maxAp, string weaponCode, int weaponDamage, int weaponRange)
+    public void SetPlayerCombatProfile(string playerId, int maxHp, int maxAp, string weaponCode, int weaponDamage, int weaponRange, int weaponAttackApCost)
     {
         PlayerCombatProfiles[playerId] = (
             Math.Max(1, maxHp),
             Math.Max(1, maxAp),
             string.IsNullOrWhiteSpace(weaponCode) ? DefaultWeaponCode : weaponCode,
             Math.Max(0, weaponDamage),
-            Math.Max(0, weaponRange));
+            Math.Max(0, weaponRange),
+            Math.Max(1, weaponAttackApCost));
     }
 
     /// <summary>Смена оружия вне очереди хода (до отправки хода в текущем раунде). Статы берутся из БД оружия на сервере.</summary>
-    public bool TryEquipWeapon(string playerId, string weaponCode, int weaponDamage, int weaponRange, out string? failureReason)
+    public bool TryEquipWeapon(string playerId, string weaponCode, int weaponDamage, int weaponRange, int weaponAttackApCost, out string? failureReason)
     {
         failureReason = null;
         EnsureUnitsInitialized();
@@ -817,21 +830,22 @@ public class BattleRoom
         unit.WeaponCode = code;
         unit.WeaponDamage = Math.Max(0, weaponDamage);
         unit.WeaponRange = Math.Max(0, weaponRange);
+        unit.WeaponAttackApCost = Math.Max(1, weaponAttackApCost);
         Units[unitId] = unit;
 
         if (PlayerCombatProfiles.TryGetValue(playerId, out var prof))
-            PlayerCombatProfiles[playerId] = (prof.Item1, prof.Item2, code, unit.WeaponDamage, unit.WeaponRange);
+            PlayerCombatProfiles[playerId] = (prof.Item1, prof.Item2, code, unit.WeaponDamage, unit.WeaponRange, unit.WeaponAttackApCost);
         else
-            PlayerCombatProfiles[playerId] = (DefaultPlayerMaxHp, MaxAp, code, unit.WeaponDamage, unit.WeaponRange);
+            PlayerCombatProfiles[playerId] = (DefaultPlayerMaxHp, MaxAp, code, unit.WeaponDamage, unit.WeaponRange, unit.WeaponAttackApCost);
 
         return true;
     }
 
-    public void FillSpawnArrays(out string[] ids, out int[] cols, out int[] rows, out int[] currentAps, out int[] maxHps, out int[] currentHps, out string[] currentPostures, out string[] weaponCodes, out int[] weaponDamages, out int[] weaponRanges)
+    public void FillSpawnArrays(out string[] ids, out int[] cols, out int[] rows, out int[] currentAps, out int[] maxHps, out int[] currentHps, out string[] currentPostures, out string[] weaponCodes, out int[] weaponDamages, out int[] weaponRanges, out int[] weaponAttackApCosts)
     {
         EnsureUnitsInitialized();
 
-        var items = new List<(string id, int col, int row, int currentAp, int maxHp, int currentHp, string posture, string wc, int wd, int wr)>();
+        var items = new List<(string id, int col, int row, int currentAp, int maxHp, int currentHp, string posture, string wc, int wd, int wr, int wac)>();
 
         foreach (var playerId in ParticipantIds.Where(Players.ContainsKey))
         {
@@ -847,21 +861,24 @@ public class BattleRoom
                     NormalizePosture(unit.Posture),
                     unit.WeaponCode ?? DefaultWeaponCode,
                     unit.WeaponDamage,
-                    unit.WeaponRange));
+                    unit.WeaponRange,
+                    Math.Max(1, unit.WeaponAttackApCost)));
             }
             else
             {
                 string wc = DefaultWeaponCode;
                 int wd = DefaultWeaponDamage;
                 int wr = DefaultWeaponRange;
+                int wac = GetWeaponAttackApCostFromDb(DefaultWeaponCode);
                 if (PlayerCombatProfiles.TryGetValue(playerId, out var prof))
                 {
                     wc = prof.Item3;
                     wd = prof.Item4;
                     wr = prof.Item5;
+                    wac = prof.Item6;
                 }
 
-                items.Add((playerId, Players[playerId].col, Players[playerId].row, MaxAp, DefaultPlayerMaxHp, DefaultPlayerMaxHp, PostureWalk, wc, wd, wr));
+                items.Add((playerId, Players[playerId].col, Players[playerId].row, MaxAp, DefaultPlayerMaxHp, DefaultPlayerMaxHp, PostureWalk, wc, wd, wr, wac));
             }
         }
 
@@ -877,7 +894,8 @@ public class BattleRoom
                 NormalizePosture(unit.Posture),
                 unit.WeaponCode ?? DefaultWeaponCode,
                 unit.WeaponDamage,
-                unit.WeaponRange));
+                unit.WeaponRange,
+                Math.Max(1, unit.WeaponAttackApCost)));
         }
 
         ids = items.Select(x => x.id).ToArray();
@@ -890,6 +908,7 @@ public class BattleRoom
         weaponCodes = items.Select(x => x.wc).ToArray();
         weaponDamages = items.Select(x => x.wd).ToArray();
         weaponRanges = items.Select(x => x.wr).ToArray();
+        weaponAttackApCosts = items.Select(x => x.wac).ToArray();
     }
 
     public BattleStartedPayloadDto BuildBattleStartedFor(string playerId)
@@ -901,7 +920,7 @@ public class BattleRoom
             Col = p.Value.col,
             Row = p.Value.row
         }).ToArray();
-        FillSpawnArrays(out var sid, out var sc, out var sr, out var sap, out var smh, out var sch, out var spos, out var swc, out var swd, out var swr);
+        FillSpawnArrays(out var sid, out var sc, out var sr, out var sap, out var smh, out var sch, out var spos, out var swc, out var swd, out var swr, out var swac);
         var obstacleCols = Obstacles.Select(x => x.col).ToArray();
         var obstacleRows = Obstacles.Select(x => x.row).ToArray();
         return new BattleStartedPayloadDto
@@ -921,6 +940,7 @@ public class BattleRoom
             SpawnWeaponCodes = swc,
             SpawnWeaponDamages = swd,
             SpawnWeaponRanges = swr,
+            SpawnWeaponAttackApCosts = swac,
             ObstacleCols = obstacleCols,
             ObstacleRows = obstacleRows
         };
@@ -955,6 +975,7 @@ public class BattleRoom
                     WeaponCode = DefaultWeaponCode,
                     WeaponDamage = DefaultWeaponDamage,
                     WeaponRange = DefaultWeaponRange,
+                    WeaponAttackApCost = GetWeaponAttackApCostFromDb(DefaultWeaponCode),
                     Posture = PostureWalk
                 };
             }
@@ -1137,6 +1158,8 @@ public class BattleRoom
                             cost = ChangePostureCost;
                         else if (string.Equals(queuedActionType, ActionWait, StringComparison.OrdinalIgnoreCase))
                             cost = Math.Max(1, action?.Cost ?? 1);
+                        else if (string.Equals(queuedActionType, ActionEquipWeapon, StringComparison.OrdinalIgnoreCase))
+                            cost = Math.Max(1, action?.Cost ?? 2);
                         else
                             cost = Math.Max(1, action?.Cost ?? 1);
                         if (actionBudget[uid] + 0.0001f < cost)
@@ -1301,6 +1324,39 @@ public class BattleRoom
                     {
                         executed.Succeeded = true;
                     }
+                    else if (string.Equals(actionType, ActionEquipWeapon, StringComparison.OrdinalIgnoreCase))
+                    {
+                        string wc = action.WeaponCode ?? "";
+                        if (string.IsNullOrWhiteSpace(wc))
+                        {
+                            executed.FailureReason = "Weapon code missing";
+                        }
+                        else if (_weaponDb == null || !_weaponDb.TryGetWeaponByCode(wc, out var wpn))
+                        {
+                            executed.FailureReason = "Unknown weapon";
+                        }
+                        else
+                        {
+                            unit.WeaponCode = wpn.Code;
+                            unit.WeaponDamage = wpn.Damage;
+                            unit.WeaponRange = wpn.Range;
+                            unit.WeaponAttackApCost = Math.Max(1, wpn.AttackApCost);
+                            Units[uid] = unit;
+                            string? pid = null;
+                            foreach (var kv in PlayerToUnitId)
+                            {
+                                if (kv.Value == uid)
+                                {
+                                    pid = kv.Key;
+                                    break;
+                                }
+                            }
+
+                            if (!string.IsNullOrEmpty(pid) && PlayerCombatProfiles.TryGetValue(pid, out var prof))
+                                PlayerCombatProfiles[pid] = (prof.Item1, prof.Item2, wpn.Code, wpn.Damage, wpn.Range, Math.Max(1, wpn.AttackApCost));
+                            executed.Succeeded = true;
+                        }
+                    }
                     else
                     {
                         executed.FailureReason = "Unknown action type";
@@ -1373,6 +1429,7 @@ public class BattleRoom
                 WeaponCode = us.WeaponCode ?? DefaultWeaponCode,
                 WeaponDamage = us.WeaponDamage,
                 WeaponRange = us.WeaponRange,
+                WeaponAttackApCost = Math.Max(1, us.WeaponAttackApCost),
                 ExecutedActions = unitActions.ToArray()
             });
         }

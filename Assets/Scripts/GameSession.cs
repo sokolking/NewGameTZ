@@ -1,7 +1,6 @@
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
-using UnityEngine.Networking;
 
 /// <summary>
 /// Сессия боя: отправка хода на сервер и применение результата (по плану ServerSyncPlan).
@@ -230,64 +229,31 @@ public class GameSession : MonoBehaviour
     public string BattleId => _battleId;
     public string PlayerId => _playerId;
 
-    /// <summary>Смена оружия по коду (серверная БД при онлайн-бое).</summary>
-    public void RequestEquipWeapon(string weaponCode)
+    /// <summary>Смена оружия: в бою — в очередь хода (2 ОД смена + EquipWeapon на сервере), иначе только локально.</summary>
+    /// <param name="weaponAttackApCost">Стоимость атаки из БД (weapons.attack_ap_cost); если 0 — используется 1.</param>
+    public void RequestEquipWeapon(string weaponCode, int weaponAttackApCost = 1)
     {
         if (string.IsNullOrWhiteSpace(weaponCode))
             return;
         weaponCode = weaponCode.Trim().ToLowerInvariant();
+        var pl = LocalPlayer;
+        if (pl == null)
+            return;
+        int atk = Mathf.Max(1, weaponAttackApCost);
         if (IsInBattleWithServer())
-            StartCoroutine(EquipWeaponHttpCoroutine(weaponCode));
+        {
+            if (!pl.QueueEquipWeaponAction(weaponCode, null, atk))
+                OnNetworkMessage?.Invoke("Недостаточно ОД");
+        }
         else
-            ApplyLocalWeaponOnly(weaponCode);
+            ApplyLocalWeaponOnly(weaponCode, atk);
     }
 
-    private void ApplyLocalWeaponOnly(string weaponCode)
+    private void ApplyLocalWeaponOnly(string weaponCode, int weaponAttackApCost)
     {
         WeaponCatalog.GetStats(weaponCode, out string code, out int dmg, out int range);
         var pl = LocalPlayer;
-        pl?.SetEquippedWeapon(code, dmg, range);
-    }
-
-    private IEnumerator EquipWeaponHttpCoroutine(string weaponCode)
-    {
-        if (_serverConnection == null)
-            _serverConnection = FindFirstObjectByType<BattleServerConnection>();
-        string baseUrl = _serverConnection != null ? _serverConnection.ServerUrl.TrimEnd('/') : "";
-        if (string.IsNullOrEmpty(baseUrl))
-        {
-            ApplyLocalWeaponOnly(weaponCode);
-            yield break;
-        }
-
-        string url = $"{baseUrl}/api/battle/{UnityWebRequest.EscapeURL(_battleId)}/equip-weapon";
-        var body = JsonUtility.ToJson(new EquipWeaponRequestPayload { playerId = _playerId, weaponCode = weaponCode });
-        using (var req = new UnityWebRequest(url, "POST"))
-        {
-            req.uploadHandler = new UploadHandlerRaw(System.Text.Encoding.UTF8.GetBytes(body));
-            req.downloadHandler = new DownloadHandlerBuffer();
-            req.SetRequestHeader("Content-Type", "application/json");
-            yield return req.SendWebRequest();
-
-            if (req.result != UnityWebRequest.Result.Success)
-            {
-                OnNetworkMessage?.Invoke("Не удалось сменить оружие");
-                yield break;
-            }
-
-            string text = req.downloadHandler.text;
-            var resp = JsonUtility.FromJson<EquipWeaponResponsePayload>(text);
-            if (resp != null && resp.ok)
-            {
-                var pl = LocalPlayer;
-                pl?.SetEquippedWeapon(resp.weaponCode, resp.weaponDamage, resp.weaponRange);
-            }
-            else
-            {
-                string msg = resp != null && !string.IsNullOrEmpty(resp.error) ? resp.error : "Не удалось сменить оружие";
-                OnNetworkMessage?.Invoke(msg);
-            }
-        }
+        pl?.SetEquippedWeapon(code, dmg, range, weaponAttackApCost);
     }
 
     /// <summary>Включён ли онлайн-режим (отправка хода при завершении). True также при загрузке через Find Game (сессия в бою).</summary>
@@ -340,7 +306,7 @@ public class GameSession : MonoBehaviour
         var local = _localPlayer != null ? _localPlayer : FindFirstObjectByType<Player>();
         if (local == null) return false;
 
-        const int attackCost = 1;
+        int attackCost = Mathf.Max(1, local.WeaponAttackApCost);
         int apBefore = local.CurrentAp;
         int repeatCount = shiftRepeat ? apBefore / attackCost : 1;
         if (repeatCount <= 0)
@@ -547,7 +513,10 @@ public class GameSession : MonoBehaviour
                 local.ApplyServerTurnResult(r.finalPosition, r.actualPath, r.currentAp, r.penaltyFraction, r.currentPosture, prepareForAnimation);
                 local.SetHealth(r.currentHp, r.maxHp > 0 ? r.maxHp : local.MaxHp);
                 if (!string.IsNullOrEmpty(r.weaponCode))
-                    local.SetEquippedWeapon(r.weaponCode, r.weaponDamage, r.weaponRange);
+                {
+                    int wAtk = r.weaponAttackApCost > 0 ? r.weaponAttackApCost : 1;
+                    local.SetEquippedWeapon(r.weaponCode, r.weaponDamage, r.weaponRange, wAtk);
+                }
                 if (prepareForAnimation)
                     animJobs.Add((local, true, r.actualPath));
                 else if (r.isDead)
@@ -819,7 +788,8 @@ public class GameSession : MonoBehaviour
                     string wCode = GetSpawnString(payload.spawnWeaponCodes, spawnIndex, WeaponCatalog.FistCode);
                     int wDmg = GetSpawnInt(payload.spawnWeaponDamages, spawnIndex, 1);
                     int wRng = GetSpawnInt(payload.spawnWeaponRanges, spawnIndex, 1);
-                    local.SetEquippedWeapon(wCode, wDmg, wRng);
+                    int wAtk = GetSpawnInt(payload.spawnWeaponAttackApCosts, spawnIndex, 1);
+                    local.SetEquippedWeapon(wCode, wDmg, wRng, wAtk);
                 }
                 _initialReplayState[pid] = new ReplayUnitSnapshot
                 {
@@ -1117,6 +1087,13 @@ public class GameSession : MonoBehaviour
 
                 if (action.actionType == "Attack" && !string.IsNullOrEmpty(action.targetUnitId))
                     local.QueueAttackAction(action.targetUnitId, action.bodyPart, Mathf.Max(1, action.cost));
+
+                if (action.actionType == "EquipWeapon" && !string.IsNullOrEmpty(action.weaponCode))
+                {
+                    int atk = action.weaponAttackApCost > 0 ? action.weaponAttackApCost : 1;
+                    int? swapCost = action.cost > 0 ? action.cost : (int?)null;
+                    local.QueueEquipWeaponAction(action.weaponCode, swapCost, atk);
+                }
             }
         }
     }

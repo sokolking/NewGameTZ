@@ -1,6 +1,5 @@
 using System.Collections;
 using UnityEngine;
-using UnityEngine.Networking;
 using UnityEngine.SceneManagement;
 using UnityEngine.UI;
 
@@ -32,6 +31,7 @@ public class MainMenuMatchmaking : MonoBehaviour
     public void FindGame(string username, string password)
     {
         if (_searching) return;
+        _serverUrl = BattleServerRuntime.CurrentBaseUrl;
         _username = username;
         _password = password;
         _searching = true;
@@ -43,6 +43,7 @@ public class MainMenuMatchmaking : MonoBehaviour
     public void StartSinglePlayerServerBattle(string username, string password)
     {
         if (_searching) return;
+        _serverUrl = BattleServerRuntime.CurrentBaseUrl;
         _username = username;
         _password = password;
         _searching = true;
@@ -59,26 +60,33 @@ public class MainMenuMatchmaking : MonoBehaviour
     {
         var body = new JoinRequest { startCol = 0, startRow = 0, solo = false, username = _username, password = _password };
         var json = JsonUtility.ToJson(body);
-        using (var req = new UnityWebRequest(_serverUrl + "/api/battle/join", "POST"))
+        string url = _serverUrl.TrimEnd('/') + "/api/battle/join";
+        string responseText = null;
+        string errBody = null;
+        yield return HttpSimple.PostJson(url, json, b => responseText = b, e => errBody = e);
+
+        if (errBody != null)
         {
-            req.uploadHandler = new UploadHandlerRaw(System.Text.Encoding.UTF8.GetBytes(json));
-            req.downloadHandler = new DownloadHandlerBuffer();
-            req.SetRequestHeader("Content-Type", "application/json");
-            yield return req.SendWebRequest();
+            SetStatus(ExtractRequestErrorFromBody(errBody, "Connection failed. Check server."));
+            _searching = false;
+            yield break;
+        }
 
-            if (req.result != UnityWebRequest.Result.Success)
-            {
-                SetStatus(ExtractRequestError(req, "Connection failed. Check server."));
-                _searching = false;
-                yield break;
-            }
+        if (string.IsNullOrEmpty(responseText))
+        {
+            SetStatus("Connection failed. Check server.");
+            _searching = false;
+            yield break;
+        }
 
-            var response = JsonUtility.FromJson<JoinResponse>(req.downloadHandler.text);
+        {
+            var response = JsonUtility.FromJson<JoinResponse>(responseText);
             string battleId = response.battleId;
             string playerId = response.playerId;
 
             if (response.status == "battle" && response.battleStarted != null)
             {
+                BattleSessionState.SetAuthCredentials(_username, _password);
                 BattleSessionState.SetPending(battleId, playerId, _serverUrl, response.battleStarted);
                 _searching = false;
                 SceneManager.LoadScene(_gameSceneName);
@@ -106,36 +114,40 @@ public class MainMenuMatchmaking : MonoBehaviour
     {
         var body = new JoinRequest { startCol = 0, startRow = 0, solo = true, username = _username, password = _password };
         var json = JsonUtility.ToJson(body);
-        using (var req = new UnityWebRequest(_serverUrl + "/api/battle/join", "POST"))
+        string url = _serverUrl.TrimEnd('/') + "/api/battle/join";
+        string responseText = null;
+        string errBody = null;
+        yield return HttpSimple.PostJson(url, json, b => responseText = b, e => errBody = e);
+
+        if (errBody != null)
         {
-            req.uploadHandler = new UploadHandlerRaw(System.Text.Encoding.UTF8.GetBytes(json));
-            req.downloadHandler = new DownloadHandlerBuffer();
-            req.SetRequestHeader("Content-Type", "application/json");
-            yield return req.SendWebRequest();
-
-            if (req.result != UnityWebRequest.Result.Success)
-            {
-                SetStatus(ExtractRequestError(req, "Connection failed. Check server."));
-                _searching = false;
-                yield break;
-            }
-
-            var response = JsonUtility.FromJson<JoinResponse>(req.downloadHandler.text);
-            string battleId = response.battleId;
-            string playerId = response.playerId;
-
-            if (response.status == "battle" && response.battleStarted != null)
-            {
-                BattleSessionState.SetPending(battleId, playerId, _serverUrl, response.battleStarted);
-                _searching = false;
-                SceneManager.LoadScene(_gameSceneName);
-                yield break;
-            }
-
-            // Любой другой статус для solo — ошибка.
-            SetStatus("Unexpected response for solo battle.");
+            SetStatus(ExtractRequestErrorFromBody(errBody, "Connection failed. Check server."));
             _searching = false;
+            yield break;
         }
+
+        if (string.IsNullOrEmpty(responseText))
+        {
+            SetStatus("Connection failed. Check server.");
+            _searching = false;
+            yield break;
+        }
+
+        var response = JsonUtility.FromJson<JoinResponse>(responseText);
+        string battleId = response.battleId;
+        string playerId = response.playerId;
+
+        if (response.status == "battle" && response.battleStarted != null)
+        {
+            BattleSessionState.SetAuthCredentials(_username, _password);
+            BattleSessionState.SetPending(battleId, playerId, _serverUrl, response.battleStarted);
+            _searching = false;
+            SceneManager.LoadScene(_gameSceneName);
+            yield break;
+        }
+
+        SetStatus("Unexpected response for solo battle.");
+        _searching = false;
     }
 
     private IEnumerator PollUntilBattleStartedCoroutine(string battleId, string playerId)
@@ -143,27 +155,35 @@ public class MainMenuMatchmaking : MonoBehaviour
         while (_searching && !string.IsNullOrEmpty(battleId))
         {
             yield return new WaitForSeconds(0.5f);
-            var url = _serverUrl + "/api/battle/" + battleId + "/poll?playerId=" + UnityWebRequest.EscapeURL(playerId);
-            using (var req = UnityWebRequest.Get(url))
+            var url = _serverUrl.TrimEnd('/') + "/api/battle/" + HttpSimple.Escape(battleId) + "/poll?playerId=" + HttpSimple.Escape(playerId);
+            int status = 0;
+            string body = null;
+            string transportErr = null;
+            yield return HttpSimple.GetStringWithStatus(url, (code, b) => { status = code; body = b; }, e => transportErr = e);
+
+            if (transportErr != null)
+                continue;
+
+            if (status == 404)
             {
-                yield return req.SendWebRequest();
-                if (req.responseCode == 404)
-                {
-                    _queueBattleId = null;
-                    _queuePlayerId = null;
-                    SetStatus("Поиск отменён (комната закрыта).");
-                    _searching = false;
-                    yield break;
-                }
-                if (req.result != UnityWebRequest.Result.Success) continue;
-                var poll = JsonUtility.FromJson<PollResponse>(req.downloadHandler.text);
-                if (poll.status == "battle" && poll.battleStarted != null)
-                {
-                    BattleSessionState.SetPending(battleId, playerId, _serverUrl, poll.battleStarted);
-                    _searching = false;
-                    SceneManager.LoadScene(_gameSceneName);
-                    yield break;
-                }
+                _queueBattleId = null;
+                _queuePlayerId = null;
+                SetStatus("Поиск отменён (комната закрыта).");
+                _searching = false;
+                yield break;
+            }
+
+            if (status < 200 || status >= 300 || string.IsNullOrEmpty(body))
+                continue;
+
+            var poll = JsonUtility.FromJson<PollResponse>(body);
+            if (poll.status == "battle" && poll.battleStarted != null)
+            {
+                BattleSessionState.SetAuthCredentials(_username, _password);
+                BattleSessionState.SetPending(battleId, playerId, _serverUrl, poll.battleStarted);
+                _searching = false;
+                SceneManager.LoadScene(_gameSceneName);
+                yield break;
             }
         }
     }
@@ -200,12 +220,8 @@ public class MainMenuMatchmaking : MonoBehaviour
         public string error;
     }
 
-    private static string ExtractRequestError(UnityWebRequest request, string fallback)
+    private static string ExtractRequestErrorFromBody(string responseText, string fallback)
     {
-        if (request == null)
-            return fallback;
-
-        string responseText = request.downloadHandler != null ? request.downloadHandler.text : null;
         if (!string.IsNullOrWhiteSpace(responseText))
         {
             try
@@ -220,6 +236,6 @@ public class MainMenuMatchmaking : MonoBehaviour
             }
         }
 
-        return string.IsNullOrWhiteSpace(request.error) ? fallback : request.error;
+        return fallback;
     }
 }

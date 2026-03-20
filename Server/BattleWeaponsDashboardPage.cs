@@ -36,12 +36,13 @@ public static class BattleWeaponsDashboardPage
         <input id="name" placeholder="name" />
         <input id="damage" type="number" min="0" value="1" />
         <input id="range" type="number" min="0" value="1" />
+        <input id="attackApCost" type="number" min="1" value="1" title="attack AP cost (default 1; fist 3, stone 7)" />
         <button id="saveBtn">Save</button>
         <button id="reloadBtn">Reload</button>
       </div>
       <div id="status" class="status">loading...</div>
       <table>
-        <thead><tr><th>id</th><th>code</th><th>name</th><th>damage</th><th>range</th></tr></thead>
+        <thead><tr><th>id</th><th>code</th><th>name</th><th>damage</th><th>range</th><th>attack ОД</th></tr></thead>
         <tbody id="rows"></tbody>
       </table>
     </div>
@@ -56,7 +57,7 @@ public static class BattleWeaponsDashboardPage
       rowsEl.innerHTML = '';
       for (const w of list) {
         const tr = document.createElement('tr');
-        tr.innerHTML = `<td>${w.id}</td><td>${w.code}</td><td>${w.name}</td><td>${w.damage}</td><td>${w.range}</td>`;
+        tr.innerHTML = `<td>${w.id}</td><td>${w.code}</td><td>${w.name}</td><td>${w.damage}</td><td>${w.range}</td><td>${w.attackApCost ?? '-'}</td>`;
         rowsEl.appendChild(tr);
       }
       statusEl.textContent = `loaded ${list.length} weapons`;
@@ -67,7 +68,8 @@ public static class BattleWeaponsDashboardPage
         code: document.getElementById('code').value,
         name: document.getElementById('name').value,
         damage: Number(document.getElementById('damage').value || 0),
-        range: Number(document.getElementById('range').value || 0)
+        range: Number(document.getElementById('range').value || 0),
+        attackApCost: Number(document.getElementById('attackApCost').value || 1)
       };
       const resp = await fetch('/api/db/weapons', {
         method: 'POST',

@@ -43,6 +43,12 @@ public class QueuedBattleActionDto
     public string? BodyPart { get; set; }
     public string? Posture { get; set; }
     public int Cost { get; set; } = 1;
+    /// <summary>Для EquipWeapon: код оружия из БД.</summary>
+    public string? WeaponCode { get; set; }
+    /// <summary>Для отмены EquipWeapon: стоимость атаки предыдущего оружия (клиент).</summary>
+    public int PreviousWeaponAttackApCost { get; set; }
+    /// <summary>Для EquipWeapon: стоимость атаки нового оружия (клиент).</summary>
+    public int WeaponAttackApCost { get; set; }
 }
 
 public class ExecutedBattleActionDto
@@ -84,6 +90,8 @@ public class UnitStateDto
     public string WeaponCode { get; set; } = "fist";
     public int WeaponDamage { get; set; } = 1;
     public int WeaponRange { get; set; } = 1;
+    /// <summary>Стоимость атаки (ОД) из weapons.attack_ap_cost.</summary>
+    public int WeaponAttackApCost { get; set; } = 1;
     public string Posture { get; set; } = "walk";
 }
 
@@ -109,6 +117,8 @@ public class PlayerTurnResultDto
     public string WeaponCode { get; set; } = "fist";
     public int WeaponDamage { get; set; } = 1;
     public int WeaponRange { get; set; } = 1;
+    /// <summary>Стоимость атаки (ОД) из weapons.attack_ap_cost.</summary>
+    public int WeaponAttackApCost { get; set; } = 1;
     public ExecutedBattleActionDto[]? ExecutedActions { get; set; }
 }
 
@@ -156,6 +166,7 @@ public class BattleStartedPayloadDto
     public string[]? SpawnWeaponCodes { get; set; }
     public int[]? SpawnWeaponDamages { get; set; }
     public int[]? SpawnWeaponRanges { get; set; }
+    public int[]? SpawnWeaponAttackApCosts { get; set; }
     public int[]? ObstacleCols { get; set; }
     public int[]? ObstacleRows { get; set; }
 }
@@ -224,4 +235,21 @@ public class BattleWeaponBrowseRowDto
     public string Name { get; set; } = "";
     public int Damage { get; set; }
     public int Range { get; set; }
+    /// <summary>Ключ спрайта на клиенте (Resources/WeaponIcons/{iconKey}).</summary>
+    public string IconKey { get; set; } = "fist";
+    /// <summary>Стоимость атаки этим оружием (ОД). По умолчанию 1; для fist — 3, для stone — 7.</summary>
+    public int AttackApCost { get; set; } = 1;
+}
+
+/// <summary>Одна ячейка инвентаря пользователя (0..11).</summary>
+public class UserInventorySlotDto
+{
+    public int SlotIndex { get; set; }
+    public long? WeaponId { get; set; }
+    public string? WeaponCode { get; set; }
+    public string? WeaponName { get; set; }
+    public int Damage { get; set; }
+    public int Range { get; set; }
+    public string IconKey { get; set; } = "fist";
+    public int AttackApCost { get; set; }
 }

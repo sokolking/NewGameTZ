@@ -16,7 +16,7 @@ public sealed class BattleWeaponDatabase
         using var connection = _database.DataSource.OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = """
-SELECT id, code, name, damage, range
+SELECT id, code, name, damage, range, icon_key, attack_ap_cost
 FROM weapons
 ORDER BY id
 LIMIT @take;
@@ -33,35 +33,12 @@ LIMIT @take;
                 Code = reader.GetString(1),
                 Name = reader.GetString(2),
                 Damage = reader.GetInt32(3),
-                Range = reader.GetInt32(4)
+                Range = reader.GetInt32(4),
+                IconKey = reader.GetString(5)
             });
         }
 
         return rows;
-    }
-
-    public void UpsertWeapon(string code, string name, int damage, int range)
-    {
-        if (string.IsNullOrWhiteSpace(code))
-            throw new ArgumentException("Weapon code is required.", nameof(code));
-        if (string.IsNullOrWhiteSpace(name))
-            throw new ArgumentException("Weapon name is required.", nameof(name));
-
-        using var connection = _database.DataSource.OpenConnection();
-        using var command = connection.CreateCommand();
-        command.CommandText = """
-INSERT INTO weapons (code, name, damage, range)
-VALUES (@code, @name, @damage, @range)
-ON CONFLICT (code) DO UPDATE
-SET name = EXCLUDED.name,
-    damage = EXCLUDED.damage,
-    range = EXCLUDED.range;
-""";
-        command.Parameters.AddWithValue("code", code.Trim().ToLowerInvariant());
-        command.Parameters.AddWithValue("name", name.Trim());
-        command.Parameters.AddWithValue("damage", Math.Max(0, damage));
-        command.Parameters.AddWithValue("range", Math.Max(0, range));
-        command.ExecuteNonQuery();
     }
 
     public bool TryGetWeaponByCode(string code, out BattleWeaponBrowseRowDto weapon)
@@ -71,7 +48,9 @@ SET name = EXCLUDED.name,
             Code = "fist",
             Name = "Fist",
             Damage = 1,
-            Range = 1
+            Range = 1,
+            IconKey = "fist",
+            AttackApCost = 3
         };
         if (string.IsNullOrWhiteSpace(code))
             return false;
@@ -79,7 +58,7 @@ SET name = EXCLUDED.name,
         using var connection = _database.DataSource.OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = """
-SELECT id, code, name, damage, range
+SELECT id, code, name, damage, range, icon_key, attack_ap_cost
 FROM weapons
 WHERE code = @code
 LIMIT 1;
@@ -95,8 +74,41 @@ LIMIT 1;
             Code = reader.GetString(1),
             Name = reader.GetString(2),
             Damage = reader.GetInt32(3),
-            Range = reader.GetInt32(4)
+            Range = reader.GetInt32(4),
+            IconKey = reader.GetString(5),
+            AttackApCost = reader.GetInt32(6)
         };
         return true;
+    }
+
+    public void UpsertWeapon(string code, string name, int damage, int range, string? iconKey = null, int attackApCost = 1)
+    {
+        if (string.IsNullOrWhiteSpace(code))
+            throw new ArgumentException("Weapon code is required.", nameof(code));
+        if (string.IsNullOrWhiteSpace(name))
+            throw new ArgumentException("Weapon name is required.", nameof(name));
+
+        string ik = string.IsNullOrWhiteSpace(iconKey) ? code.Trim().ToLowerInvariant() : iconKey.Trim().ToLowerInvariant();
+        int ac = Math.Max(1, attackApCost);
+
+        using var connection = _database.DataSource.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+INSERT INTO weapons (code, name, damage, range, icon_key, attack_ap_cost)
+VALUES (@code, @name, @damage, @range, @iconKey, @attackApCost)
+ON CONFLICT (code) DO UPDATE
+SET name = EXCLUDED.name,
+    damage = EXCLUDED.damage,
+    range = EXCLUDED.range,
+    icon_key = EXCLUDED.icon_key,
+    attack_ap_cost = EXCLUDED.attack_ap_cost;
+""";
+        command.Parameters.AddWithValue("code", code.Trim().ToLowerInvariant());
+        command.Parameters.AddWithValue("name", name.Trim());
+        command.Parameters.AddWithValue("damage", Math.Max(0, damage));
+        command.Parameters.AddWithValue("range", Math.Max(0, range));
+        command.Parameters.AddWithValue("iconKey", ik);
+        command.Parameters.AddWithValue("attackApCost", ac);
+        command.ExecuteNonQuery();
     }
 }

@@ -70,4 +70,20 @@ public static class UiHierarchyNames
     /// Добавь дочерний объект с таким именем к корневому Canvas боя.
     /// </summary>
     public const string BlockOverlay = "BlockOverlay";
+
+    /// <summary>Корень панели инвентаря (12 ячеек).</summary>
+    public const string Inventory = "Inventory";
+    /// <summary>Опечатка в иерархии — поддерживаем оба имени.</summary>
+    public const string IntentoryTypo = "Intentory";
+
+    /// <summary>Canvas-обёртка для иконки активного оружия.</summary>
+    public const string ActiveItemPanel = "ActiveItemPanel";
+    /// <summary>Дочерний объект с Image (внутри <see cref="ActiveItemPanel"/>).</summary>
+    public const string ActiveItem = "ActiveItem";
+    /// <summary>Текст стоимости смены оружия (формат «ОД:X»). Имя в сцене с опечаткой.</summary>
+    public const string ItemAtionPointsCost = "ItemAtionPointsCost";
+    public const string InventoryCellImage = "InventoryCellImage";
+
+    /// <summary>Ячейки: InventoryCell1 … InventoryCell12.</summary>
+    public static string InventoryCellName(int index1Based) => $"InventoryCell{index1Based}";
 }

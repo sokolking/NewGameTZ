@@ -40,6 +40,12 @@ public class BattleQueuedAction
     public string posture;
     /// <summary>Для ChangePosture: поза до смены (клиент, отмена последнего действия).</summary>
     public string previousPosture;
+    /// <summary>Для EquipWeapon: код оружия.</summary>
+    public string weaponCode;
+    /// <summary>Для отмены EquipWeapon на клиенте.</summary>
+    public string previousWeaponCode;
+    public int previousWeaponAttackApCost;
+    public int weaponAttackApCost;
     public int cost;
 }
 
@@ -84,6 +90,8 @@ public class PlayerTurnResult
     public string weaponCode;
     public int weaponDamage;
     public int weaponRange;
+    /// <summary>Стоимость атаки (ОД), weapons.attack_ap_cost.</summary>
+    public int weaponAttackApCost;
     public BattleExecutedAction[] executedActions;
 }
 
@@ -177,6 +185,7 @@ public class BattleStartedPayload
     public string[] spawnWeaponCodes;
     public int[] spawnWeaponDamages;
     public int[] spawnWeaponRanges;
+    public int[] spawnWeaponAttackApCosts;
     public int[] obstacleCols;
     public int[] obstacleRows;
 }
@@ -197,4 +206,27 @@ public class EquipWeaponResponsePayload
     public string weaponCode;
     public int weaponDamage;
     public int weaponRange;
+    public int weaponAttackApCost;
+}
+
+/// <summary>Ответ POST /api/db/user/inventory.</summary>
+[Serializable]
+public class UserInventorySlotsPayload
+{
+    public UserInventorySlotPayload[] slots;
+}
+
+[Serializable]
+public class UserInventorySlotPayload
+{
+    public int slotIndex;
+    /// <summary>Сервер может отдавать null для пустой ячейки — JsonUtility это ломает; для парсинга используйте Newtonsoft.</summary>
+    public long? weaponId;
+    public string weaponCode;
+    public string weaponName;
+    public int damage;
+    public int range;
+    public string iconKey;
+    /// <summary>Стоимость атаки этим оружием (ОД), из weapons.attack_ap_cost.</summary>
+    public int attackApCost;
 }

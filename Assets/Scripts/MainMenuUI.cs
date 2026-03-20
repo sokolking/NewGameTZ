@@ -21,12 +21,18 @@ public class MainMenuUI : MonoBehaviour
     [SerializeField] private MainMenuMatchmaking _matchmaking;
 
     [Header("Авторизация")]
+    [Tooltip("Назначь в сцене (имя AuthPanel/LoginInputField). Создаётся Tools → Hex Grid → Setup Main Menu UI / Add Main Menu Auth Panel.")]
     [SerializeField] private InputField _loginInputField;
+    [Tooltip("Назначь в сцене (AuthPanel/PasswordInputField).")]
     [SerializeField] private InputField _passwordInputField;
 
     [Header("Режим игры")]
-    [Tooltip("Если включено — одиночная игра против ИИ, без сервера.")]
-    [SerializeField] private Toggle _singlePlayerToggle;
+    [Tooltip("Включено — соло-бой на сервере (1 игрок + моб). Выключено — поиск живого соперника (PvP). Назначь Toggle в сцене (имя Toggle_SoloVsMonster или Toggle_SinglePlayer).")]
+    [SerializeField] private Toggle _soloVsMonsterToggle;
+
+    [Header("Сервер")]
+    [Tooltip("Включено: http://localhost:5000. Выключено: " + BattleServerRuntime.ProductionBaseUrl + ". Только ссылка из сцены (имя Toggle_Debug).")]
+    [SerializeField] private Toggle _debugLocalhostToggle;
 
     // Кнопки меню (находим по имени).
     private Button _btnFindGame;
@@ -42,9 +48,9 @@ public class MainMenuUI : MonoBehaviour
 
     private void Start()
     {
-        EnsureAuthInputs();
         // Найти кнопки по именам в иерархии под этим объектом.
         CacheButtons();
+        WireDebugServerToggle();
         WireButtonEvents();
 
         InitResolutions();
@@ -81,11 +87,28 @@ public class MainMenuUI : MonoBehaviour
             }
         }
 
-        // Попробовать найти чекбокс одиночной игры по имени (опционально, можно проставить в инспекторе).
-        if (_singlePlayerToggle == null)
-        {
-            _singlePlayerToggle = transform.Find("Toggle_SinglePlayer")?.GetComponent<Toggle>();
-        }
+        if (_soloVsMonsterToggle == null)
+            _soloVsMonsterToggle = transform.Find("Toggle_SoloVsMonster")?.GetComponent<Toggle>();
+        if (_soloVsMonsterToggle == null)
+            _soloVsMonsterToggle = transform.Find("Toggle_SinglePlayer")?.GetComponent<Toggle>();
+
+        if (_debugLocalhostToggle == null)
+            _debugLocalhostToggle = transform.Find("Toggle_Debug")?.GetComponent<Toggle>();
+    }
+
+    private void WireDebugServerToggle()
+    {
+        if (_debugLocalhostToggle == null)
+            return;
+
+        _debugLocalhostToggle.SetIsOnWithoutNotify(BattleServerRuntime.UseDebugLocalhost);
+        _debugLocalhostToggle.onValueChanged.RemoveListener(OnDebugLocalhostToggleChanged);
+        _debugLocalhostToggle.onValueChanged.AddListener(OnDebugLocalhostToggleChanged);
+    }
+
+    private static void OnDebugLocalhostToggleChanged(bool useLocalhost)
+    {
+        BattleServerRuntime.UseDebugLocalhost = useLocalhost;
     }
 
     private void WireButtonEvents()
@@ -192,7 +215,7 @@ public class MainMenuUI : MonoBehaviour
     /// <summary>Find Game: встать в очередь на сервере; при старте боя загружается игровая сцена.</summary>
     public void OnFindGameClicked()
     {
-        bool singlePlayer = _singlePlayerToggle != null && _singlePlayerToggle.isOn;
+        bool singlePlayer = _soloVsMonsterToggle != null && _soloVsMonsterToggle.isOn;
         string username = GetLoginValue();
         string password = GetPasswordValue();
         
@@ -241,116 +264,6 @@ public class MainMenuUI : MonoBehaviour
 #else
         Application.Quit();
 #endif
-    }
-
-    private void EnsureAuthInputs()
-    {
-        if (_loginInputField != null && _passwordInputField != null)
-        {
-            ApplyDefaultAuthValues();
-            return;
-        }
-
-        RectTransform parentRect = transform as RectTransform;
-        if (parentRect == null)
-            return;
-
-        var authPanelGo = new GameObject("AuthPanel", typeof(RectTransform));
-        authPanelGo.transform.SetParent(transform, false);
-        var authPanelRect = authPanelGo.GetComponent<RectTransform>();
-        authPanelRect.anchorMin = new Vector2(0.5f, 0.5f);
-        authPanelRect.anchorMax = new Vector2(0.5f, 0.5f);
-        authPanelRect.pivot = new Vector2(0.5f, 0.5f);
-        authPanelRect.anchoredPosition = new Vector2(0f, 140f);
-        authPanelRect.sizeDelta = new Vector2(320f, 90f);
-
-        _loginInputField = CreateAuthInputRow(authPanelRect, "Login", "LoginInputField", "Логин", "test", new Vector2(0f, 22f), isPassword: false);
-        _passwordInputField = CreateAuthInputRow(authPanelRect, "Password", "PasswordInputField", "Пароль", "test", new Vector2(0f, -22f), isPassword: true);
-        ApplyDefaultAuthValues();
-    }
-
-    private void ApplyDefaultAuthValues()
-    {
-        if (_loginInputField != null && string.IsNullOrEmpty(_loginInputField.text))
-            _loginInputField.text = "test";
-        if (_passwordInputField != null && string.IsNullOrEmpty(_passwordInputField.text))
-            _passwordInputField.text = "test";
-    }
-
-    private static InputField CreateAuthInputRow(
-        RectTransform parent,
-        string labelObjectName,
-        string inputObjectName,
-        string labelText,
-        string defaultValue,
-        Vector2 anchoredPosition,
-        bool isPassword)
-    {
-        Font font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
-
-        var labelGo = new GameObject(labelObjectName, typeof(RectTransform), typeof(Text));
-        labelGo.transform.SetParent(parent, false);
-        var labelRect = labelGo.GetComponent<RectTransform>();
-        labelRect.anchorMin = new Vector2(0.5f, 0.5f);
-        labelRect.anchorMax = new Vector2(0.5f, 0.5f);
-        labelRect.pivot = new Vector2(0.5f, 0.5f);
-        labelRect.anchoredPosition = anchoredPosition + new Vector2(-105f, 0f);
-        labelRect.sizeDelta = new Vector2(80f, 28f);
-        var label = labelGo.GetComponent<Text>();
-        label.font = font;
-        label.fontSize = 16;
-        label.alignment = TextAnchor.MiddleLeft;
-        label.color = Color.white;
-        label.text = labelText;
-
-        var inputGo = new GameObject(inputObjectName, typeof(RectTransform), typeof(Image), typeof(InputField));
-        inputGo.transform.SetParent(parent, false);
-        var inputRect = inputGo.GetComponent<RectTransform>();
-        inputRect.anchorMin = new Vector2(0.5f, 0.5f);
-        inputRect.anchorMax = new Vector2(0.5f, 0.5f);
-        inputRect.pivot = new Vector2(0.5f, 0.5f);
-        inputRect.anchoredPosition = anchoredPosition + new Vector2(45f, 0f);
-        inputRect.sizeDelta = new Vector2(190f, 32f);
-        var inputImage = inputGo.GetComponent<Image>();
-        inputImage.color = new Color(0.15f, 0.15f, 0.2f, 0.95f);
-
-        var textGo = new GameObject("Text", typeof(RectTransform), typeof(Text));
-        textGo.transform.SetParent(inputGo.transform, false);
-        var textRect = textGo.GetComponent<RectTransform>();
-        textRect.anchorMin = Vector2.zero;
-        textRect.anchorMax = Vector2.one;
-        textRect.offsetMin = new Vector2(10f, 6f);
-        textRect.offsetMax = new Vector2(-10f, -6f);
-        var text = textGo.GetComponent<Text>();
-        text.font = font;
-        text.fontSize = 15;
-        text.alignment = TextAnchor.MiddleLeft;
-        text.color = Color.white;
-        text.text = defaultValue;
-
-        var placeholderGo = new GameObject("Placeholder", typeof(RectTransform), typeof(Text));
-        placeholderGo.transform.SetParent(inputGo.transform, false);
-        var placeholderRect = placeholderGo.GetComponent<RectTransform>();
-        placeholderRect.anchorMin = Vector2.zero;
-        placeholderRect.anchorMax = Vector2.one;
-        placeholderRect.offsetMin = new Vector2(10f, 6f);
-        placeholderRect.offsetMax = new Vector2(-10f, -6f);
-        var placeholder = placeholderGo.GetComponent<Text>();
-        placeholder.font = font;
-        placeholder.fontSize = 15;
-        placeholder.alignment = TextAnchor.MiddleLeft;
-        placeholder.color = new Color(1f, 1f, 1f, 0.35f);
-        placeholder.text = labelText;
-
-        var inputField = inputGo.GetComponent<InputField>();
-        inputField.textComponent = text;
-        inputField.placeholder = placeholder;
-        inputField.targetGraphic = inputImage;
-        inputField.text = defaultValue;
-        if (isPassword)
-            inputField.contentType = InputField.ContentType.Password;
-
-        return inputField;
     }
 
     private string GetLoginValue()

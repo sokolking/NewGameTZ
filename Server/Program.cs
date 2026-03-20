@@ -13,7 +13,10 @@ builder.Services.AddSingleton<BattleHistoryDatabase>();
 builder.Services.AddSingleton<BattleTurnDatabase>();
 builder.Services.AddSingleton<BattleUserDatabase>();
 builder.Services.AddSingleton<BattleWeaponDatabase>();
-builder.Services.AddSingleton<BattleRoomStore>();
+builder.Services.AddSingleton<BattleRoomStore>(sp => new BattleRoomStore(
+    sp.GetRequiredService<BattleHistoryDatabase>(),
+    sp.GetRequiredService<BattleTurnDatabase>(),
+    sp.GetRequiredService<BattleWeaponDatabase>()));
 builder.Services.AddCors(options =>
 {
     options.AddDefaultPolicy(p => p.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader());
@@ -115,7 +118,8 @@ app.MapPost("/api/battle/join", (BattleRoomStore s, JoinRequest? body) =>
         playerMaxAp,
         weaponCode,
         weapon.Damage,
-        weapon.Range);
+        weapon.Range,
+        weapon.AttackApCost);
     return Results.Json(resp, jsonOpt);
 });
 
@@ -240,7 +244,7 @@ app.MapGet("/api/battle/{battleId}", (string battleId, BattleRoomStore s) =>
     if (room == null) return Results.Json(new { error = "Battle not found" }, statusCode: 404);
     var battleRecord = battleHistoryDb.GetBattle(battleId);
 
-    room.FillSpawnArrays(out var spawnIds, out var spawnCols, out var spawnRows, out var spawnCurrentAps, out var spawnMaxHps, out var spawnCurrentHps, out var spawnCurrentPostures, out var spawnWeaponCodes, out var spawnWeaponDamages, out var spawnWeaponRanges);
+    room.FillSpawnArrays(out var spawnIds, out var spawnCols, out var spawnRows, out var spawnCurrentAps, out var spawnMaxHps, out var spawnCurrentHps, out var spawnCurrentPostures, out var spawnWeaponCodes, out var spawnWeaponDamages, out var spawnWeaponRanges, out var spawnWeaponAttackApCosts);
     var response = new BattleStateResponse
     {
         RoundIndex = room.RoundIndex,
@@ -261,7 +265,8 @@ app.MapGet("/api/battle/{battleId}", (string battleId, BattleRoomStore s) =>
         SpawnCurrentPostures = spawnCurrentPostures,
         SpawnWeaponCodes = spawnWeaponCodes,
         SpawnWeaponDamages = spawnWeaponDamages,
-        SpawnWeaponRanges = spawnWeaponRanges
+        SpawnWeaponRanges = spawnWeaponRanges,
+        SpawnWeaponAttackApCosts = spawnWeaponAttackApCosts
     };
     return Results.Json(response, jsonOpt);
 });
@@ -275,9 +280,9 @@ app.MapPost("/api/battle/{battleId}/equip-weapon", (string battleId, EquipWeapon
         return Results.Json(new { error = "Battle not found" }, statusCode: 404);
     if (!weapons.TryGetWeaponByCode(body.WeaponCode.Trim(), out var w))
         return Results.Json(new { error = "Unknown weapon" }, statusCode: 400);
-    if (!room.TryEquipWeapon(body.PlayerId.Trim(), w.Code, w.Damage, w.Range, out var fail))
+    if (!room.TryEquipWeapon(body.PlayerId.Trim(), w.Code, w.Damage, w.Range, w.AttackApCost, out var fail))
         return Results.Json(new { error = fail ?? "equip_failed" }, statusCode: 400);
-    return Results.Json(new { ok = true, weaponCode = w.Code, weaponDamage = w.Damage, weaponRange = w.Range });
+    return Results.Json(new { ok = true, weaponCode = w.Code, weaponDamage = w.Damage, weaponRange = w.Range, weaponAttackApCost = w.AttackApCost });
 });
 
 app.MapGet("/api/battle/{battleId}/turns/{turnId}", (string battleId, string turnId) =>
@@ -316,6 +321,15 @@ app.MapGet("/api/db/users", (BattleUserDatabase db, int? take) =>
     return Results.Json(db.ListUsers(requested), jsonOpt);
 });
 
+app.MapPost("/api/db/user/inventory", (BattleUserDatabase users, UserInventoryAuthRequest? body) =>
+{
+    if (body == null || string.IsNullOrWhiteSpace(body.username))
+        return Results.Json(new { error = "username required" }, jsonOpt, statusCode: 400);
+    if (!users.TryGetInventory(body.username.Trim(), body.password ?? "", out var slots))
+        return Results.Json(new { error = "Invalid credentials" }, jsonOpt, statusCode: 401);
+    return Results.Json(new { slots }, jsonOpt);
+});
+
 app.MapGet("/api/db/weapons", (BattleWeaponDatabase db, int? take) =>
 {
     int requested = take ?? 100;
@@ -329,7 +343,7 @@ app.MapPost("/api/db/weapons", (BattleWeaponDatabase db, WeaponUpsertRequest req
     if (string.IsNullOrWhiteSpace(request.code) || string.IsNullOrWhiteSpace(request.name))
         return Results.Json(new { error = "code and name are required" }, statusCode: 400);
 
-    db.UpsertWeapon(request.code, request.name, request.damage, request.range);
+    db.UpsertWeapon(request.code, request.name, request.damage, request.range, request.iconKey, request.attackApCost);
     return Results.Ok(new { ok = true });
 });
 
@@ -435,6 +449,7 @@ public class BattleStateResponse
     public string[]? SpawnWeaponCodes { get; set; }
     public int[]? SpawnWeaponDamages { get; set; }
     public int[]? SpawnWeaponRanges { get; set; }
+    public int[]? SpawnWeaponAttackApCosts { get; set; }
 }
 
 public class PollResponse
@@ -456,6 +471,15 @@ public class WeaponUpsertRequest
     public string name { get; set; } = "";
     public int damage { get; set; }
     public int range { get; set; }
+    public string? iconKey { get; set; }
+    /// <summary>Стоимость атаки этим оружием (ОД). По умолчанию 1.</summary>
+    public int attackApCost { get; set; } = 1;
+}
+
+public class UserInventoryAuthRequest
+{
+    public string username { get; set; } = "";
+    public string password { get; set; } = "";
 }
 
 public class EquipWeaponHttpRequest

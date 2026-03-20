@@ -7,7 +7,6 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using UnityEngine;
-using UnityEngine.Networking;
 
 /// <summary>
 /// WebSocket /ws/battle: submitTurn + пуш результата раунда. Во время боя POST не используется.
@@ -208,7 +207,7 @@ public class BattleSignalRConnection : MonoBehaviour
         string root = _serverUrl.TrimEnd('/');
         root = root.Replace("http://", "ws://", StringComparison.OrdinalIgnoreCase)
             .Replace("https://", "wss://", StringComparison.OrdinalIgnoreCase);
-        string uri = $"{root}/ws/battle?battleId={UnityWebRequest.EscapeURL(_battleId)}&playerId={UnityWebRequest.EscapeURL(_playerId)}";
+        string uri = $"{root}/ws/battle?battleId={Uri.EscapeDataString(_battleId)}&playerId={Uri.EscapeDataString(_playerId)}";
 
         EnqueueLog("ConnectAsync: " + uri);
         _cts = new CancellationTokenSource();

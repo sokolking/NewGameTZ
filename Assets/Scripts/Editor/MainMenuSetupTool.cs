@@ -1,14 +1,112 @@
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.UI;
+using UnityEditor.SceneManagement;
 
 /// <summary>
-/// Tools → Hex Grid → Setup Main Menu UI — создаёт простое главное меню на текущей сцене:
-/// фон, кнопки New Game / Settings / Quit и панель настроек.
+/// Tools → Hex Grid → Setup Main Menu UI — главное меню: фон, AuthPanel (логин/пароль), галки,
+/// кнопки Find Game / Settings / Quit и панель настроек.
 /// </summary>
 public static class MainMenuSetupTool
 {
     private const string MenuPath = "Tools/Hex Grid/Setup Main Menu UI";
+    private const string AddTogglesMenuPath = "Tools/Hex Grid/Add Main Menu Toggles";
+    private const string AddAuthMenuPath = "Tools/Hex Grid/Add Main Menu Auth Panel";
+
+    [MenuItem(AddAuthMenuPath)]
+    public static void AddAuthPanelToExistingMainMenu()
+    {
+#if UNITY_2023_1_OR_NEWER
+        MainMenuUI mm = Object.FindFirstObjectByType<MainMenuUI>();
+#else
+        MainMenuUI mm = Object.FindObjectOfType<MainMenuUI>();
+#endif
+        if (mm == null)
+        {
+            Debug.LogError("Hex Grid: на сцене нет MainMenuUI.");
+            return;
+        }
+
+        Undo.RegisterFullObjectHierarchyUndo(mm.gameObject, "Add Main Menu Auth Panel");
+        Transform root = mm.transform;
+
+        Transform existing = root.Find("AuthPanel");
+        if (existing != null)
+        {
+            InputField login = existing.Find("LoginInputField")?.GetComponent<InputField>();
+            InputField pass = existing.Find("PasswordInputField")?.GetComponent<InputField>();
+            if (login != null && pass != null)
+            {
+                SerializedObject soMm = new SerializedObject(mm);
+                soMm.FindProperty("_loginInputField").objectReferenceValue = login;
+                soMm.FindProperty("_passwordInputField").objectReferenceValue = pass;
+                soMm.ApplyModifiedProperties();
+                EditorUtility.SetDirty(mm);
+                if (!Application.isPlaying)
+                    EditorSceneManager.MarkSceneDirty(mm.gameObject.scene);
+                Selection.activeGameObject = existing.gameObject;
+                Debug.Log("Hex Grid: AuthPanel уже есть — ссылки на поля обновлены в MainMenuUI.");
+                return;
+            }
+
+            Undo.DestroyObjectImmediate(existing.gameObject);
+        }
+
+        (InputField loginField, InputField passwordField) = CreateAuthPanel(root);
+
+        SerializedObject so = new SerializedObject(mm);
+        so.FindProperty("_loginInputField").objectReferenceValue = loginField;
+        so.FindProperty("_passwordInputField").objectReferenceValue = passwordField;
+        so.ApplyModifiedProperties();
+
+        EditorUtility.SetDirty(mm);
+        if (!Application.isPlaying)
+            EditorSceneManager.MarkSceneDirty(mm.gameObject.scene);
+
+        Selection.activeGameObject = loginField.transform.parent.gameObject;
+        Debug.Log("Hex Grid: AuthPanel добавлен и привязан к MainMenuUI.");
+    }
+
+    [MenuItem(AddTogglesMenuPath)]
+    public static void AddTogglesToExistingMainMenu()
+    {
+#if UNITY_2023_1_OR_NEWER
+        MainMenuUI mm = Object.FindFirstObjectByType<MainMenuUI>();
+#else
+        MainMenuUI mm = Object.FindObjectOfType<MainMenuUI>();
+#endif
+        if (mm == null)
+        {
+            Debug.LogError("Hex Grid: на сцене нет MainMenuUI.");
+            return;
+        }
+
+        Undo.RegisterFullObjectHierarchyUndo(mm.gameObject, "Add Main Menu Toggles");
+        Transform root = mm.transform;
+
+        Toggle solo = root.Find("Toggle_SoloVsMonster")?.GetComponent<Toggle>();
+        if (solo == null)
+            solo = CreateMenuToggle(root, "Toggle_SoloVsMonster", "Бой с монстром (соло)", 110f);
+
+        Toggle dbg = root.Find("Toggle_Debug")?.GetComponent<Toggle>();
+        if (dbg == null)
+            dbg = CreateMenuToggle(root, "Toggle_Debug", "Debug (localhost)", 75f);
+
+        solo.isOn = false;
+        dbg.isOn = BattleServerRuntime.UseDebugLocalhost;
+
+        SerializedObject so = new SerializedObject(mm);
+        so.FindProperty("_soloVsMonsterToggle").objectReferenceValue = solo;
+        so.FindProperty("_debugLocalhostToggle").objectReferenceValue = dbg;
+        so.ApplyModifiedProperties();
+
+        EditorUtility.SetDirty(mm);
+        if (!Application.isPlaying)
+            EditorSceneManager.MarkSceneDirty(mm.gameObject.scene);
+
+        Selection.activeGameObject = mm.gameObject;
+        Debug.Log("Hex Grid: галки «Бой с монстром» и «Debug (localhost)» добавлены/обновлены и привязаны к MainMenuUI.");
+    }
 
     [MenuItem(MenuPath)]
     public static void SetupMainMenuUi()
@@ -65,9 +163,11 @@ public static class MainMenuSetupTool
         menuRt.anchorMax = new Vector2(0.5f, 0.5f);
         menuRt.pivot = new Vector2(0.5f, 0.5f);
         menuRt.anchoredPosition = Vector2.zero;
-        menuRt.sizeDelta = new Vector2(400f, 300f);
+        menuRt.sizeDelta = new Vector2(400f, 420f);
 
         MainMenuUI mm = menuRoot.GetComponent<MainMenuUI>();
+
+        (InputField loginField, InputField passwordField) = CreateAuthPanel(menuRoot.transform);
 
         // Утилита для создания кнопки с абсолютным позиционированием
         Button CreateButton(string name, string label, float anchoredY)
@@ -104,6 +204,11 @@ public static class MainMenuSetupTool
         Button findGameBtn = CreateButton("Button_FindGame", "Find Game", 40f);
         Button settingsBtn = CreateButton("Button_Settings", "Settings", 0f);
         Button quitBtn = CreateButton("Button_Quit", "Quit", -40f);
+
+        Toggle soloToggle = CreateMenuToggle(menuRoot.transform, "Toggle_SoloVsMonster", "Бой с монстром (соло)", 110f);
+        soloToggle.isOn = false;
+        Toggle debugToggle = CreateMenuToggle(menuRoot.transform, "Toggle_Debug", "Debug (localhost)", 75f);
+        debugToggle.isOn = BattleServerRuntime.UseDebugLocalhost;
 
         // Текст статуса матчмейкинга («Searching for opponent...»)
         GameObject statusGo = new GameObject("StatusText", typeof(RectTransform), typeof(Text));
@@ -248,6 +353,10 @@ public static class MainMenuSetupTool
         so.FindProperty("_settingsPanel").objectReferenceValue = settingsPanel;
         so.FindProperty("_resolutionText").objectReferenceValue = resText;
         so.FindProperty("_matchmaking").objectReferenceValue = matchmaking;
+        so.FindProperty("_soloVsMonsterToggle").objectReferenceValue = soloToggle;
+        so.FindProperty("_debugLocalhostToggle").objectReferenceValue = debugToggle;
+        so.FindProperty("_loginInputField").objectReferenceValue = loginField;
+        so.FindProperty("_passwordInputField").objectReferenceValue = passwordField;
         so.ApplyModifiedPropertiesWithoutUndo();
 
         // Привязка кнопок к методам MainMenuUI
@@ -263,7 +372,177 @@ public static class MainMenuSetupTool
         settingsPanel.SetActive(false);
 
         Selection.activeGameObject = menuRoot;
-        Debug.Log("Hex Grid: Main Menu UI пересоздан (фон, Find Game / Settings / Quit, панель настроек).");
+        Debug.Log("Hex Grid: Main Menu UI пересоздан (фон, AuthPanel, галки соло/дебаг, Find Game / Settings / Quit, панель настроек).");
+    }
+
+    /// <summary>Панель логина/пароля: AuthPanel/LoginInputField, AuthPanel/PasswordInputField (как ожидает MainMenuUI).</summary>
+    private static (InputField login, InputField password) CreateAuthPanel(Transform menuRoot)
+    {
+        var authPanelGo = new GameObject("AuthPanel", typeof(RectTransform));
+        authPanelGo.transform.SetParent(menuRoot, false);
+        var authPanelRect = authPanelGo.GetComponent<RectTransform>();
+        authPanelRect.anchorMin = new Vector2(0.5f, 0.5f);
+        authPanelRect.anchorMax = new Vector2(0.5f, 0.5f);
+        authPanelRect.pivot = new Vector2(0.5f, 0.5f);
+        authPanelRect.anchoredPosition = new Vector2(0f, 140f);
+        authPanelRect.sizeDelta = new Vector2(320f, 90f);
+
+        InputField loginField = CreateAuthInputRow(
+            authPanelRect,
+            "Login",
+            "LoginInputField",
+            "Логин",
+            "test",
+            new Vector2(0f, 22f),
+            isPassword: false);
+
+        InputField passwordField = CreateAuthInputRow(
+            authPanelRect,
+            "Password",
+            "PasswordInputField",
+            "Пароль",
+            "test",
+            new Vector2(0f, -22f),
+            isPassword: true);
+
+        Undo.RegisterCreatedObjectUndo(authPanelGo, "Auth Panel");
+        return (loginField, passwordField);
+    }
+
+    private static InputField CreateAuthInputRow(
+        RectTransform parent,
+        string labelObjectName,
+        string inputObjectName,
+        string labelText,
+        string defaultValue,
+        Vector2 anchoredPosition,
+        bool isPassword)
+    {
+        Font font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+
+        var labelGo = new GameObject(labelObjectName, typeof(RectTransform), typeof(Text));
+        labelGo.transform.SetParent(parent, false);
+        var labelRect = labelGo.GetComponent<RectTransform>();
+        labelRect.anchorMin = new Vector2(0.5f, 0.5f);
+        labelRect.anchorMax = new Vector2(0.5f, 0.5f);
+        labelRect.pivot = new Vector2(0.5f, 0.5f);
+        labelRect.anchoredPosition = anchoredPosition + new Vector2(-105f, 0f);
+        labelRect.sizeDelta = new Vector2(80f, 28f);
+        var label = labelGo.GetComponent<Text>();
+        label.font = font;
+        label.fontSize = 16;
+        label.alignment = TextAnchor.MiddleLeft;
+        label.color = Color.white;
+        label.text = labelText;
+
+        var inputGo = new GameObject(inputObjectName, typeof(RectTransform), typeof(Image), typeof(InputField));
+        inputGo.transform.SetParent(parent, false);
+        var inputRect = inputGo.GetComponent<RectTransform>();
+        inputRect.anchorMin = new Vector2(0.5f, 0.5f);
+        inputRect.anchorMax = new Vector2(0.5f, 0.5f);
+        inputRect.pivot = new Vector2(0.5f, 0.5f);
+        inputRect.anchoredPosition = anchoredPosition + new Vector2(45f, 0f);
+        inputRect.sizeDelta = new Vector2(190f, 32f);
+        var inputImage = inputGo.GetComponent<Image>();
+        inputImage.color = new Color(0.15f, 0.15f, 0.2f, 0.95f);
+
+        var textGo = new GameObject("Text", typeof(RectTransform), typeof(Text));
+        textGo.transform.SetParent(inputGo.transform, false);
+        var textRect = textGo.GetComponent<RectTransform>();
+        textRect.anchorMin = Vector2.zero;
+        textRect.anchorMax = Vector2.one;
+        textRect.offsetMin = new Vector2(10f, 6f);
+        textRect.offsetMax = new Vector2(-10f, -6f);
+        var text = textGo.GetComponent<Text>();
+        text.font = font;
+        text.fontSize = 15;
+        text.alignment = TextAnchor.MiddleLeft;
+        text.color = Color.white;
+        text.text = defaultValue;
+
+        var placeholderGo = new GameObject("Placeholder", typeof(RectTransform), typeof(Text));
+        placeholderGo.transform.SetParent(inputGo.transform, false);
+        var placeholderRect = placeholderGo.GetComponent<RectTransform>();
+        placeholderRect.anchorMin = Vector2.zero;
+        placeholderRect.anchorMax = Vector2.one;
+        placeholderRect.offsetMin = new Vector2(10f, 6f);
+        placeholderRect.offsetMax = new Vector2(-10f, -6f);
+        var placeholder = placeholderGo.GetComponent<Text>();
+        placeholder.font = font;
+        placeholder.fontSize = 15;
+        placeholder.alignment = TextAnchor.MiddleLeft;
+        placeholder.color = new Color(1f, 1f, 1f, 0.35f);
+        placeholder.text = labelText;
+
+        var inputField = inputGo.GetComponent<InputField>();
+        inputField.textComponent = text;
+        inputField.placeholder = placeholder;
+        inputField.targetGraphic = inputImage;
+        inputField.text = defaultValue;
+        if (isPassword)
+            inputField.contentType = InputField.ContentType.Password;
+
+        return inputField;
+    }
+
+    /// <summary>Создаёт стандартный UI Toggle (чекбокс + подпись) под родителем меню.</summary>
+    private static Toggle CreateMenuToggle(Transform parent, string objectName, string label, float anchoredY)
+    {
+        Font font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+        var row = new GameObject(objectName, typeof(RectTransform));
+        row.transform.SetParent(parent, false);
+        var rowRt = row.GetComponent<RectTransform>();
+        rowRt.anchorMin = new Vector2(0.5f, 0.5f);
+        rowRt.anchorMax = new Vector2(0.5f, 0.5f);
+        rowRt.pivot = new Vector2(0.5f, 0.5f);
+        rowRt.anchoredPosition = new Vector2(0f, anchoredY);
+        rowRt.sizeDelta = new Vector2(300f, 28f);
+
+        var bg = new GameObject("Background", typeof(RectTransform), typeof(Image));
+        bg.transform.SetParent(row.transform, false);
+        var bgRt = bg.GetComponent<RectTransform>();
+        bgRt.anchorMin = new Vector2(0f, 0.5f);
+        bgRt.anchorMax = new Vector2(0f, 0.5f);
+        bgRt.pivot = new Vector2(0f, 0.5f);
+        bgRt.anchoredPosition = Vector2.zero;
+        bgRt.sizeDelta = new Vector2(22f, 22f);
+        var bgImg = bg.GetComponent<Image>();
+        bgImg.color = new Color(0.35f, 0.35f, 0.4f, 1f);
+        bgImg.raycastTarget = true;
+
+        var mark = new GameObject("Checkmark", typeof(RectTransform), typeof(Image));
+        mark.transform.SetParent(bg.transform, false);
+        var markRt = mark.GetComponent<RectTransform>();
+        markRt.anchorMin = Vector2.zero;
+        markRt.anchorMax = Vector2.one;
+        markRt.offsetMin = new Vector2(4f, 4f);
+        markRt.offsetMax = new Vector2(-4f, -4f);
+        var markImg = mark.GetComponent<Image>();
+        markImg.color = new Color(0.2f, 0.85f, 0.35f, 1f);
+        markImg.raycastTarget = false;
+
+        var labelGo = new GameObject("Label", typeof(RectTransform), typeof(Text));
+        labelGo.transform.SetParent(row.transform, false);
+        var labelRt = labelGo.GetComponent<RectTransform>();
+        labelRt.anchorMin = new Vector2(0f, 0f);
+        labelRt.anchorMax = new Vector2(1f, 1f);
+        labelRt.offsetMin = new Vector2(30f, 0f);
+        labelRt.offsetMax = Vector2.zero;
+        var labelTxt = labelGo.GetComponent<Text>();
+        labelTxt.font = font;
+        labelTxt.fontSize = 15;
+        labelTxt.alignment = TextAnchor.MiddleLeft;
+        labelTxt.color = Color.white;
+        labelTxt.text = label;
+        labelTxt.raycastTarget = false;
+
+        var toggle = row.AddComponent<Toggle>();
+        toggle.targetGraphic = bgImg;
+        toggle.graphic = markImg;
+        toggle.isOn = false;
+
+        Undo.RegisterCreatedObjectUndo(row, "Main Menu Toggle");
+        return toggle;
     }
 }
 

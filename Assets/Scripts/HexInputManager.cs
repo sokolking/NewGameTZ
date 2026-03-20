@@ -63,7 +63,6 @@ public class HexInputManager : MonoBehaviour
         if (_grid == null) return;
         if (_camera == null) _camera = Camera.main;
         if (_camera == null) return;
-        UpdateWeaponToggleKey();
         if (Mouse.current == null) return;
         if (GameplayMapInputBlock.IsBlocked)
         {
@@ -104,27 +103,6 @@ public class HexInputManager : MonoBehaviour
         UpdateHover();
         UpdateDoubleClick();
         UpdateLeftHoldIndicator();
-    }
-
-    /// <summary>X — переключение кулак / камень (статы с сервера при онлайн-бое).</summary>
-    private void UpdateWeaponToggleKey()
-    {
-        if (Keyboard.current == null || !Keyboard.current.xKey.wasPressedThisFrame)
-            return;
-        if (GameplayMapInputBlock.IsBlocked)
-            return;
-        if (GameSession.Active != null && GameSession.Active.BlockPlayerInput)
-            return;
-        if (_player == null || _player.IsDead || _player.IsHidden)
-            return;
-        GameSession gs = GameSession.Active;
-        if (gs == null)
-            return;
-
-        string next = string.Equals(_player.WeaponCode, WeaponCatalog.StoneCode, StringComparison.OrdinalIgnoreCase)
-            ? WeaponCatalog.FistCode
-            : WeaponCatalog.StoneCode;
-        gs.RequestEquipWeapon(next);
     }
 
     private void UpdateHover()

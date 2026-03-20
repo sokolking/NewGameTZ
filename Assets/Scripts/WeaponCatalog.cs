@@ -20,4 +20,7 @@ public static class WeaponCatalog
         damage = 1;
         range = 1;
     }
+
+    /// <summary>Стоимость смены оружия в очереди хода (фиксированная, совпадает с сервером).</summary>
+    public const int EquipWeaponSwapApCost = 2;
 }

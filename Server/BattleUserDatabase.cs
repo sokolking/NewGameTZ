@@ -88,4 +88,62 @@ LIMIT 1;
             weaponCode = "fist";
         return true;
     }
+
+    /// <summary>12 ячеек (0..11) с привязкой к weapons.id; пустые — без оружия.</summary>
+    public bool TryGetInventory(string username, string password, out List<UserInventorySlotDto> slots)
+    {
+        slots = new List<UserInventorySlotDto>();
+        if (!ValidateCredentials(username, password))
+            return false;
+
+        using var connection = _database.DataSource.OpenConnection();
+        using var idCmd = connection.CreateCommand();
+        idCmd.CommandText = "SELECT id FROM users WHERE username = @u LIMIT 1;";
+        idCmd.Parameters.AddWithValue("u", username.Trim());
+        var scalar = idCmd.ExecuteScalar();
+        if (scalar == null)
+            return false;
+        long userId = Convert.ToInt64(scalar);
+
+        using var cmd = connection.CreateCommand();
+        cmd.CommandText = """
+SELECT s.slot_index, s.weapon_id, w.code, w.name, w.damage, w.range, w.icon_key, w.attack_ap_cost
+FROM user_inventory_slots s
+LEFT JOIN weapons w ON w.id = s.weapon_id
+WHERE s.user_id = @uid
+ORDER BY s.slot_index;
+""";
+        cmd.Parameters.AddWithValue("uid", userId);
+
+        var bySlot = new Dictionary<int, UserInventorySlotDto>();
+        using (var reader = cmd.ExecuteReader())
+        {
+            while (reader.Read())
+            {
+                int si = reader.GetInt32(0);
+                bool hasWeapon = !reader.IsDBNull(1);
+                bySlot[si] = new UserInventorySlotDto
+                {
+                    SlotIndex = si,
+                    WeaponId = reader.IsDBNull(1) ? null : reader.GetInt64(1),
+                    WeaponCode = hasWeapon && !reader.IsDBNull(2) ? reader.GetString(2) : null,
+                    WeaponName = hasWeapon && !reader.IsDBNull(3) ? reader.GetString(3) : null,
+                    Damage = hasWeapon && !reader.IsDBNull(4) ? reader.GetInt32(4) : 0,
+                    Range = hasWeapon && !reader.IsDBNull(5) ? reader.GetInt32(5) : 0,
+                    IconKey = hasWeapon && !reader.IsDBNull(6) ? reader.GetString(6) : "",
+                    AttackApCost = hasWeapon && !reader.IsDBNull(7) ? reader.GetInt32(7) : 0
+                };
+            }
+        }
+
+        for (int i = 0; i < 12; i++)
+        {
+            if (bySlot.TryGetValue(i, out var row))
+                slots.Add(row);
+            else
+                slots.Add(new UserInventorySlotDto { SlotIndex = i, IconKey = "" });
+        }
+
+        return true;
+    }
 }

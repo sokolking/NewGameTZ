@@ -61,6 +61,8 @@ public class Player : MonoBehaviour
     private int _weaponDamage = 1;
     /// <summary>Макс. дистанция атаки в шагах гекса (как на сервере <see cref="UnitStateDto.WeaponRange"/>).</summary>
     private int _weaponRangeHexes = 1;
+    /// <summary>Стоимость атаки (ОД) из БД / сервера, не из каталога.</summary>
+    private int _weaponAttackApCost = 1;
 
     public int CurrentCol => _currentCol;
     public int CurrentRow => _currentRow;
@@ -93,13 +95,21 @@ public class Player : MonoBehaviour
     public int WeaponDamage => _weaponDamage;
     /// <summary>Радиус атаки в гексах (hex distance), как у текущего оружия.</summary>
     public int WeaponRangeHexes => Mathf.Max(0, _weaponRangeHexes);
+    /// <summary>Стоимость одной атаки текущим оружием (ОД), с сервера / weapons.attack_ap_cost.</summary>
+    public int WeaponAttackApCost => Mathf.Max(1, _weaponAttackApCost);
+
+    /// <summary>Смена отображаемого оружия (после смены из инвентаря / результата раунда).</summary>
+    public event System.Action OnEquippedWeaponChanged;
 
     /// <summary>Синхронизация с сервером или локальная смена (кулак / камень и т.д.).</summary>
-    public void SetEquippedWeapon(string code, int damage, int rangeHexes)
+    /// <param name="attackApCost">Стоимость атаки из БД / сервера; по умолчанию 1.</param>
+    public void SetEquippedWeapon(string code, int damage, int rangeHexes, int attackApCost = 1)
     {
         _weaponCode = string.IsNullOrWhiteSpace(code) ? WeaponCatalog.FistCode : code.Trim().ToLowerInvariant();
         _weaponDamage = Mathf.Max(0, damage);
         _weaponRangeHexes = Mathf.Max(0, rangeHexes);
+        _weaponAttackApCost = Mathf.Max(1, attackApCost);
+        OnEquippedWeaponChanged?.Invoke();
     }
 
     public delegate void PlayerMovedHandler(HexCell cell);
@@ -356,6 +366,10 @@ public class Player : MonoBehaviour
                 bodyPart = src.bodyPart,
                 posture = src.posture,
                 previousPosture = src.previousPosture,
+                weaponCode = src.weaponCode,
+                previousWeaponCode = src.previousWeaponCode,
+                previousWeaponAttackApCost = src.previousWeaponAttackApCost,
+                weaponAttackApCost = src.weaponAttackApCost,
                 cost = src.cost
             };
         }
@@ -433,6 +447,38 @@ public class Player : MonoBehaviour
         return true;
     }
 
+    /// <summary>Смена оружия в очереди хода (<see cref="WeaponCatalog.EquipWeaponSwapApCost"/> ОД); сервер применяет EquipWeapon при закрытии раунда.</summary>
+    /// <param name="costOverride">Если задано — переопределяет стоимость смены (по умолчанию 2 ОД).</param>
+    /// <param name="weaponAttackApCost">Стоимость атаки новым оружием из БД (weapons.attack_ap_cost).</param>
+    public bool QueueEquipWeaponAction(string weaponCode, int? costOverride = null, int weaponAttackApCost = 1)
+    {
+        WeaponCatalog.GetStats(weaponCode, out string norm, out int dmg, out int range);
+        int safeCost = Mathf.Max(1, costOverride ?? WeaponCatalog.EquipWeaponSwapApCost);
+        if (_currentAp < safeCost)
+            return false;
+        string prevCode = _weaponCode;
+        int prevAtk = _weaponAttackApCost;
+        int newAtk = Mathf.Max(1, weaponAttackApCost);
+
+        if (_turnActions == null)
+            _turnActions = new List<BattleQueuedAction>();
+
+        _turnActions.Add(new BattleQueuedAction
+        {
+            actionType = "EquipWeapon",
+            weaponCode = norm,
+            previousWeaponCode = prevCode,
+            previousWeaponAttackApCost = prevAtk,
+            weaponAttackApCost = newAtk,
+            posture = MovementPostureUtility.ToId(_currentPosture),
+            cost = safeCost
+        });
+        _apSpentThisTurn += safeCost;
+        _currentAp -= safeCost;
+        SetEquippedWeapon(norm, dmg, range, newAtk);
+        return true;
+    }
+
     /// <summary>Отменить последнее действие в очереди текущего хода (движение, атака, смена позы, ожидание).</summary>
     public bool TryUndoLastQueuedAction(out string failureReason)
     {
@@ -497,6 +543,18 @@ public class Player : MonoBehaviour
             _apSpentThisTurn -= cost;
             MovementPosture restore = MovementPostureUtility.FromId(last.previousPosture);
             SetMovementPostureInternal(restore, notify: true);
+            return true;
+        }
+
+        if (string.Equals(type, "EquipWeapon", StringComparison.OrdinalIgnoreCase))
+        {
+            int cost = Mathf.Max(0, last.cost);
+            _currentAp += cost;
+            _apSpentThisTurn -= cost;
+            string prev = string.IsNullOrEmpty(last.previousWeaponCode) ? WeaponCatalog.FistCode : last.previousWeaponCode;
+            WeaponCatalog.GetStats(prev, out string c, out int d, out int r);
+            int prevAtk = last.previousWeaponAttackApCost > 0 ? last.previousWeaponAttackApCost : 1;
+            SetEquippedWeapon(c, d, r, prevAtk);
             return true;
         }
 
