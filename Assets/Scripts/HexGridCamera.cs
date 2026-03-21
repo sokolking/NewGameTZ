@@ -85,13 +85,27 @@ public class HexGridCamera : MonoBehaviour
         if (GameplayMapInputBlock.IsBlocked)
             return;
 
-        UpdateZoom();
-        UpdatePan();
+        float scroll = Mouse.current.scroll.ReadValue().y;
+        bool canZoom = Mathf.Abs(scroll) >= 0.0001f;
+
+        Vector2 mouseDelta = Mouse.current.delta.ReadValue();
+        bool panPressed = _panMouseButton == 0 ? Mouse.current.leftButton.isPressed
+            : _panMouseButton == 1 ? Mouse.current.rightButton.isPressed
+            : Mouse.current.middleButton.isPressed;
+        bool panNeedsWork = panPressed && mouseDelta.sqrMagnitude >= 0.0001f;
+
+        if (!canZoom && !panNeedsWork)
+            return;
+
+        if (canZoom)
+            UpdateZoom(scroll);
+
+        if (panNeedsWork)
+            UpdatePan();
     }
 
-    private void UpdateZoom()
+    private void UpdateZoom(float scroll)
     {
-        float scroll = Mouse.current.scroll.ReadValue().y;
         if (Mathf.Abs(scroll) < 0.0001f) return;
 
         // Вверх = приблизить (уменьшить orthographic size), вниз = отдалить

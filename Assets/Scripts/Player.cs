@@ -43,6 +43,8 @@ public class Player : MonoBehaviour
     // Сколько "шагов" уже совершено в этом ходу (независимо от направления).
     private int _stepsTakenThisTurn;
     // Эффективный максимум ОД в начале текущего хода (до трат в этом ходу).
+    /// <summary>Подотрезок пути по ОД — без <see cref="List{T}.GetRange"/> (аллокация подсписка).</summary>
+    private readonly List<(int col, int row)> _moveSubPathScratch = new(32);
     // Полный путь за текущий ход (все переходы по гексам, в порядке кликов).
     private List<(int col, int row)> _turnPath;
     private List<BattleQueuedAction> _turnActions;
@@ -195,7 +197,11 @@ public class Player : MonoBehaviour
         if (posture == MovementPosture.Run)
             _runMovementApSpentThisTurn += moveCost;
 
-        var subPath = path.GetRange(0, allowedSteps + 1);
+        int subLen = allowedSteps + 1;
+        _moveSubPathScratch.Clear();
+        for (int i = 0; i < subLen; i++)
+            _moveSubPathScratch.Add(path[i]);
+        List<(int col, int row)> subPath = _moveSubPathScratch;
 
         // Накопить полный путь за ход:
         // при первом перемещении добавляем стартовую клетку, далее — только новые шаги.

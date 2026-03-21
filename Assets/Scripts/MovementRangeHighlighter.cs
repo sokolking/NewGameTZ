@@ -21,6 +21,10 @@ public class MovementRangeHighlighter : MonoBehaviour
     private bool _wasBlocked;
     private bool _wasMoving;
 
+    private HexCell[] _cachedAllCells;
+    private readonly HashSet<(int col, int row)> _visitedBfs = new();
+    private readonly Queue<(int col, int row, int dist)> _queueBfs = new();
+
     private void Update()
     {
         if (_grid == null || _player == null) return;
@@ -70,10 +74,25 @@ public class MovementRangeHighlighter : MonoBehaviour
         }
     }
 
+    private void EnsureCellsCache()
+    {
+        if (_grid == null)
+            return;
+        if (_cachedAllCells == null || _cachedAllCells.Length == 0)
+            _cachedAllCells = _grid.GetComponentsInChildren<HexCell>(true);
+    }
+
     private void ClearMask()
     {
-        foreach (HexCell cell in _grid.GetComponentsInChildren<HexCell>())
-            cell.SetApMask(false, Color.clear);
+        EnsureCellsCache();
+        if (_cachedAllCells == null)
+            return;
+        for (int i = 0; i < _cachedAllCells.Length; i++)
+        {
+            HexCell cell = _cachedAllCells[i];
+            if (cell != null)
+                cell.SetApMask(false, Color.clear);
+        }
     }
 
     private int GetMaxReachableSteps(int stepsAlready)
@@ -90,23 +109,31 @@ public class MovementRangeHighlighter : MonoBehaviour
 
     private void RebuildMask()
     {
-        // Сброс маски на всех
-        foreach (HexCell cell in _grid.GetComponentsInChildren<HexCell>())
-            cell.SetApMask(false, Color.clear);
+        EnsureCellsCache();
+        if (_cachedAllCells != null)
+        {
+            for (int i = 0; i < _cachedAllCells.Length; i++)
+            {
+                HexCell c = _cachedAllCells[i];
+                if (c != null)
+                    c.SetApMask(false, Color.clear);
+            }
+        }
 
         int stepsAlready = _player.StepsTakenThisTurn;
         int maxSteps = GetMaxReachableSteps(stepsAlready);
         if (maxSteps <= 0) return;
 
-        var visited = new HashSet<(int col, int row)>();
-        var queue = new Queue<(int col, int row, int dist)>();
+        _visitedBfs.Clear();
+        while (_queueBfs.Count > 0)
+            _queueBfs.Dequeue();
 
-        visited.Add((_player.CurrentCol, _player.CurrentRow));
-        queue.Enqueue((_player.CurrentCol, _player.CurrentRow, 0));
+        _visitedBfs.Add((_player.CurrentCol, _player.CurrentRow));
+        _queueBfs.Enqueue((_player.CurrentCol, _player.CurrentRow, 0));
 
-        while (queue.Count > 0)
+        while (_queueBfs.Count > 0)
         {
-            var (col, row, dist) = queue.Dequeue();
+            var (col, row, dist) = _queueBfs.Dequeue();
 
             HexCell cell = _grid.GetCell(col, row);
             if (cell != null && !cell.IsObstacle)
@@ -125,10 +152,10 @@ public class MovementRangeHighlighter : MonoBehaviour
             {
                 HexGrid.GetNeighbor(col, row, dir, out int nc, out int nr);
                 var key = (nc, nr);
-                if (!visited.Contains(key) && _grid.IsInBounds(nc, nr))
+                if (!_visitedBfs.Contains(key) && _grid.IsInBounds(nc, nr))
                 {
-                    visited.Add(key);
-                    queue.Enqueue((nc, nr, dist + 1));
+                    _visitedBfs.Add(key);
+                    _queueBfs.Enqueue((nc, nr, dist + 1));
                 }
             }
         }

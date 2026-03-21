@@ -118,6 +118,34 @@ public class ActionPointsUI : MonoBehaviour
     private bool _battleBeginSequenceRunning;
     private MovementPosture _skipReturnPosture = MovementPosture.Walk;
 
+    /// <summary>Кэш корня Front Content Maker — без повторного Resources.FindObjectsOfTypeAll каждый кадр.</summary>
+    private Transform _cachedFrontContentMaker;
+
+    /// <summary>Следующий разрешённый момент полного поиска Front Content (если ещё не найден).</summary>
+    private float _nextFrontContentSearchUnscaledTime = float.NegativeInfinity;
+
+    private int _lastFrontContentSearchFrame = -1;
+    private int _frontContentSearchAttemptsInFrame;
+
+    /// <summary>Fallback BindGlobalUiFallbacks уже выполнялся при отсутствии Front Content Maker.</summary>
+    private bool _fallbackBindDoneWhenNoFrontContent;
+
+    /// <summary>Кэш для миникарты (без FindFirstObjectByType каждый кадр).</summary>
+    private HexGridCamera _cachedHexGridCamera;
+
+    /// <summary>Используется только если <see cref="GameSession.LocalPlayer"/> ещё null.</summary>
+    private HexGrid _cachedHexGridWhenNoLocalPlayer;
+
+    private readonly List<RemoteBattleUnitView> _miniMapRemoteUnitsBuffer = new();
+    private readonly HashSet<string> _miniMapActiveRemoteIds = new();
+    private readonly List<string> _miniMapStaleRemoteIds = new();
+
+    private bool _lastMiniMapTimerWaitMode;
+    private int _lastMiniMapTimerCeilSeconds = -1;
+    private bool _lastMiniMapTimeWarningState;
+    private int _lastMiniMapAp = int.MinValue;
+    private int _lastTurnTrackerDisplayedTurn = int.MinValue;
+
     /// <summary>Подавление рекурсии при подрезке текста в диалоге пропуска ОД.</summary>
     private bool _skipDialogInputClampSuppressed;
 
@@ -235,10 +263,7 @@ public class ActionPointsUI : MonoBehaviour
         TryRunBattleBeginSequence();
 
         if (_player == null) return;
-        string timerStr = (_gameSession != null && _gameSession.IsWaitingForServerRoundResolve)
-            ? "--:--"
-            : FormatRoundTime(_player.TurnTimeLeft);
-        UpdateMiniMapStats(timerStr, _player.CurrentAp);
+        UpdateMiniMapStats(_player);
         UpdateTurnTrackerUi();
         UpdateMiniMap();
 
@@ -333,7 +358,7 @@ public class ActionPointsUI : MonoBehaviour
         if (overlay != null)
             overlay.gameObject.SetActive(false);
 
-        HexGridCamera camController = FindFirstObjectByType<HexGridCamera>();
+        HexGridCamera camController = GetCachedHexGridCamera();
         if (camController != null && _player != null)
         {
             yield return camController.StartCoroutine(
@@ -1096,38 +1121,59 @@ public class ActionPointsUI : MonoBehaviour
         return image;
     }
 
-    private void UpdateMiniMapStats(string timerText, int currentAp)
+    private void UpdateMiniMapStats(Player player)
     {
         EnsureMiniMap();
         if (_miniMapPanel == null || _miniMapStatsPanel == null)
             return;
 
-        if (_miniMapTimeText != null)
+        bool waitingForRound = _gameSession != null && _gameSession.IsWaitingForServerRoundResolve;
+        int ceilSec = Mathf.Max(0, Mathf.CeilToInt(player.TurnTimeLeft));
+        bool timerTextDirty = waitingForRound != _lastMiniMapTimerWaitMode
+            || (!waitingForRound && ceilSec != _lastMiniMapTimerCeilSeconds);
+
+        bool isWarning = player.TurnTimeLeft <= Mathf.Max(0f, _miniMapTimeWarningThresholdSeconds)
+            && !waitingForRound;
+        bool colorDirty = isWarning != _lastMiniMapTimeWarningState;
+
+        if (_miniMapTimeText != null && (timerTextDirty || colorDirty))
         {
-            _miniMapTimeText.text = timerText;
-            bool isWarning = _player != null
-                && _player.TurnTimeLeft <= Mathf.Max(0f, _miniMapTimeWarningThresholdSeconds)
-                && (_gameSession == null || !_gameSession.IsWaitingForServerRoundResolve);
+            if (timerTextDirty)
+            {
+                _miniMapTimeText.text = waitingForRound ? "--:--" : FormatRoundTime(player.TurnTimeLeft);
+                _lastMiniMapTimerWaitMode = waitingForRound;
+                _lastMiniMapTimerCeilSeconds = ceilSec;
+            }
+
             _miniMapTimeText.color = isWarning ? _miniMapTimeWarningColor : _miniMapTimeNormalColor;
+            _lastMiniMapTimeWarningState = isWarning;
         }
-        if (_miniMapApText != null)
+
+        int currentAp = player.CurrentAp;
+        if (_miniMapApText != null && currentAp != _lastMiniMapAp)
+        {
             _miniMapApText.text = $"ОД {currentAp}";
+            _lastMiniMapAp = currentAp;
+        }
     }
 
     private void UpdateTurnTrackerUi()
     {
-        AutoBindSceneReferences();
         int displayedTurn = 1;
         if (_gameSession != null)
             displayedTurn = Mathf.Max(1, _gameSession.DisplayedTurnNumber);
         else if (_player != null)
             displayedTurn = _player.TurnCount + 1;
 
-        string turnLabel = $"Ход {displayedTurn}";
-        if (_turnTrackerText != null)
-            _turnTrackerText.text = turnLabel;
-        if (_turnTrackerTmpText != null)
-            _turnTrackerTmpText.text = turnLabel;
+        if (displayedTurn != _lastTurnTrackerDisplayedTurn)
+        {
+            string turnLabel = $"Ход {displayedTurn}";
+            if (_turnTrackerText != null)
+                _turnTrackerText.text = turnLabel;
+            if (_turnTrackerTmpText != null)
+                _turnTrackerTmpText.text = turnLabel;
+            _lastTurnTrackerDisplayedTurn = displayedTurn;
+        }
 
         if (_turnTrackerPrevButton != null)
             _turnTrackerPrevButton.interactable = _gameSession != null && _gameSession.CanViewPreviousTurn;
@@ -1142,12 +1188,29 @@ public class ActionPointsUI : MonoBehaviour
             return;
 
         Player local = _gameSession.LocalPlayer;
-        HexGrid grid = local != null ? local.Grid : FindFirstObjectByType<HexGrid>();
+
+        HexGrid grid;
+        if (local != null)
+        {
+            grid = local.Grid;
+            _cachedHexGridWhenNoLocalPlayer = null;
+        }
+        else
+        {
+            if (_cachedHexGridWhenNoLocalPlayer == null)
+                _cachedHexGridWhenNoLocalPlayer = FindFirstObjectByType<HexGrid>();
+            grid = _cachedHexGridWhenNoLocalPlayer;
+        }
+
         if (grid == null)
             return;
 
-        HexGridCamera gridCamController = FindFirstObjectByType<HexGridCamera>();
-        Camera mainCam = ResolveMiniMapCamera();
+        HexGridCamera gridCamController = GetCachedHexGridCamera();
+        Camera mainCam = null;
+        if (gridCamController != null)
+            mainCam = gridCamController.GetComponent<Camera>();
+        if (mainCam == null)
+            mainCam = Camera.main;
         if (mainCam == null)
             return;
 
@@ -1198,14 +1261,14 @@ public class ActionPointsUI : MonoBehaviour
                 mapMinX, mapMaxX, mapMinZ, mapMaxZ, markerUsableWidth, markerUsableHeight);
         }
 
-        List<RemoteBattleUnitView> remotes = _gameSession.GetRemoteUnitsSnapshot();
-        var activeIds = new HashSet<string>();
-        foreach (var remote in remotes)
+        _gameSession.CopyRemoteUnitsTo(_miniMapRemoteUnitsBuffer);
+        _miniMapActiveRemoteIds.Clear();
+        foreach (var remote in _miniMapRemoteUnitsBuffer)
         {
             if (remote == null || string.IsNullOrEmpty(remote.NetworkPlayerId))
                 continue;
 
-            activeIds.Add(remote.NetworkPlayerId);
+            _miniMapActiveRemoteIds.Add(remote.NetworkPlayerId);
             if (!_miniMapRemoteMarkers.TryGetValue(remote.NetworkPlayerId, out var marker) || marker == null)
             {
                 Color color = remote.IsMob ? _miniMapMobColor : _miniMapEnemyColor;
@@ -1221,17 +1284,17 @@ public class ActionPointsUI : MonoBehaviour
             }
         }
 
-        var staleIds = new List<string>();
+        _miniMapStaleRemoteIds.Clear();
         foreach (var kv in _miniMapRemoteMarkers)
         {
-            if (activeIds.Contains(kv.Key))
+            if (_miniMapActiveRemoteIds.Contains(kv.Key))
                 continue;
             if (kv.Value != null)
                 Destroy(kv.Value.gameObject);
-            staleIds.Add(kv.Key);
+            _miniMapStaleRemoteIds.Add(kv.Key);
         }
 
-        foreach (string id in staleIds)
+        foreach (string id in _miniMapStaleRemoteIds)
             _miniMapRemoteMarkers.Remove(id);
     }
 
@@ -1253,18 +1316,12 @@ public class ActionPointsUI : MonoBehaviour
             _miniMapPadding + normY * usableHeight);
     }
 
-    private Camera ResolveMiniMapCamera()
+    private HexGridCamera GetCachedHexGridCamera()
     {
-        HexGridCamera gridCamera = FindFirstObjectByType<HexGridCamera>();
-        if (gridCamera != null)
-        {
-            Camera cam = gridCamera.GetComponent<Camera>();
-            if (cam != null)
-                return cam;
-        }
-        return Camera.main;
+        if (_cachedHexGridCamera == null)
+            _cachedHexGridCamera = FindFirstObjectByType<HexGridCamera>();
+        return _cachedHexGridCamera;
     }
-
 
     private static string FormatRoundTime(float secondsLeft)
     {
@@ -1274,6 +1331,43 @@ public class ActionPointsUI : MonoBehaviour
         return $"{minutes:00}:{seconds:00}";
     }
 
+    /// <summary>
+    /// Разрешает Transform Front Content Maker с кэшем и троттлингом дорогого FindNamedTransform (в т.ч. по всей сцене).
+    /// </summary>
+    /// <returns>false — в этом кадре поиск пропущен (троттлинг), вызывающий код не должен выполнять остальной AutoBind.</returns>
+    private bool TryResolveFrontContentTransform(out Transform frontContent)
+    {
+        frontContent = _cachedFrontContentMaker;
+        if (frontContent != null)
+            return true;
+
+        const float frontContentSearchInterval = 0.25f;
+
+        int frame = Time.frameCount;
+        if (frame != _lastFrontContentSearchFrame)
+            _frontContentSearchAttemptsInFrame = 0;
+
+        // Между кадрами — не чаще чем раз в frontContentSearchInterval; в одном кадре — до 2 поисков (Awake + Start).
+        if (Time.unscaledTime < _nextFrontContentSearchUnscaledTime)
+        {
+            if (frame != _lastFrontContentSearchFrame || _frontContentSearchAttemptsInFrame >= 2)
+                return false;
+        }
+
+        if (frame == _lastFrontContentSearchFrame && _frontContentSearchAttemptsInFrame >= 2)
+            return false;
+
+        _lastFrontContentSearchFrame = frame;
+        _frontContentSearchAttemptsInFrame++;
+
+        _cachedFrontContentMaker = FindNamedTransform(UiHierarchyNames.FrontContentMaker);
+        frontContent = _cachedFrontContentMaker;
+        if (_cachedFrontContentMaker == null)
+            _nextFrontContentSearchUnscaledTime = Time.unscaledTime + frontContentSearchInterval;
+
+        return true;
+    }
+
     private void AutoBindSceneReferences()
     {
         if (_player == null)
@@ -1281,14 +1375,23 @@ public class ActionPointsUI : MonoBehaviour
         if (_gameSession == null)
             _gameSession = FindFirstObjectByType<GameSession>();
 
-        Transform frontContent = FindNamedTransform(UiHierarchyNames.FrontContentMaker);
+        if (!TryResolveFrontContentTransform(out Transform frontContent))
+            return;
+
         if (frontContent == null)
         {
-            BindSkipDialogReferences(null);
-            BindGlobalUiFallbacks();
-            BindUiCallbacks();
+            if (!_fallbackBindDoneWhenNoFrontContent)
+            {
+                BindSkipDialogReferences(null);
+                BindGlobalUiFallbacks();
+                BindUiCallbacks();
+                _fallbackBindDoneWhenNoFrontContent = true;
+            }
+
             return;
         }
+
+        _fallbackBindDoneWhenNoFrontContent = false;
 
         if (_miniMapPanel == null)
             _miniMapPanel = FindChildComponent<RectTransform>(frontContent, UiHierarchyNames.MiniMapPanel);

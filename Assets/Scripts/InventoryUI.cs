@@ -25,6 +25,7 @@ public sealed class InventoryUI : MonoBehaviour
 
     private UserInventorySlotPayload[] _slots = new UserInventorySlotPayload[12];
     private BattleServerConnection _serverConnection;
+    private int _lastDisplayedAttackApOd = int.MinValue;
 
     private void Awake()
     {
@@ -309,6 +310,9 @@ public sealed class InventoryUI : MonoBehaviour
             _player = FindFirstObjectByType<Player>();
         string code = _player != null ? _player.WeaponCode : WeaponCatalog.FistCode;
         int od = GetAttackApCostForCurrentWeaponDisplay(code);
+        if (od == _lastDisplayedAttackApOd)
+            return;
+        _lastDisplayedAttackApOd = od;
         string s = $"ОД:{od}";
         if (_itemActionPointsCostTmp != null)
             _itemActionPointsCostTmp.text = s;

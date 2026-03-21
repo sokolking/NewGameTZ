@@ -101,14 +101,16 @@ public class DamagePopupStack : MonoBehaviour
             _anchor.rotation = Quaternion.LookRotation(-_cam.transform.forward, _cam.transform.up);
 
         float now = Time.unscaledTime;
+        bool removedAny = false;
         for (int i = _entries.Count - 1; i >= 0; i--)
         {
             if (_entries[i].ExpireAt > now)
                 continue;
             RemoveEntryAt(i);
+            removedAny = true;
         }
 
-        if (_entries.Count > 0)
+        if (removedAny && _entries.Count > 0)
             RefreshLayout();
     }
 

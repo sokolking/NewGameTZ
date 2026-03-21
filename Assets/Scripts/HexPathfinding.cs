@@ -3,51 +3,140 @@ using UnityEngine;
 
 /// <summary>
 /// A* поиск пути по гекс-сетке (только соседние гексы).
+/// Внутренние коллекции переиспользуются (без GC на каждый поиск) — только главный поток, без реентерабельности.
 /// </summary>
 public static class HexPathfinding
 {
+    private static readonly List<(int col, int row)> OpenList = new(256);
+    private static readonly HashSet<(int col, int row)> ClosedSet = new(256);
+    private static readonly HashSet<(int col, int row)> InOpenSet = new(256);
+    private static readonly Dictionary<(int, int), (int, int)> CameFrom = new(512);
+    private static readonly Dictionary<(int, int), int> GScore = new(512);
+    private static readonly Dictionary<(int, int), int> FScore = new(512);
+
+    /// <summary>
+    /// Длина кратчайшего пути в шагах (рёбрах). 0 если start == end. Без аллокаций (для подсветки ОД под курсором).
+    /// </summary>
+    public static bool TryGetShortestPathStepCount(
+        HexGrid grid,
+        int startCol, int startRow,
+        int endCol, int endRow,
+        out int stepCount)
+    {
+        stepCount = 0;
+        if (grid == null || !grid.IsInBounds(startCol, startRow) || !grid.IsInBounds(endCol, endRow))
+            return false;
+
+        if (GameSession.Active != null && GameSession.Active.IsObstacleCell(endCol, endRow))
+            return false;
+
+        if (startCol == endCol && startRow == endRow)
+            return true;
+
+        if (!RunAStarSearch(grid, startCol, startRow, endCol, endRow, out int gAtEnd))
+            return false;
+
+        stepCount = gAtEnd;
+        return true;
+    }
+
+    /// <summary>
+    /// Заполняет <paramref name="pathOut"/> полным путём (без нового List). Вызывающий может держать один буфер на клик/действие.
+    /// </summary>
+    public static bool TryBuildPath(
+        HexGrid grid,
+        int startCol, int startRow,
+        int endCol, int endRow,
+        List<(int col, int row)> pathOut)
+    {
+        if (pathOut == null)
+            return false;
+
+        if (grid == null || !grid.IsInBounds(startCol, startRow) || !grid.IsInBounds(endCol, endRow))
+            return false;
+
+        if (GameSession.Active != null && GameSession.Active.IsObstacleCell(endCol, endRow))
+            return false;
+
+        if (startCol == endCol && startRow == endRow)
+        {
+            pathOut.Clear();
+            pathOut.Add((startCol, startRow));
+            return true;
+        }
+
+        if (!RunAStarSearch(grid, startCol, startRow, endCol, endRow, out _))
+            return false;
+
+        ReconstructPathInto((endCol, endRow), pathOut);
+        return true;
+    }
+
+    /// <summary>Один аллок List — для вызовов, где нет своего буфера.</summary>
     public static List<(int col, int row)> FindPath(
         HexGrid grid,
         int startCol, int startRow,
         int endCol, int endRow)
     {
-        if (grid == null || !grid.IsInBounds(startCol, startRow) || !grid.IsInBounds(endCol, endRow))
+        var result = new List<(int, int)>();
+        if (!TryBuildPath(grid, startCol, startRow, endCol, endRow, result))
             return null;
+        return result;
+    }
 
-        if (GameSession.Active != null && GameSession.Active.IsObstacleCell(endCol, endRow))
-            return null;
+    /// <summary>Выполняет A*; при успехе gAtEnd — стоимость пути до цели (число шагов для единичных рёбер).</summary>
+    private static bool RunAStarSearch(
+        HexGrid grid,
+        int startCol, int startRow,
+        int endCol, int endRow,
+        out int gAtEnd)
+    {
+        gAtEnd = 0;
 
-        if (startCol == endCol && startRow == endRow)
-            return new List<(int, int)> { (startCol, startRow) };
-
-        var open = new List<(int col, int row)>();
-        var closed = new HashSet<(int col, int row)>();
-        var cameFrom = new Dictionary<(int, int), (int, int)>();
-        var gScore = new Dictionary<(int, int), int>();
-        var fScore = new Dictionary<(int, int), int>();
+        ClearSearchState();
 
         var start = (startCol, startRow);
-        var end = (endCol, endRow);
+        var goal = (endCol, endRow);
 
-        open.Add(start);
-        gScore[start] = 0;
-        fScore[start] = HexGrid.GetDistance(startCol, startRow, endCol, endRow);
+        OpenList.Add(start);
+        InOpenSet.Add(start);
+        GScore[start] = 0;
+        FScore[start] = HexGrid.GetDistance(startCol, startRow, endCol, endRow);
 
-        while (open.Count > 0)
+        int GetF((int col, int row) key) =>
+            FScore.TryGetValue(key, out int f) ? f : int.MaxValue;
+
+        while (OpenList.Count > 0)
         {
-            open.Sort((a, b) => (fScore.ContainsKey(a) ? fScore[a] : int.MaxValue)
-                .CompareTo(fScore.ContainsKey(b) ? fScore[b] : int.MaxValue));
-            var current = open[0];
-            open.RemoveAt(0);
+            // Минимум f без сортировки всего списка каждый раз
+            int bestIdx = 0;
+            int bestF = GetF(OpenList[0]);
+            for (int i = 1; i < OpenList.Count; i++)
+            {
+                int f = GetF(OpenList[i]);
+                if (f < bestF)
+                {
+                    bestF = f;
+                    bestIdx = i;
+                }
+            }
 
-            if (closed.Contains(current))
+            var current = OpenList[bestIdx];
+            OpenList.RemoveAt(bestIdx);
+            InOpenSet.Remove(current);
+
+            if (ClosedSet.Contains(current))
                 continue;
-            closed.Add(current);
+            ClosedSet.Add(current);
 
-            if (current == end)
-                return ReconstructPath(cameFrom, current);
+            if (current == goal)
+            {
+                gAtEnd = GScore.TryGetValue(current, out int g) ? g : 0;
+                return true;
+            }
 
             int curCol = current.col, curRow = current.row;
+            int currentG = GScore.TryGetValue(current, out int cg) ? cg : int.MaxValue;
 
             for (int dir = 0; dir < 6; dir++)
             {
@@ -56,34 +145,51 @@ public static class HexPathfinding
                 if (GameSession.Active != null && GameSession.Active.IsObstacleCell(nCol, nRow)) continue;
 
                 var neighbor = (nCol, nRow);
-                if (closed.Contains(neighbor)) continue;
+                if (ClosedSet.Contains(neighbor)) continue;
 
-                int tentativeG = (gScore.ContainsKey(current) ? gScore[current] : int.MaxValue) + 1;
-                if (tentativeG >= (gScore.ContainsKey(neighbor) ? gScore[neighbor] : int.MaxValue))
+                int tentativeG = currentG + 1;
+                int oldG = GScore.TryGetValue(neighbor, out int og) ? og : int.MaxValue;
+                if (tentativeG >= oldG)
                     continue;
 
-                cameFrom[neighbor] = current;
-                gScore[neighbor] = tentativeG;
-                fScore[neighbor] = tentativeG + HexGrid.GetDistance(nCol, nRow, endCol, endRow);
-                if (!open.Contains(neighbor))
-                    open.Add(neighbor);
+                CameFrom[neighbor] = current;
+                GScore[neighbor] = tentativeG;
+                FScore[neighbor] = tentativeG + HexGrid.GetDistance(nCol, nRow, endCol, endRow);
+
+                if (InOpenSet.Add(neighbor))
+                    OpenList.Add(neighbor);
             }
         }
 
-        return null;
+        return false;
     }
 
-    private static List<(int col, int row)> ReconstructPath(
-        Dictionary<(int, int), (int, int)> cameFrom,
-        (int col, int row) current)
+    private static void ClearSearchState()
     {
-        var path = new List<(int, int)> { current };
-        while (cameFrom.TryGetValue(current, out var prev))
+        OpenList.Clear();
+        ClosedSet.Clear();
+        InOpenSet.Clear();
+        CameFrom.Clear();
+        GScore.Clear();
+        FScore.Clear();
+    }
+
+    private static void ReconstructPathInto((int col, int row) end, List<(int col, int row)> pathOut)
+    {
+        pathOut.Clear();
+        var current = end;
+        pathOut.Add(current);
+        while (CameFrom.TryGetValue(current, out var prev))
         {
-            path.Add(prev);
+            pathOut.Add(prev);
             current = prev;
         }
-        path.Reverse();
-        return path;
+
+        int n = pathOut.Count;
+        for (int i = 0; i < n / 2; i++)
+        {
+            int j = n - 1 - i;
+            (pathOut[i], pathOut[j]) = (pathOut[j], pathOut[i]);
+        }
     }
 }

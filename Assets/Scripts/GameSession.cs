@@ -88,6 +88,7 @@ public class GameSession : MonoBehaviour
     private long _liveRoundDeadlineUtcMs;
     private Coroutine _turnReplayCoroutine;
     private readonly List<Coroutine> _activeReplayAnimationCoroutines = new();
+    private readonly List<(int col, int row)> _replayTwoPointMovePath = new(2);
     private LiveTurnDraftSnapshot _liveTurnDraftSnapshot;
     private bool _debugMobSpawned;
     private bool _battleFinished;
@@ -110,15 +111,19 @@ public class GameSession : MonoBehaviour
     public bool IsObstacleCell(int col, int row) => _obstacleCells.Contains((col, row));
     public Player LocalPlayer => _localPlayer != null ? _localPlayer : FindFirstObjectByType<Player>();
 
-    public List<RemoteBattleUnitView> GetRemoteUnitsSnapshot()
+    /// <summary>
+    /// Заполняет переданный список текущими удалёнными юнитами без аллокации нового List (для миникарты и т.п.).
+    /// </summary>
+    public void CopyRemoteUnitsTo(List<RemoteBattleUnitView> buffer)
     {
-        var list = new List<RemoteBattleUnitView>();
+        if (buffer == null)
+            return;
+        buffer.Clear();
         foreach (var unit in _remoteUnits.Values)
         {
             if (unit != null)
-                list.Add(unit);
+                buffer.Add(unit);
         }
-        return list;
     }
 
     public void RegisterProcessedTurnResult(int roundIndex)
@@ -1065,11 +1070,10 @@ public class GameSession : MonoBehaviour
 
                 if (action.actionType == "MoveStep" && action.targetPosition != null)
                 {
-                    local.MoveAlongPath(new List<(int col, int row)>
-                    {
-                        (local.CurrentCol, local.CurrentRow),
-                        (action.targetPosition.col, action.targetPosition.row)
-                    }, animate: false);
+                    _replayTwoPointMovePath.Clear();
+                    _replayTwoPointMovePath.Add((local.CurrentCol, local.CurrentRow));
+                    _replayTwoPointMovePath.Add((action.targetPosition.col, action.targetPosition.row));
+                    local.MoveAlongPath(_replayTwoPointMovePath, animate: false);
                     continue;
                 }
 

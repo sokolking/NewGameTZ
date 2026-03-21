@@ -53,6 +53,9 @@ public class HexInputManager : MonoBehaviour
     private RemoteBattleUnitView _heldRemoteTarget;
     private Vector3 _holdIndicatorAnchorWorld;
     private bool _hasHoldIndicatorAnchor;
+
+    private static readonly RaycastHit[] _hexRaycastHits = new RaycastHit[1];
+    private readonly List<(int col, int row)> _doubleClickPathBuffer = new(64);
     private float _holdCompositeHalfWidth = 0.5f;
     private float _holdCompositeHalfHeight = 0.5f;
     [SerializeField] private AttackRangeHexOutline _attackRangeOutline;
@@ -128,10 +131,9 @@ public class HexInputManager : MonoBehaviour
 
             if (_player != null)
             {
-                List<(int col, int row)> path = HexPathfinding.FindPath(_grid, _player.CurrentCol, _player.CurrentRow, cell.Col, cell.Row);
-                if (path != null && path.Count > 1)
+                if (HexPathfinding.TryGetShortestPathStepCount(_grid, _player.CurrentCol, _player.CurrentRow, cell.Col, cell.Row, out int steps)
+                    && steps > 0)
                 {
-                    int steps = path.Count - 1;
                     int stepCost = _player.GetMoveCost(_player.StepsTakenThisTurn, steps);
                     cell.SetCostLabel(stepCost);
                 }
@@ -173,13 +175,15 @@ public class HexInputManager : MonoBehaviour
             return;
         }
 
-        List<(int col, int row)> path = HexPathfinding.FindPath(
-            _grid,
-            _player.CurrentCol, _player.CurrentRow,
-            cell.Col, cell.Row);
+        if (!HexPathfinding.TryBuildPath(
+                _grid,
+                _player.CurrentCol, _player.CurrentRow,
+                cell.Col, cell.Row,
+                _doubleClickPathBuffer))
+            return;
 
-        if (path != null && path.Count > 0)
-            _player.MoveAlongPath(path, animate: true);
+        if (_doubleClickPathBuffer.Count > 0)
+            _player.MoveAlongPath(_doubleClickPathBuffer, animate: true);
     }
 
     private HexCell GetHexUnderCursor()
@@ -187,10 +191,12 @@ public class HexInputManager : MonoBehaviour
         if (Mouse.current == null) return null;
         Vector2 pos = Mouse.current.position.ReadValue();
         Ray ray = _camera.ScreenPointToRay(new Vector3(pos.x, pos.y, 0f));
-        if (!Physics.Raycast(ray, out RaycastHit hit, 1000f, _hexLayer))
+        if (Physics.RaycastNonAlloc(ray, _hexRaycastHits, 1000f, _hexLayer) <= 0)
             return null;
 
-        return hit.collider.GetComponent<HexCell>();
+        return _hexRaycastHits[0].collider != null
+            ? _hexRaycastHits[0].collider.GetComponent<HexCell>()
+            : null;
     }
 
     private void UpdateLeftHoldIndicator()

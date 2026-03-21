@@ -18,8 +18,12 @@ public sealed class UiBlockOverlaySync : MonoBehaviour
     [Range(0f, 1f)]
     [SerializeField] private float _dimAlpha = 0.35f;
 
+    /// <summary>Кэш Front Content Maker — без transform.Find каждый кадр в LateUpdate.</summary>
+    private Transform _cachedFrontContent;
+
     private void Awake()
     {
+        _cachedFrontContent = transform.Find(UiHierarchyNames.FrontContentMaker);
         ResolveOrCreateOverlay();
         if (_blockOverlay != null)
         {
@@ -99,11 +103,12 @@ public sealed class UiBlockOverlaySync : MonoBehaviour
         if (_blockOverlay.transform.parent != root)
             return;
 
-        Transform front = root.Find(UiHierarchyNames.FrontContentMaker);
-        if (front == null)
+        if (_cachedFrontContent == null)
+            _cachedFrontContent = transform.Find(UiHierarchyNames.FrontContentMaker);
+        if (_cachedFrontContent == null)
             return;
 
-        int desired = front.GetSiblingIndex() + 1;
+        int desired = _cachedFrontContent.GetSiblingIndex() + 1;
         if (_blockOverlay.transform.GetSiblingIndex() != desired)
             _blockOverlay.transform.SetSiblingIndex(desired);
     }
