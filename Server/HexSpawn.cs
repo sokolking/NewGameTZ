@@ -70,6 +70,47 @@ public static class HexSpawn
         return (bestCol, bestRow);
     }
 
+    /// <summary>
+    /// Клетка ровно на <paramref name="dist"/> шагах от старта (идём по прямой в одном из 6 направлений).
+    /// Для отладки спавна моба на фиксированной дистанции от игрока.
+    /// </summary>
+    public static bool TryFindHexAtExactDistance(int p1Col, int p1Row, int width, int length, int dist, out int outCol, out int outRow)
+    {
+        outCol = outRow = -1;
+        if (dist <= 0)
+        {
+            outCol = p1Col;
+            outRow = p1Row;
+            return true;
+        }
+
+        for (int dir = 0; dir < 6; dir++)
+        {
+            int c = p1Col;
+            int r = p1Row;
+            bool ok = true;
+            for (int step = 0; step < dist; step++)
+            {
+                GetNeighbor(c, r, dir, out c, out r);
+                if (c < 0 || r < 0 || c >= width || r >= length)
+                {
+                    ok = false;
+                    break;
+                }
+            }
+
+            if (!ok)
+                continue;
+            if (HexDistance(p1Col, p1Row, c, r) != dist)
+                continue;
+            outCol = c;
+            outRow = r;
+            return true;
+        }
+
+        return false;
+    }
+
     /// <summary>Соседняя клетка по направлению 0..5 (flat-top odd-r).</summary>
     public static void GetNeighbor(int col, int row, int direction, out int outCol, out int outRow)
     {

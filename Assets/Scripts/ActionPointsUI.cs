@@ -1181,7 +1181,7 @@ public class ActionPointsUI : MonoBehaviour
         if (displayedTurn != _lastTurnTrackerDisplayedTurn)
         {
             string turnLabel = $"Ход {displayedTurn}";
-            if (_turnTrackerText != null)
+        if (_turnTrackerText != null)
                 _turnTrackerText.text = turnLabel;
             if (_turnTrackerTmpText != null)
                 _turnTrackerTmpText.text = turnLabel;

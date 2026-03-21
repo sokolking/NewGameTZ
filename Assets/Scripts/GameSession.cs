@@ -62,6 +62,14 @@ public class GameSession : MonoBehaviour
     [Tooltip("Короткая пауза между тиками action journal.")]
     [SerializeField] private float _tickPauseSeconds = 0.03f;
 
+    [Header("Дальний бой: пуля")]
+    [Tooltip("Базовая длительность полёта пули (сек); масштабируется по числу гексов.")]
+    [SerializeField] private float _bulletFlightSeconds = 0.14f;
+    [Tooltip("Высота центра сферы над центром гекса (мир).")]
+    [SerializeField] private float _bulletHeightAboveGround = 0.28f;
+    [Tooltip("Необязательно: материал сферы-пули (иначе Unlit жёлтый).")]
+    [SerializeField] private Material _bulletMaterial;
+
     [Header("Debug")]
     [Tooltip("Для отладки: заспавнить моба рядом с локальным игроком на соседнем гексе.")]
     [SerializeField] private bool _debugSpawnMobNearLocalPlayer = false;
@@ -89,6 +97,8 @@ public class GameSession : MonoBehaviour
     private Coroutine _turnReplayCoroutine;
     private readonly List<Coroutine> _activeReplayAnimationCoroutines = new();
     private readonly List<(int col, int row)> _replayTwoPointMovePath = new(2);
+    /// <summary>Буфер для линии гексов при расчёте конечной точки пули.</summary>
+    private readonly List<(int col, int row)> _bulletLineHexBuffer = new(48);
     private LiveTurnDraftSnapshot _liveTurnDraftSnapshot;
     private bool _debugMobSpawned;
     private bool _battleFinished;
@@ -679,6 +689,8 @@ public class GameSession : MonoBehaviour
 
         if (action.actionType == "Attack")
         {
+            yield return PlayRangedBulletAnimation(result, action);
+
             if (action.succeeded && action.damage > 0)
                 ShowDamagePopupForAction(result, action);
 
@@ -689,6 +701,150 @@ public class GameSession : MonoBehaviour
             if (pause > 0f)
                 yield return new WaitForSecondsRealtime(pause);
         }
+    }
+
+    /// <summary>Пуля от атакующего к цели (или до исчерпания дальности оружия по линии гексов). Только при weaponRange &gt; 1.</summary>
+    private IEnumerator PlayRangedBulletAnimation(TurnResultPayload result, BattleExecutedAction action)
+    {
+        if (action == null || !action.succeeded || string.IsNullOrEmpty(action.actionType)
+            || !string.Equals(action.actionType, "Attack", System.StringComparison.OrdinalIgnoreCase))
+            yield break;
+
+        if (!TryGetWeaponRangeForUnit(result, action.unitId, out int weaponRange) || weaponRange <= 1)
+            yield break;
+
+        HexGrid grid = _localPlayer != null && _localPlayer.Grid != null
+            ? _localPlayer.Grid
+            : FindFirstObjectByType<HexGrid>();
+        if (grid == null)
+            yield break;
+
+        int fc, fr;
+        if (action.fromPosition != null)
+        {
+            fc = action.fromPosition.col;
+            fr = action.fromPosition.row;
+        }
+        else if (!TryGetUnitFinalHexFromTurnResult(result, action.unitId, out fc, out fr))
+            yield break;
+
+        int tc, tr;
+        if (action.toPosition != null)
+        {
+            tc = action.toPosition.col;
+            tr = action.toPosition.row;
+        }
+        else if (!TryGetUnitFinalHexFromTurnResult(result, action.targetUnitId, out tc, out tr))
+            yield break;
+
+        if (!grid.IsInBounds(fc, fr) || !grid.IsInBounds(tc, tr))
+            yield break;
+
+        int dist = HexGrid.GetDistance(fc, fr, tc, tr);
+        float y = Mathf.Max(0.05f, _bulletHeightAboveGround);
+        Vector3 start = grid.GetCellWorldPosition(fc, fr) + Vector3.up * y;
+        Vector3 end;
+
+        // Конец полёта: всегда центр клетки цели, если цель в пределах дальности оружия.
+        // Нельзя брать _bulletLineHexBuffer[steps]: после дедупа в GetHexLine индекс ≠ «гекс на расстоянии steps»,
+        // из‑за этого пуля могла лететь к промежуточному гексу, а не к объекту (камень range 2 и т.п.).
+        if (dist <= weaponRange)
+        {
+            end = grid.GetCellWorldPosition(tc, tr) + Vector3.up * y;
+        }
+        else
+        {
+            // Атака вне дальности (редко при succeeded): обрезка по линии гексов к max range шагам.
+            HexCubeOffset.GetHexLine(fc, fr, tc, tr, _bulletLineHexBuffer);
+            if (_bulletLineHexBuffer.Count == 0)
+                yield break;
+            int idx = Mathf.Min(weaponRange, dist);
+            if (idx >= _bulletLineHexBuffer.Count)
+                idx = _bulletLineHexBuffer.Count - 1;
+            (int endCol, int endRow) = _bulletLineHexBuffer[idx];
+            end = grid.GetCellWorldPosition(endCol, endRow) + Vector3.up * y;
+        }
+
+        int durationSteps = Mathf.Max(1, Mathf.Min(weaponRange, dist));
+        float duration = Mathf.Clamp(
+            _bulletFlightSeconds * (0.45f + durationSteps * 0.18f),
+            _bulletFlightSeconds * 0.35f,
+            _bulletFlightSeconds * 2.5f);
+
+        var bullet = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+        bullet.name = "RangedBulletVFX";
+        Object.Destroy(bullet.GetComponent<Collider>());
+        float scale = Mathf.Max(0.04f, grid.HexSize * 0.11f);
+        bullet.transform.localScale = Vector3.one * scale;
+
+        var mr = bullet.GetComponent<MeshRenderer>();
+        if (mr != null)
+        {
+            if (_bulletMaterial != null)
+                mr.sharedMaterial = _bulletMaterial;
+            else
+            {
+                Shader sh = Shader.Find("Universal Render Pipeline/Unlit")
+                            ?? Shader.Find("Unlit/Color")
+                            ?? Shader.Find("Sprites/Default");
+                if (sh != null)
+                {
+                    var mat = new Material(sh);
+                    if (mat.HasProperty("_BaseColor"))
+                        mat.SetColor("_BaseColor", new Color(1f, 0.88f, 0.15f));
+                    else if (mat.HasProperty("_Color"))
+                        mat.color = new Color(1f, 0.88f, 0.15f);
+                    mr.sharedMaterial = mat;
+                }
+            }
+        }
+
+        bullet.transform.position = start;
+        float t = 0f;
+        while (t < duration)
+        {
+            t += Time.unscaledDeltaTime;
+            float u = Mathf.Clamp01(t / duration);
+            bullet.transform.position = Vector3.Lerp(start, end, u);
+            yield return null;
+        }
+
+        bullet.transform.position = end;
+        Object.Destroy(bullet);
+    }
+
+    private static bool TryGetWeaponRangeForUnit(TurnResultPayload result, string unitId, out int weaponRange)
+    {
+        weaponRange = 1;
+        if (string.IsNullOrEmpty(unitId) || result?.results == null)
+            return false;
+
+        foreach (var item in result.results)
+        {
+            if (item == null || item.unitId != unitId)
+                continue;
+            weaponRange = Mathf.Max(0, item.weaponRange);
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>Запасной вариант для старых turn result без toPosition/fromPosition в executedActions.</summary>
+    private static bool TryGetUnitFinalHexFromTurnResult(TurnResultPayload result, string unitId, out int col, out int row)
+    {
+        col = row = 0;
+        if (string.IsNullOrEmpty(unitId) || result?.results == null)
+            return false;
+        foreach (var item in result.results)
+        {
+            if (item == null || item.unitId != unitId || item.finalPosition == null)
+                continue;
+            col = item.finalPosition.col;
+            row = item.finalPosition.row;
+            return true;
+        }
+        return false;
     }
 
     private IEnumerator PlayMoveStepAction(TurnResultPayload result, BattleExecutedAction action)

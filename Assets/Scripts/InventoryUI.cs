@@ -42,6 +42,7 @@ public sealed class InventoryUI : MonoBehaviour
             _player = FindFirstObjectByType<Player>();
         if (_player != null)
             _player.OnEquippedWeaponChanged += OnPlayerEquippedWeaponChanged;
+        BattleSessionStateHooks.OnBattleIdentified += OnBattleIdentifiedForInventory;
         // Сразу убираем белый квадрат по умолчанию (Image без спрайта) и подставляем иконку, если Player уже есть.
         OnPlayerEquippedWeaponChanged();
         StartCoroutine(LoadInventoryFromServerCoroutine());
@@ -50,8 +51,31 @@ public sealed class InventoryUI : MonoBehaviour
 
     private void OnDisable()
     {
+        BattleSessionStateHooks.OnBattleIdentified -= OnBattleIdentifiedForInventory;
         if (_player != null)
             _player.OnEquippedWeaponChanged -= OnPlayerEquippedWeaponChanged;
+    }
+
+    /// <summary>
+    /// OnEnable срабатывает до Start у <see cref="BattleServerConnection"/>, поэтому первый запрос инвентаря
+    /// мог уйти на localhost из инспектора. После идентификации боя URL уже верный — перезагружаем слоты.
+    /// </summary>
+    private void OnBattleIdentifiedForInventory(string battleId, string playerId, string serverUrl)
+    {
+        if (!string.IsNullOrEmpty(serverUrl))
+            StartCoroutine(LoadInventoryFromServerCoroutine());
+    }
+
+    /// <summary>Базовый URL API для /api/db/user/inventory: сначала URL сессии (уже известен до Start), затем продакшен из меню, затем компонент соединения.</summary>
+    private static string ResolveInventoryApiBaseUrl(BattleServerConnection connection)
+    {
+        if (!string.IsNullOrEmpty(BattleSessionState.ServerUrl))
+            return BattleSessionState.ServerUrl.TrimEnd('/');
+        if (!string.IsNullOrEmpty(BattleServerRuntime.CurrentBaseUrl))
+            return BattleServerRuntime.CurrentBaseUrl.TrimEnd('/');
+        if (connection != null && !string.IsNullOrEmpty(connection.ServerUrl))
+            return connection.ServerUrl.TrimEnd('/');
+        return "";
     }
 
     private void OnPlayerEquippedWeaponChanged()
@@ -178,9 +202,9 @@ public sealed class InventoryUI : MonoBehaviour
 
         string user = BattleSessionState.LastUsername;
         string pass = BattleSessionState.LastPassword;
-        string baseUrl = _serverConnection != null
-            ? _serverConnection.ServerUrl.TrimEnd('/')
-            : (BattleSessionState.ServerUrl ?? "").TrimEnd('/');
+        if (_serverConnection == null)
+            _serverConnection = FindFirstObjectByType<BattleServerConnection>();
+        string baseUrl = ResolveInventoryApiBaseUrl(_serverConnection);
 
         if (string.IsNullOrEmpty(user) || string.IsNullOrEmpty(baseUrl))
         {

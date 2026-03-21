@@ -42,6 +42,14 @@ public class BattleRoom
     /// <summary>Флаг: бой создан как одиночный (1 игрок + серверный моб), а не матчмейкинг 1v1.</summary>
     public bool IsSolo { get; set; }
 
+    /// <summary>
+    /// DEBUG: одиночный бой — моб на фиксированной дистанции от игрока, много HP, пустой AI (не преследует).
+    /// Выключить: поставить false или удалить ветку в <see cref="EnsureMobCommandsForCurrentRound"/> и спавн моба в <see cref="EnsureUnitsInitialized"/>.
+    /// </summary>
+    private const bool DebugSoloMobFiveHexNoChase1000Hp = true;
+    private const int DebugSoloMobHexDistanceFromPlayer = 5;
+    private const int DebugSoloMobHp = 1000;
+
     /// <summary>Все юниты боя (игроки и мобы) по unitId.</summary>
     public Dictionary<string, UnitStateDto> Units { get; } = new();
 
@@ -386,6 +394,10 @@ public class BattleRoom
         Dictionary<string, bool> alive,
         HashSet<(int col, int row)> occupied)
     {
+        // Временный debug-режим: симуляция раунда иначе игнорирует пустую очередь моба и строит ход к игроку здесь.
+        if (DebugSoloMobFiveHexNoChase1000Hp && IsSolo)
+            return null;
+
         if (!Units.TryGetValue(mobUnitId, out var mob) || mob.UnitType != UnitType.Mob)
             return null;
         if (!positions.TryGetValue(mobUnitId, out var mobPos))
@@ -582,6 +594,17 @@ public class BattleRoom
 
         foreach (var mob in Units.Values.Where(u => u.UnitType == UnitType.Mob))
         {
+            if (DebugSoloMobFiveHexNoChase1000Hp)
+            {
+                UnitCommands[mob.UnitId] = new UnitCommandDto
+                {
+                    UnitId = mob.UnitId,
+                    CommandType = "Queue",
+                    Actions = Array.Empty<QueuedBattleActionDto>()
+                };
+                continue;
+            }
+
             // ближайший игрок по hex-distance
             var target = playerUnits
                 .OrderBy(p => HexSpawn.HexDistance(mob.Col, mob.Row, p.Col, p.Row))
@@ -697,13 +720,41 @@ public class BattleRoom
         // Серверный моб есть только в одиночном бою.
         if (IsSolo && Players.TryGetValue("P1", out var p1Pos))
         {
-            var (mobCol, mobRow) = HexSpawn.FindOpponentSpawn(
-                p1Pos.col,
-                p1Pos.row,
-                HexSpawn.DefaultGridWidth,
-                HexSpawn.DefaultGridLength,
-                HexSpawn.MinSpawnHexDistance
-            );
+            int mobCol;
+            int mobRow;
+            int mobMaxHp = DefaultMobMaxHp;
+            int mobCurHp = DefaultMobMaxHp;
+
+            if (DebugSoloMobFiveHexNoChase1000Hp)
+            {
+                mobMaxHp = DebugSoloMobHp;
+                mobCurHp = DebugSoloMobHp;
+                if (!HexSpawn.TryFindHexAtExactDistance(
+                        p1Pos.col,
+                        p1Pos.row,
+                        HexSpawn.DefaultGridWidth,
+                        HexSpawn.DefaultGridLength,
+                        DebugSoloMobHexDistanceFromPlayer,
+                        out mobCol,
+                        out mobRow))
+                {
+                    (mobCol, mobRow) = HexSpawn.FindOpponentSpawn(
+                        p1Pos.col,
+                        p1Pos.row,
+                        HexSpawn.DefaultGridWidth,
+                        HexSpawn.DefaultGridLength,
+                        HexSpawn.MinSpawnHexDistance);
+                }
+            }
+            else
+            {
+                (mobCol, mobRow) = HexSpawn.FindOpponentSpawn(
+                    p1Pos.col,
+                    p1Pos.row,
+                    HexSpawn.DefaultGridWidth,
+                    HexSpawn.DefaultGridLength,
+                    HexSpawn.MinSpawnHexDistance);
+            }
 
             const string mobId = "MOB_1";
             if (!Units.ContainsKey(mobId))
@@ -717,8 +768,8 @@ public class BattleRoom
                     MaxAp = MobMaxAp,
                     CurrentAp = MobMaxAp,
                     PenaltyFraction = 0f,
-                    MaxHp = DefaultMobMaxHp,
-                    CurrentHp = DefaultMobMaxHp,
+                    MaxHp = mobMaxHp,
+                    CurrentHp = mobCurHp,
                     WeaponCode = DefaultWeaponCode,
                     WeaponDamage = DefaultWeaponDamage,
                     WeaponRange = DefaultWeaponRange,
@@ -1263,6 +1314,7 @@ public class BattleRoom
                         }
                         else
                         {
+                            executed.ToPosition = new HexPositionDto { Col = targetPos.col, Row = targetPos.row };
                             int dist = HexSpawn.HexDistance(currentPos.col, currentPos.row, targetPos.col, targetPos.row);
                             int weaponRange = Math.Max(0, unit.WeaponRange);
                             int rawDamage = Math.Max(0, unit.WeaponDamage);

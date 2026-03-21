@@ -137,20 +137,24 @@ ON CONFLICT (user_id, slot_index) DO NOTHING;
 """;
             command.ExecuteNonQuery();
         }
-        catch (PostgresException ex) when (ex.SqlState == "28000")
+        catch (PostgresException ex) when (ex.SqlState == "28000" || ex.SqlState == "28P01")
         {
             throw new InvalidOperationException(
-                "PostgreSQL refused the configured user. Start the project database with `docker compose up -d` from the repo root, " +
-                "or update `BATTLE_DB_CONNECTION_STRING` / `Server/appsettings.json` to valid credentials. " +
-                "Default project DB now expects localhost:55432 with user `battle_user`.",
+                "PostgreSQL refused login for the configured user (wrong password or user missing). " +
+                "Set env `BATTLE_DB_CONNECTION_STRING` to match your server (Host=...;Port=...;Database=...;Username=...;Password=...), " +
+                "or align Postgres user/password with `Server/appsettings.json` / docker-compose (`battle_user` / `battle_password` on port 55432). " +
+                "SqlState: " + ex.SqlState,
                 ex);
         }
         catch (NpgsqlException ex)
         {
+            var inner = ex.InnerException as PostgresException;
+            string hint = inner?.SqlState == "28P01"
+                ? " Password authentication failed — fix BATTLE_DB_CONNECTION_STRING Password or Postgres role password."
+                : "";
             throw new InvalidOperationException(
-                "Unable to connect to the project PostgreSQL database. Start it with `docker compose up -d` from the repo root, " +
-                "or update `BATTLE_DB_CONNECTION_STRING` / `Server/appsettings.json`. " +
-                "Default project DB now expects localhost:55432.",
+                "Unable to connect to PostgreSQL." + hint +
+                " Start DB with `docker compose up -d` or set `BATTLE_DB_CONNECTION_STRING` / `ConnectionStrings:BattleDatabase`.",
                 ex);
         }
     }

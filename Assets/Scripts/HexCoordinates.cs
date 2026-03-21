@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 
 /// <summary>
@@ -82,6 +83,25 @@ public struct HexCube
         for (int i = 0; i < 6; i++)
             buffer[i] = Neighbor(i);
     }
+
+    /// <summary>Округление дробного куба до ближайшего целого гекса (redblobgames.com/grids/hexagons).</summary>
+    public static HexCube RoundFromFloat(float q, float r, float s)
+    {
+        int qi = Mathf.RoundToInt(q);
+        int ri = Mathf.RoundToInt(r);
+        int si = Mathf.RoundToInt(s);
+        float qDiff = Mathf.Abs(qi - q);
+        float rDiff = Mathf.Abs(ri - r);
+        float sDiff = Mathf.Abs(si - s);
+        if (qDiff > rDiff && qDiff > sDiff)
+            qi = -ri - si;
+        else if (rDiff > sDiff)
+            ri = -qi - si;
+        else
+            si = -qi - ri;
+        return new HexCube(qi, ri, si);
+    }
+
 }
 
 /// <summary>
@@ -117,5 +137,38 @@ public static class HexCubeOffset
         int r = cube.z;
         worldX = size * Sqrt3 * (q + r * 0.5f);
         worldZ = size * 1.5f * r;
+    }
+
+    /// <summary>Прямая линия гексов от (col0,row0) до (col1,row1), включая концы. Дубликаты подряд убираются.</summary>
+    public static void GetHexLine(int col0, int row0, int col1, int row1, List<(int col, int row)> outList)
+    {
+        if (outList == null)
+            return;
+        outList.Clear();
+        HexCube a = FromOffset(col0, row0);
+        HexCube b = FromOffset(col1, row1);
+        int n = HexCube.Distance(a, b);
+        if (n == 0)
+        {
+            outList.Add((col0, row0));
+            return;
+        }
+
+        HexCube lastRounded = default;
+        bool hasLast = false;
+        for (int i = 0; i <= n; i++)
+        {
+            float t = i / (float)n;
+            float fx = Mathf.Lerp(a.x, b.x, t);
+            float fy = Mathf.Lerp(a.y, b.y, t);
+            float fz = Mathf.Lerp(a.z, b.z, t);
+            HexCube rounded = HexCube.RoundFromFloat(fx, fy, fz);
+            if (hasLast && rounded == lastRounded)
+                continue;
+            ToOffset(rounded, out int c, out int r);
+            outList.Add((c, r));
+            lastRounded = rounded;
+            hasLast = true;
+        }
     }
 }
