@@ -619,6 +619,14 @@ public class GameSession : MonoBehaviour
         if (cam == null)
             yield break;
 
+        // Режим просмотра: уже в 3-м лице — не проигрывать повторный переход с вида сверху.
+        if (HexGridCamera.ThirdPersonFollowActive)
+        {
+            _serverRoundThirdPersonEntered = true;
+            yield break;
+        }
+
+        // Режим планирования (вид сверху): плавный переход в 3-е лицо перед раундом.
         Vector3 fh = local.transform.forward;
         fh.y = 0f;
         if (fh.sqrMagnitude < 1e-6f)
@@ -635,9 +643,8 @@ public class GameSession : MonoBehaviour
         if (!_serverRoundThirdPersonEntered)
             yield break;
         _serverRoundThirdPersonEntered = false;
-        HexGridCamera cam = FindFirstObjectByType<HexGridCamera>();
-        if (cam != null)
-            yield return cam.ExitThirdPersonFollowRoutine();
+        GamePhaseViewController.NotifyViewAnimationEndedKeepThirdPerson();
+        yield break;
     }
 
     private IEnumerator PlayTurnResultAnimationCoroutine(Player player, HexPosition[] path)

@@ -553,7 +553,10 @@ public class ActionPointsUI : MonoBehaviour
         }
 
         if (_player != null && _player.IsMoving)
-            _player.ForceStopMovement();
+        {
+            bool inViewThirdPerson = HexGridCamera.ThirdPersonFollowActive;
+            _player.ForceStopMovement(exitThirdPersonCamera: !inViewThirdPerson);
+        }
 
         if (_gameSession != null && _gameSession.IsBattleAnimationPlaying) return;
 
@@ -1865,41 +1868,16 @@ public class ActionPointsUI : MonoBehaviour
 
     private static T FindChildComponent<T>(Transform root, string childName) where T : Component
     {
-        Transform child = FindNamedTransform(childName, root);
-        return child != null ? child.GetComponent<T>() : null;
+        return UiHierarchyFind.FindChildComponent<T>(root, childName);
     }
 
     private static Transform FindNamedTransform(string objectName)
     {
-        return FindNamedTransform(objectName, null);
+        return UiHierarchyFind.FindNamedTransform(objectName);
     }
 
     private static Transform FindNamedTransform(string objectName, Transform root)
     {
-        if (string.IsNullOrEmpty(objectName))
-            return null;
-
-        if (root != null)
-        {
-            foreach (Transform child in root.GetComponentsInChildren<Transform>(true))
-            {
-                if (child != null && child.name == objectName)
-                    return child;
-            }
-
-            return null;
-        }
-
-        foreach (Transform candidate in Resources.FindObjectsOfTypeAll<Transform>())
-        {
-            if (candidate == null || candidate.hideFlags != HideFlags.None)
-                continue;
-            if (!candidate.gameObject.scene.IsValid())
-                continue;
-            if (candidate.name == objectName)
-                return candidate;
-        }
-
-        return null;
+        return UiHierarchyFind.FindNamedTransform(objectName, root);
     }
 }

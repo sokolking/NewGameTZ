@@ -1,5 +1,5 @@
 /// <summary>
-/// Визуал движения в фазе планирования хода (до отправки на сервер).
+/// Визуал движения в режиме планирования хода (до отправки на сервер).
 /// Значение выставляет <see cref="ActionPointsUI"/> с Toggle «показать анимацию».
 /// </summary>
 public static class MovementPlanningVisualSettings

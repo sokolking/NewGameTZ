@@ -868,9 +868,12 @@ public class Player : MonoBehaviour
         if (enteredThirdPerson && hexCam != null)
         {
             if (interrupted)
+            {
                 hexCam.EndThirdPersonFollowImmediate();
+                GamePhaseViewController.StopModeButtonPulseIfAny();
+            }
             else
-                yield return hexCam.ExitThirdPersonFollowRoutine();
+                GamePhaseViewController.NotifyViewAnimationEndedKeepThirdPerson();
         }
     }
 
@@ -926,18 +929,23 @@ public class Player : MonoBehaviour
         }
 
         if (hexCam != null)
-            yield return hexCam.ExitThirdPersonFollowRoutine();
+            GamePhaseViewController.NotifyViewAnimationEndedKeepThirdPerson();
     }
 
     /// <summary>
     /// Остановить анимацию движения. Очередь хода и <see cref="GetTurnActionsCopy"/> не меняются — на сервер уходит весь запланированный путь.
     /// Логическая позиция остаётся на последней достигнутой клетке до ответа сервера.
     /// </summary>
-    public void ForceStopMovement()
+    /// <param name="exitThirdPersonCamera">Если false — не выходим из 3-го лица (например, «конец хода» в режиме просмотра).</param>
+    public void ForceStopMovement(bool exitThirdPersonCamera = true)
     {
         _movementInterruptVersion++;
         StopAllCoroutines();
-        FindFirstObjectByType<HexGridCamera>()?.EndThirdPersonFollowImmediate();
+        if (exitThirdPersonCamera)
+        {
+            FindFirstObjectByType<HexGridCamera>()?.EndThirdPersonFollowImmediate();
+            GamePhaseViewController.StopModeButtonPulseIfAny();
+        }
         if (_grid != null)
             transform.position = _grid.GetCellWorldPosition(_currentCol, _currentRow);
         _isMoving = false;

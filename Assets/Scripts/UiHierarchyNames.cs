@@ -89,4 +89,7 @@ public static class UiHierarchyNames
 
     /// <summary>Ячейки: InventoryCell1 … InventoryCell12.</summary>
     public static string InventoryCellName(int index1Based) => $"InventoryCell{index1Based}";
+
+    /// <summary>Переключение режима планирование/просмотр и подпись текущего режима.</summary>
+    public const string ModeButton = "ModeButton";
 }
