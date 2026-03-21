@@ -1,26 +1,46 @@
+using UnityEngine;
+
 /// <summary>
-/// Локальные статы оружия (дублируют строки в БД сервера) — для офлайна и подсказки клиенту.
+/// Соглашения по оружию на клиенте: код и icon_key приходят с сервера (БД).
+/// Статы урона/дальности здесь не задаются — только из инвентаря или TurnResult.
+/// Спрайты: <see cref="LoadSpriteFromWeaponIconsFolder"/> → Resources/WeaponIcons/{ключ}.
 /// </summary>
 public static class WeaponCatalog
 {
-    public const string FistCode = "fist";
-    public const string StoneCode = "stone";
+    /// <summary>Код оружия по умолчанию, если строка пустая (как на сервере DefaultWeaponCode).</summary>
+    public const string DefaultWeaponCode = "fist";
 
-    public static void GetStats(string code, out string normalizedCode, out int damage, out int range)
+    /// <summary>Стоимость смены оружия в очереди хода (совпадает с сервером).</summary>
+    public const int EquipWeaponSwapApCost = 2;
+
+    /// <summary>Нормализованный код из БД (нижний регистр); пусто → <see cref="DefaultWeaponCode"/>.</summary>
+    public static string NormalizeWeaponCode(string code)
     {
-        if (string.Equals(code, StoneCode, System.StringComparison.OrdinalIgnoreCase))
-        {
-            normalizedCode = StoneCode;
-            damage = 3;
-            range = 2;
-            return;
-        }
-
-        normalizedCode = FistCode;
-        damage = 1;
-        range = 1;
+        if (string.IsNullOrWhiteSpace(code))
+            return DefaultWeaponCode;
+        return code.Trim().ToLowerInvariant();
     }
 
-    /// <summary>Стоимость смены оружия в очереди хода (фиксированная, совпадает с сервером).</summary>
-    public const int EquipWeaponSwapApCost = 2;
+    /// <summary>Загрузка спрайта из Resources/WeaponIcons/{iconKeyOrCode}. Ключ — code или icon_key из БД.</summary>
+    public static Sprite LoadSpriteFromWeaponIconsFolder(string iconKeyOrCode)
+    {
+        if (string.IsNullOrWhiteSpace(iconKeyOrCode))
+            return null;
+        string k = iconKeyOrCode.Trim().ToLowerInvariant();
+        string path = $"WeaponIcons/{k}";
+        var s = Resources.Load<Sprite>(path);
+        if (s != null)
+            return s;
+        var tex = Resources.Load<Texture2D>(path);
+        if (tex == null)
+            return null;
+        return Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f), 100f);
+    }
+
+    /// <summary>Панель активного оружия: пустой код трактуется как <see cref="DefaultWeaponCode"/>.</summary>
+    public static Sprite LoadSpriteForEquippedWeaponPanel(string weaponCodeOrEmpty)
+    {
+        string key = string.IsNullOrWhiteSpace(weaponCodeOrEmpty) ? DefaultWeaponCode : weaponCodeOrEmpty.Trim().ToLowerInvariant();
+        return LoadSpriteFromWeaponIconsFolder(key);
+    }
 }

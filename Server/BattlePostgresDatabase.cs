@@ -46,7 +46,9 @@ CREATE TABLE IF NOT EXISTS weapons (
     code TEXT NOT NULL UNIQUE,
     name TEXT NOT NULL,
     damage INT NOT NULL,
-    range INT NOT NULL
+    range INT NOT NULL,
+    icon_key TEXT NOT NULL DEFAULT 'fist',
+    attack_ap_cost INT NOT NULL DEFAULT 1
 );
 
 CREATE TABLE IF NOT EXISTS battle_turns (
@@ -84,23 +86,31 @@ SET password = EXCLUDED.password,
 -- На случай уже существующих строк до смены сида:
 UPDATE users SET max_ap = 100 WHERE username IN ('test', 'test2');
 
-INSERT INTO weapons (code, name, damage, range)
+-- Старые БД: таблица weapons могла быть создана без icon_key / attack_ap_cost
+ALTER TABLE weapons ADD COLUMN IF NOT EXISTS icon_key TEXT NOT NULL DEFAULT 'fist';
+ALTER TABLE weapons ADD COLUMN IF NOT EXISTS attack_ap_cost INT NOT NULL DEFAULT 1;
+ALTER TABLE weapons ALTER COLUMN attack_ap_cost SET DEFAULT 1;
+
+INSERT INTO weapons (code, name, damage, range, icon_key, attack_ap_cost)
 VALUES
-    ('fist', 'Fist', 1, 1),
-    ('stone', 'Камень', 3, 2)
+    ('fist', 'Fist', 1, 1, 'fist', 3),
+    ('stone', 'Камень', 3, 2, 'stone', 5),
+    ('gun', 'Пистолет', 4, 5, 'gun', 9),
+    ('revolver', 'Револьвер', 6, 4, 'revolver', 12),
+    ('shotgun', 'Дробовик', 8, 3, 'shotgun', 7),
+    ('rifle', 'Винтовка', 10, 6, 'rifle', 7),
+    ('sniper', 'Снайперская винтовка', 12, 8, 'sniper', 7),
+    ('machine_gun', 'Пулемёт', 14, 10, 'machine_gun', 7),
+    ('rocket_launcher', 'Ракетница', 16, 12, 'rocket_launcher', 7),
+    ('grenade_launcher', 'Гранатомёт', 18, 14, 'grenade_launcher', 7),
+    ('plasma_gun', 'Плазменный пистолет', 20, 16, 'plasma_gun', 7)
+
 ON CONFLICT (code) DO UPDATE
 SET name = EXCLUDED.name,
     damage = EXCLUDED.damage,
-    range = EXCLUDED.range;
-
-ALTER TABLE weapons ADD COLUMN IF NOT EXISTS icon_key TEXT NOT NULL DEFAULT 'fist';
-UPDATE weapons SET icon_key = 'fist' WHERE code = 'fist';
-UPDATE weapons SET icon_key = 'stone' WHERE code = 'stone';
-
-ALTER TABLE weapons ADD COLUMN IF NOT EXISTS attack_ap_cost INT NOT NULL DEFAULT 1;
-UPDATE weapons SET attack_ap_cost = 3 WHERE code = 'fist';
-UPDATE weapons SET attack_ap_cost = 7 WHERE code = 'stone';
-ALTER TABLE weapons ALTER COLUMN attack_ap_cost SET DEFAULT 1;
+    range = EXCLUDED.range,
+    icon_key = EXCLUDED.icon_key,
+    attack_ap_cost = EXCLUDED.attack_ap_cost;
 
 CREATE TABLE IF NOT EXISTS user_inventory_slots (
     user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -115,6 +125,14 @@ ON CONFLICT (user_id, slot_index) DO NOTHING;
 
 INSERT INTO user_inventory_slots (user_id, slot_index, weapon_id)
 SELECT u.id, 1, w.id FROM users u CROSS JOIN weapons w WHERE w.code = 'stone'
+ON CONFLICT (user_id, slot_index) DO NOTHING;
+
+INSERT INTO user_inventory_slots (user_id, slot_index, weapon_id)
+SELECT u.id, 2, w.id FROM users u CROSS JOIN weapons w WHERE w.code = 'gun'
+ON CONFLICT (user_id, slot_index) DO NOTHING;
+
+INSERT INTO user_inventory_slots (user_id, slot_index, weapon_id)
+SELECT u.id, 3, w.id FROM users u CROSS JOIN weapons w WHERE w.code = 'revolver'
 ON CONFLICT (user_id, slot_index) DO NOTHING;
 """;
             command.ExecuteNonQuery();

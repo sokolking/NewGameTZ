@@ -45,6 +45,9 @@ public class BattleQueuedAction
     /// <summary>Для отмены EquipWeapon на клиенте.</summary>
     public string previousWeaponCode;
     public int previousWeaponAttackApCost;
+    /// <summary>Для отмены EquipWeapon: статы до смены (не отправляются на сервер).</summary>
+    public int previousWeaponDamage;
+    public int previousWeaponRange;
     public int weaponAttackApCost;
     public int cost;
 }

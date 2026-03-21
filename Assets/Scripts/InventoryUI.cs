@@ -308,7 +308,7 @@ public sealed class InventoryUI : MonoBehaviour
             return;
         if (_player == null)
             _player = FindFirstObjectByType<Player>();
-        string code = _player != null ? _player.WeaponCode : WeaponCatalog.FistCode;
+        string code = _player != null ? _player.WeaponCode : WeaponCatalog.DefaultWeaponCode;
         int od = GetAttackApCostForCurrentWeaponDisplay(code);
         if (od == _lastDisplayedAttackApOd)
             return;
@@ -324,7 +324,7 @@ public sealed class InventoryUI : MonoBehaviour
     private int GetAttackApCostForCurrentWeaponDisplay(string weaponCode)
     {
         if (string.IsNullOrWhiteSpace(weaponCode))
-            weaponCode = WeaponCatalog.FistCode;
+            weaponCode = WeaponCatalog.DefaultWeaponCode;
         for (int i = 0; i < 12; i++)
         {
             var s = _slots[i];
@@ -357,7 +357,22 @@ public sealed class InventoryUI : MonoBehaviour
         }
 
         string code = _player.WeaponCode;
-        var sp = WeaponIconHelper.LoadEquippedWeaponIcon(code);
+        string iconKey = null;
+        for (int i = 0; i < 12; i++)
+        {
+            var slot = _slots[i];
+            if (slot == null || string.IsNullOrWhiteSpace(slot.weaponCode))
+                continue;
+            if (!string.Equals(slot.weaponCode, code, StringComparison.OrdinalIgnoreCase))
+                continue;
+            if (!string.IsNullOrWhiteSpace(slot.iconKey))
+                iconKey = slot.iconKey.Trim();
+            break;
+        }
+
+        Sprite sp = !string.IsNullOrEmpty(iconKey)
+            ? WeaponIconHelper.LoadInventoryIcon(iconKey)
+            : WeaponIconHelper.LoadEquippedWeaponIcon(code);
         SetImageIcon(_activeWeaponImage, sp, ActiveIconSize);
     }
 
@@ -411,7 +426,7 @@ public sealed class InventoryUI : MonoBehaviour
             ? GameSession.Active
             : FindFirstObjectByType<GameSession>();
         int atk = s.attackApCost > 0 ? s.attackApCost : 1;
-        session?.RequestEquipWeapon(s.weaponCode, atk);
+        session?.RequestEquipWeapon(s.weaponCode, atk, s.damage, s.range);
         OnPlayerEquippedWeaponChanged();
     }
 
@@ -423,30 +438,18 @@ public sealed class InventoryUI : MonoBehaviour
     }
 }
 
-/// <summary>Спрайты из Resources/WeaponIcons/{key} (не с сервера — в БД только строка icon_key).</summary>
+/// <summary>Обёртка над <see cref="WeaponCatalog"/> для загрузки иконок из Resources по ключу из БД.</summary>
 public static class WeaponIconHelper
 {
     /// <summary>Иконка для ячейки инвентаря: пустой ключ или отсутствующий файл → null (пустая ячейка, без подстановки кулака).</summary>
     public static Sprite LoadInventoryIcon(string iconKeyOrCode)
     {
-        if (string.IsNullOrWhiteSpace(iconKeyOrCode))
-            return null;
-        string k = iconKeyOrCode.Trim().ToLowerInvariant();
-        string path = $"WeaponIcons/{k}";
-        var s = Resources.Load<Sprite>(path);
-        if (s != null)
-            return s;
-        var tex = Resources.Load<Texture2D>(path);
-        if (tex == null)
-            return null;
-        return Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f), 100f);
+        return WeaponCatalog.LoadSpriteFromWeaponIconsFolder(iconKeyOrCode);
     }
 
-    /// <summary>Панель текущего оружия: если код пустой — считаем кулак; если файла нет — тоже пусто.</summary>
+    /// <summary>Панель текущего оружия: пустой код → <see cref="WeaponCatalog.DefaultWeaponCode"/>.</summary>
     public static Sprite LoadEquippedWeaponIcon(string weaponCode)
     {
-        if (string.IsNullOrWhiteSpace(weaponCode))
-            weaponCode = WeaponCatalog.FistCode;
-        return LoadInventoryIcon(weaponCode);
+        return WeaponCatalog.LoadSpriteForEquippedWeaponPanel(weaponCode);
     }
 }

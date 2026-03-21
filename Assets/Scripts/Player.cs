@@ -64,7 +64,7 @@ public class Player : MonoBehaviour
     private int _movementInterruptVersion;
 
     /// <summary>Код оружия (сервер / локальный каталог).</summary>
-    private string _weaponCode = WeaponCatalog.FistCode;
+    private string _weaponCode = WeaponCatalog.DefaultWeaponCode;
     private int _weaponDamage = 1;
     /// <summary>Макс. дистанция атаки в шагах гекса (как на сервере <see cref="UnitStateDto.WeaponRange"/>).</summary>
     private int _weaponRangeHexes = 1;
@@ -112,7 +112,7 @@ public class Player : MonoBehaviour
     /// <param name="attackApCost">Стоимость атаки из БД / сервера; по умолчанию 1.</param>
     public void SetEquippedWeapon(string code, int damage, int rangeHexes, int attackApCost = 1)
     {
-        _weaponCode = string.IsNullOrWhiteSpace(code) ? WeaponCatalog.FistCode : code.Trim().ToLowerInvariant();
+        _weaponCode = WeaponCatalog.NormalizeWeaponCode(code);
         _weaponDamage = Mathf.Max(0, damage);
         _weaponRangeHexes = Mathf.Max(0, rangeHexes);
         _weaponAttackApCost = Mathf.Max(1, attackApCost);
@@ -478,6 +478,8 @@ public class Player : MonoBehaviour
                 weaponCode = src.weaponCode,
                 previousWeaponCode = src.previousWeaponCode,
                 previousWeaponAttackApCost = src.previousWeaponAttackApCost,
+                previousWeaponDamage = src.previousWeaponDamage,
+                previousWeaponRange = src.previousWeaponRange,
                 weaponAttackApCost = src.weaponAttackApCost,
                 cost = src.cost
             };
@@ -559,9 +561,13 @@ public class Player : MonoBehaviour
     /// <summary>Смена оружия в очереди хода (<see cref="WeaponCatalog.EquipWeaponSwapApCost"/> ОД); сервер применяет EquipWeapon при закрытии раунда.</summary>
     /// <param name="costOverride">Если задано — переопределяет стоимость смены (по умолчанию 2 ОД).</param>
     /// <param name="weaponAttackApCost">Стоимость атаки новым оружием из БД (weapons.attack_ap_cost).</param>
-    public bool QueueEquipWeaponAction(string weaponCode, int? costOverride = null, int weaponAttackApCost = 1)
+    /// <param name="weaponDamageFromDb">Урон из БД/инвентаря; если &lt; 0 — подставляется 1 (офлайн без данных).</param>
+    /// <param name="weaponRangeFromDb">Дальность из БД/инвентаря; если &lt; 0 — подставляется 1.</param>
+    public bool QueueEquipWeaponAction(string weaponCode, int? costOverride = null, int weaponAttackApCost = 1, int weaponDamageFromDb = -1, int weaponRangeFromDb = -1)
     {
-        WeaponCatalog.GetStats(weaponCode, out string norm, out int dmg, out int range);
+        string norm = WeaponCatalog.NormalizeWeaponCode(weaponCode);
+        int dmg = weaponDamageFromDb >= 0 ? weaponDamageFromDb : 1;
+        int range = weaponRangeFromDb >= 0 ? weaponRangeFromDb : 1;
         int safeCost = Mathf.Max(1, costOverride ?? WeaponCatalog.EquipWeaponSwapApCost);
         if (_currentAp < safeCost)
             return false;
@@ -578,6 +584,8 @@ public class Player : MonoBehaviour
             weaponCode = norm,
             previousWeaponCode = prevCode,
             previousWeaponAttackApCost = prevAtk,
+            previousWeaponDamage = _weaponDamage,
+            previousWeaponRange = _weaponRangeHexes,
             weaponAttackApCost = newAtk,
             posture = MovementPostureUtility.ToId(_currentPosture),
             cost = safeCost
@@ -660,10 +668,10 @@ public class Player : MonoBehaviour
             int cost = Mathf.Max(0, last.cost);
             _currentAp += cost;
             _apSpentThisTurn -= cost;
-            string prev = string.IsNullOrEmpty(last.previousWeaponCode) ? WeaponCatalog.FistCode : last.previousWeaponCode;
-            WeaponCatalog.GetStats(prev, out string c, out int d, out int r);
+            string prev = string.IsNullOrEmpty(last.previousWeaponCode) ? WeaponCatalog.DefaultWeaponCode : last.previousWeaponCode;
+            string c = WeaponCatalog.NormalizeWeaponCode(prev);
             int prevAtk = last.previousWeaponAttackApCost > 0 ? last.previousWeaponAttackApCost : 1;
-            SetEquippedWeapon(c, d, r, prevAtk);
+            SetEquippedWeapon(c, last.previousWeaponDamage, last.previousWeaponRange, prevAtk);
             return true;
         }
 

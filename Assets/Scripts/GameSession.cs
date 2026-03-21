@@ -236,7 +236,9 @@ public class GameSession : MonoBehaviour
 
     /// <summary>Смена оружия: в бою — в очередь хода (2 ОД смена + EquipWeapon на сервере), иначе только локально.</summary>
     /// <param name="weaponAttackApCost">Стоимость атаки из БД (weapons.attack_ap_cost); если 0 — используется 1.</param>
-    public void RequestEquipWeapon(string weaponCode, int weaponAttackApCost = 1)
+    /// <param name="weaponDamageFromDb">Урон из слота инвентаря (БД). Если &lt; 0 — для офлайна подставляется 1.</param>
+    /// <param name="weaponRangeFromDb">Дальность из слота. Если &lt; 0 — подставляется 1.</param>
+    public void RequestEquipWeapon(string weaponCode, int weaponAttackApCost = 1, int weaponDamageFromDb = -1, int weaponRangeFromDb = -1)
     {
         if (string.IsNullOrWhiteSpace(weaponCode))
             return;
@@ -247,18 +249,19 @@ public class GameSession : MonoBehaviour
         int atk = Mathf.Max(1, weaponAttackApCost);
         if (IsInBattleWithServer())
         {
-            if (!pl.QueueEquipWeaponAction(weaponCode, null, atk))
+            if (!pl.QueueEquipWeaponAction(weaponCode, null, atk, weaponDamageFromDb, weaponRangeFromDb))
                 OnNetworkMessage?.Invoke("Недостаточно ОД");
         }
         else
-            ApplyLocalWeaponOnly(weaponCode, atk);
+            ApplyLocalWeaponOnly(weaponCode, atk, weaponDamageFromDb, weaponRangeFromDb);
     }
 
-    private void ApplyLocalWeaponOnly(string weaponCode, int weaponAttackApCost)
+    private void ApplyLocalWeaponOnly(string weaponCode, int weaponAttackApCost, int weaponDamageFromDb = -1, int weaponRangeFromDb = -1)
     {
-        WeaponCatalog.GetStats(weaponCode, out string code, out int dmg, out int range);
-        var pl = LocalPlayer;
-        pl?.SetEquippedWeapon(code, dmg, range, weaponAttackApCost);
+        string code = WeaponCatalog.NormalizeWeaponCode(weaponCode);
+        int dmg = weaponDamageFromDb >= 0 ? weaponDamageFromDb : 1;
+        int range = weaponRangeFromDb >= 0 ? weaponRangeFromDb : 1;
+        LocalPlayer?.SetEquippedWeapon(code, dmg, range, weaponAttackApCost);
     }
 
     /// <summary>Включён ли онлайн-режим (отправка хода при завершении). True также при загрузке через Find Game (сессия в бою).</summary>
@@ -792,7 +795,7 @@ public class GameSession : MonoBehaviour
                     string posture = GetSpawnString(payload.spawnCurrentPostures, spawnIndex, MovementPostureUtility.WalkId);
                     local.ApplyServerTurnResult(new HexPosition(col, row), new[] { new HexPosition(col, row) }, startAp, 0f, posture);
                     local.SetHealth(currentHp, maxHp);
-                    string wCode = GetSpawnString(payload.spawnWeaponCodes, spawnIndex, WeaponCatalog.FistCode);
+                    string wCode = GetSpawnString(payload.spawnWeaponCodes, spawnIndex, WeaponCatalog.DefaultWeaponCode);
                     int wDmg = GetSpawnInt(payload.spawnWeaponDamages, spawnIndex, 1);
                     int wRng = GetSpawnInt(payload.spawnWeaponRanges, spawnIndex, 1);
                     int wAtk = GetSpawnInt(payload.spawnWeaponAttackApCosts, spawnIndex, 1);
@@ -1100,7 +1103,7 @@ public class GameSession : MonoBehaviour
                 {
                     int atk = action.weaponAttackApCost > 0 ? action.weaponAttackApCost : 1;
                     int? swapCost = action.cost > 0 ? action.cost : (int?)null;
-                    local.QueueEquipWeaponAction(action.weaponCode, swapCost, atk);
+                    local.QueueEquipWeaponAction(action.weaponCode, swapCost, atk, -1, -1);
                 }
             }
         }
@@ -1496,7 +1499,11 @@ public class GameSession : MonoBehaviour
                 targetUnitId = action.targetUnitId,
                 bodyPart = action.bodyPart,
                 posture = action.posture,
-                cost = action.cost
+                previousPosture = action.previousPosture,
+                cost = action.cost,
+                weaponCode = action.weaponCode,
+                previousWeaponAttackApCost = action.previousWeaponAttackApCost,
+                weaponAttackApCost = action.weaponAttackApCost
             };
         }
 
