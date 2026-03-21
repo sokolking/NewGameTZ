@@ -102,6 +102,8 @@ public class GameSession : MonoBehaviour
     private LiveTurnDraftSnapshot _liveTurnDraftSnapshot;
     private bool _debugMobSpawned;
     private bool _battleFinished;
+    /// <summary>Камера 3-го лица включена в начале анимации раунда с сервера (таймлайн или fallback-пути).</summary>
+    private bool _serverRoundThirdPersonEntered;
     /// <summary>Блокировка ввода: ожидание результата раунда или анимация.</summary>
     public bool BlockPlayerInput => _waitingForServerRoundResolve || IsBattleAnimationPlaying || IsTurnHistoryReplayPlaying || IsViewingHistoricalTurn;
 
@@ -605,10 +607,44 @@ public class GameSession : MonoBehaviour
         }
     }
 
-    private static IEnumerator PlayTurnResultAnimationCoroutine(Player player, HexPosition[] path)
+    /// <summary>Вход в 3-е лицо в начале проигрывания раунда с сервера (есть ли MoveStep — не важно).</summary>
+    private IEnumerator CoEnterServerRoundThirdPersonCamera()
+    {
+        _serverRoundThirdPersonEntered = false;
+        Player local = _localPlayer != null ? _localPlayer : FindFirstObjectByType<Player>();
+        if (local == null || local.IsDead || local.IsHidden || local.Grid == null)
+            yield break;
+
+        HexGridCamera cam = FindFirstObjectByType<HexGridCamera>();
+        if (cam == null)
+            yield break;
+
+        Vector3 fh = local.transform.forward;
+        fh.y = 0f;
+        if (fh.sqrMagnitude < 1e-6f)
+            fh = Vector3.forward;
+        else
+            fh.Normalize();
+
+        yield return cam.EnterThirdPersonFollowRoutine(local.transform, fh);
+        _serverRoundThirdPersonEntered = true;
+    }
+
+    private IEnumerator CoExitServerRoundThirdPersonCameraIfEntered()
+    {
+        if (!_serverRoundThirdPersonEntered)
+            yield break;
+        _serverRoundThirdPersonEntered = false;
+        HexGridCamera cam = FindFirstObjectByType<HexGridCamera>();
+        if (cam != null)
+            yield return cam.ExitThirdPersonFollowRoutine();
+    }
+
+    private IEnumerator PlayTurnResultAnimationCoroutine(Player player, HexPosition[] path)
     {
         if (player == null || path == null) yield break;
-        yield return player.PlayPathAnimation(path);
+        bool driveCam = !_serverRoundThirdPersonEntered;
+        yield return player.PlayPathAnimation(path, driveCamera: driveCam);
     }
 
     private static IEnumerator PlayRemoteAnimationCoroutine(RemoteBattleUnitView remote, HexPosition[] path)
@@ -656,13 +692,18 @@ public class GameSession : MonoBehaviour
         if (playback == null || playback.Count == 0)
             yield break;
 
+        yield return CoEnterServerRoundThirdPersonCamera();
+
         int currentTick = -1;
+        bool abortTimeline = false;
         foreach (var entry in playback)
         {
             // После смерти/окончания боя мы не должны останавливать отображение уже сохраненной истории.
-            // Поэтому блокируем только "живую" анимацию, но не turn history replay.
             if (_battleFinished && !_isTurnHistoryReplayPlaying)
-                yield break;
+            {
+                abortTimeline = true;
+                break;
+            }
             BattleExecutedAction action = entry != null ? entry.Action : null;
             if (action == null)
                 continue;
@@ -673,6 +714,11 @@ public class GameSession : MonoBehaviour
             currentTick = action.tick;
             yield return PlayExecutedAction(result, action);
         }
+
+        yield return CoExitServerRoundThirdPersonCameraIfEntered();
+
+        if (abortTimeline)
+            yield break;
     }
 
     private IEnumerator PlayExecutedAction(TurnResultPayload result, BattleExecutedAction action)
@@ -860,7 +906,10 @@ public class GameSession : MonoBehaviour
         var path = new[] { new HexPosition(from.col, from.row), new HexPosition(to.col, to.row) };
 
         if (isLocal && unit is Player local)
-            yield return local.PlayPathAnimation(path);
+        {
+            // Камеру уже включил CoEnterServerRoundThirdPersonCamera в начале таймлайна; иначе — локальный drive.
+            yield return local.PlayPathAnimation(path, driveCamera: !_serverRoundThirdPersonEntered);
+        }
         else if (!isLocal && unit is RemoteBattleUnitView remote)
             yield return remote.PlayPathAnimation(path);
     }
@@ -868,6 +917,11 @@ public class GameSession : MonoBehaviour
     /// <summary>Запускает анимацию пути для всех юнитов в одном кадре (параллельно по кадрам).</summary>
     private IEnumerator PlayAllTurnAnimationsParallel(List<(object unit, bool isLocal, HexPosition[] path)> jobs)
     {
+        if (jobs == null || jobs.Count == 0)
+            yield break;
+
+        yield return CoEnterServerRoundThirdPersonCamera();
+
         var running = new List<Coroutine>();
         foreach (var j in jobs)
         {
@@ -878,6 +932,8 @@ public class GameSession : MonoBehaviour
         }
         foreach (var c in running)
             yield return c;
+
+        yield return CoExitServerRoundThirdPersonCameraIfEntered();
     }
 
     /// <summary>Синхронизировать раунд и UTC deadline таймера с сервером.</summary>
@@ -1282,6 +1338,8 @@ public class GameSession : MonoBehaviour
 
         _activeReplayAnimationCoroutines.Clear();
         var jobs = fallbackJobs ?? new List<(object unit, bool isLocal, HexPosition[] path)>();
+        if (jobs.Count > 0)
+            yield return CoEnterServerRoundThirdPersonCamera();
         foreach (var j in jobs)
         {
             if (j.isLocal && j.unit is Player pl)
@@ -1291,8 +1349,8 @@ public class GameSession : MonoBehaviour
         }
         foreach (var coroutine in _activeReplayAnimationCoroutines)
             yield return coroutine;
-
         _activeReplayAnimationCoroutines.Clear();
+        yield return CoExitServerRoundThirdPersonCameraIfEntered();
     }
 
     private void ResetToInitialReplayState()

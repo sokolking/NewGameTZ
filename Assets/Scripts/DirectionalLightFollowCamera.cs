@@ -22,4 +22,3 @@ public class DirectionalLightFollowCamera : MonoBehaviour
         transform.rotation = Quaternion.LookRotation(_targetCamera.transform.forward, Vector3.up);
     }
 }
-

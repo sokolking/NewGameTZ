@@ -27,6 +27,9 @@ public class HexCell : MonoBehaviour
     private Color _apMaskColor;
     private TextMesh _costLabel;
 
+    /// <summary>Гекс под курсором (OnMouseEnter) — для обновления цвета при смене орто/3-е лицо.</summary>
+    private static HexCell _hoveredCellInstance;
+
     public int Col => _col;
     public int Row => _row;
     public HexCube Cube => HexCubeOffset.FromOffset(_col, _row);
@@ -75,6 +78,10 @@ public class HexCell : MonoBehaviour
     public void SetHighlight(bool hovered)
     {
         _hovered = hovered;
+        if (hovered)
+            _hoveredCellInstance = this;
+        else if (_hoveredCellInstance == this)
+            _hoveredCellInstance = null;
         ApplyCurrentColor();
     }
 
@@ -107,8 +114,17 @@ public class HexCell : MonoBehaviour
         if (_movementFlag && !_isObstacle)
             color = Color.Lerp(color, MovementFlagTint, 0.5f);
         if (_apMaskActive) color = _apMaskColor;
-        if (_hovered) color = HoverColor;
+        // В 3-м лице луч из фиксированной точки экрана «бьёт» в один гекс — ложный hover (серый).
+        if (_hovered && !HexGridCamera.ThirdPersonFollowActive)
+            color = HoverColor;
         ApplyColor(color);
+    }
+
+    /// <summary>Вызывается из <see cref="HexGridCamera"/> после смены ThirdPersonFollowActive.</summary>
+    public static void RefreshHoverAfterThirdPersonCamera()
+    {
+        if (_hoveredCellInstance != null)
+            _hoveredCellInstance.ApplyCurrentColor();
     }
 
     private void ApplyColor(Color color)

@@ -93,12 +93,13 @@ public class RemoteBattleUnitView : MonoBehaviour
         {
             var step = path[i];
             Vector3 target = _grid.GetCellWorldPosition(step.col, step.row);
+            Vector3 stepStart = transform.position;
             float elapsed = 0f;
             while (elapsed < _moveDurationPerHex)
             {
                 elapsed += Time.deltaTime;
                 float t = Mathf.Clamp01(elapsed / _moveDurationPerHex);
-                transform.position = Vector3.Lerp(transform.position, target, t);
+                transform.position = Vector3.Lerp(stepStart, target, t);
                 yield return null;
             }
             transform.position = target;

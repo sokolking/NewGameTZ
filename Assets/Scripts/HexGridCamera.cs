@@ -9,6 +9,9 @@ using System.Collections;
 [RequireComponent(typeof(Camera))]
 public class HexGridCamera : MonoBehaviour
 {
+    /// <summary>Синхронно с режимом слежения 3-го лица (для HexCell: не красить hover серым при движении перспективной камеры).</summary>
+    public static bool ThirdPersonFollowActive { get; private set; }
+
     [SerializeField] private HexGrid _grid;
     [Tooltip("Отступ от краёв сетки (world units).")]
     [SerializeField] private float _padding = 2f;
@@ -34,6 +37,29 @@ public class HexGridCamera : MonoBehaviour
     private bool _hasMapBounds;
     private float _lastZoomInputTime = -999f;
     private int _zoomChangeCount;
+
+    [Header("Слежение 3-е лицо во время анимации хода")]
+    [Tooltip("Высота камеры над землёй относительно юнита.")]
+    [SerializeField] private float _followHeight = 5f;
+    [Tooltip("Дистанция «сзади» по горизонтали (относительно того, куда смотрит цель).")]
+    [SerializeField] private float _followBackDistance = 6f;
+    [Tooltip("Сглаживание поворота камеры к цели (выше — меньше дёрганья по pitch/yaw).")]
+    [SerializeField] private float _followRotationLerp = 18f;
+    [Tooltip("Сглаживание позиции камеры (0 = жёстко следует юниту; >0 может дёргаться вместе с Lerp движения).")]
+    [SerializeField] private float _followPositionSmoothTime = 0f;
+    [Tooltip("Длительность плавного «зума» из вида сверху в 3-е лицо перед анимацией хода.")]
+    [SerializeField] private float _thirdPersonEnterDuration = 0.45f;
+    [Tooltip("Длительность плавного возврата к виду сверху после анимации хода.")]
+    [SerializeField] private float _thirdPersonExitDuration = 0.5f;
+
+    private Transform _followTarget;
+    private Vector3 _followCamPosVelocity;
+    private Vector3 _savedPosition;
+    private Quaternion _savedRotation;
+    private bool _savedOrthographic;
+    private float _savedOrthoSize;
+    private float _savedFieldOfView;
+    private bool _followThirdPersonActive;
 
     public float LastZoomInputTime => _lastZoomInputTime;
     public int ZoomChangeCount => _zoomChangeCount;
@@ -61,25 +87,36 @@ public class HexGridCamera : MonoBehaviour
         float centerX = (minX + maxX) * 0.5f;
         float centerZ = (minZ + maxZ) * 0.5f;
 
-        _cam.orthographic = true;
         float aspect = _cam.aspect;
         float sizeByHeight = height * 0.5f;
         float sizeByWidth = (width * 0.5f) / aspect;
         float fitAll = Mathf.Max(sizeByHeight, sizeByWidth, 1f);
-        _cam.orthographicSize = fitAll;
 
         _orthoMin = Mathf.Max(0.5f, fitAll * _minZoomFactor);
         _orthoMax = fitAll; // отдаление не дальше начального состояния (вся сетка в кадре)
         if (_orthoMax <= _orthoMin)
             _orthoMin = Mathf.Max(0.5f, _orthoMax * 0.5f);
 
-        float camY = Mathf.Max(10f, _cam.orthographicSize);
-        transform.position = new Vector3(centerX, camY, centerZ);
-        transform.rotation = Quaternion.Euler(90f, 0f, 0f);
+        // Если Start выполнился позже анимации хода, не сбрасываем камеру в орто «сверху» поверх 3-го лица.
+        if (!_followThirdPersonActive)
+        {
+            _cam.orthographic = true;
+            _cam.orthographicSize = fitAll;
+
+            float camY = Mathf.Max(10f, _cam.orthographicSize);
+            transform.position = new Vector3(centerX, camY, centerZ);
+            transform.rotation = Quaternion.Euler(90f, 0f, 0f);
+        }
+        else
+        {
+            _cam.orthographicSize = fitAll;
+        }
     }
 
     private void Update()
     {
+        if (_followThirdPersonActive && _followTarget != null)
+            return;
         if (_cam == null || !_cam.orthographic) return;
         if (Mouse.current == null) return;
         if (GameplayMapInputBlock.IsBlocked)
@@ -204,12 +241,238 @@ public class HexGridCamera : MonoBehaviour
         transform.position = new Vector3(px, Mathf.Max(10f, _cam.orthographicSize), pz);
     }
 
+    private void LateUpdate()
+    {
+        if (!_followThirdPersonActive || _followTarget == null || _cam == null)
+            return;
+
+        // Иначе другой код / поздний Start() может снова включить ortho — картинка как «вид сверху».
+        _cam.orthographic = false;
+
+        ApplyThirdPersonFollowPose(instantRotation: false);
+    }
+
+    /// <summary>
+    /// Камера всегда сзади цели: горизонтальное направление — <see cref="Transform.forward"/> цели (не вектор скорости).
+    /// </summary>
+    private void ApplyThirdPersonFollowPose(bool instantRotation = false)
+    {
+        Vector3 p = _followTarget.position;
+        Vector3 flat = GetFollowBehindHorizontalForward();
+
+        Vector3 desiredCamPos = p - flat * _followBackDistance + Vector3.up * _followHeight;
+        Vector3 lookAt = p + Vector3.up * 0.5f;
+        if (_followPositionSmoothTime > 1e-5f)
+        {
+            transform.position = Vector3.SmoothDamp(
+                transform.position,
+                desiredCamPos,
+                ref _followCamPosVelocity,
+                _followPositionSmoothTime,
+                Mathf.Infinity,
+                Time.deltaTime);
+        }
+        else
+        {
+            transform.position = desiredCamPos;
+            _followCamPosVelocity = Vector3.zero;
+        }
+
+        Vector3 lookDir = lookAt - transform.position;
+        if (lookDir.sqrMagnitude > 1e-8f)
+        {
+            Quaternion targetRot = Quaternion.LookRotation(lookDir.normalized, Vector3.up);
+            if (instantRotation)
+                transform.rotation = targetRot;
+            else
+            {
+                float k = 1f - Mathf.Exp(-_followRotationLerp * Time.deltaTime);
+                transform.rotation = Quaternion.Slerp(transform.rotation, targetRot, k);
+            }
+        }
+    }
+
+    /// <summary>Горизонтальный «вперёд» цели слежения — камера стоит сзади (против этого вектора).</summary>
+    private Vector3 GetFollowBehindHorizontalForward()
+    {
+        if (_followTarget == null)
+            return Vector3.forward;
+        Vector3 f = _followTarget.forward;
+        f.y = 0f;
+        if (f.sqrMagnitude < 1e-8f)
+            return Vector3.forward;
+        return f.normalized;
+    }
+
+    private static float ApproxVerticalFovFromOrthoTopDown(float orthoSize, float cameraY)
+    {
+        float h = Mathf.Max(0.01f, cameraY);
+        return 2f * Mathf.Atan(orthoSize / h) * Mathf.Rad2Deg;
+    }
+
+    /// <summary>Конечная поза 3-го лица по ориентации цели и позиции.</summary>
+    private void ComputeThirdPersonEndPose(out Vector3 endPos, out Quaternion endRot, out float endFov)
+    {
+        Vector3 p = _followTarget.position;
+        Vector3 flat = GetFollowBehindHorizontalForward();
+
+        Vector3 desiredCamPos = p - flat * _followBackDistance + Vector3.up * _followHeight;
+        Vector3 lookAt = p + Vector3.up * 0.5f;
+        Vector3 lookDir = lookAt - desiredCamPos;
+        if (lookDir.sqrMagnitude > 1e-8f)
+            endRot = Quaternion.LookRotation(lookDir.normalized, Vector3.up);
+        else
+            endRot = transform.rotation;
+        endPos = desiredCamPos;
+        endFov = _savedFieldOfView < 25f ? 55f : _savedFieldOfView;
+        if (endFov < 30f)
+            endFov = 55f;
+    }
+
+    /// <summary>Плавный переход из орто «сверху» в 3-е лицо. Дождаться в корутине перед анимацией хода.</summary>
+    /// <param name="initialHorizontalDir">Устарело: камера ориентируется по <see cref="Transform.forward"/> цели.</param>
+    public IEnumerator EnterThirdPersonFollowRoutine(Transform target, Vector3? initialHorizontalDir = null)
+    {
+        if (target == null) yield break;
+        if (_cam == null) _cam = GetComponent<Camera>();
+        if (_cam == null) yield break;
+        if (_followThirdPersonActive)
+            EndThirdPersonFollowImmediate();
+
+        StopAllCoroutines();
+
+        _savedPosition = transform.position;
+        _savedRotation = transform.rotation;
+        _savedOrthographic = _cam.orthographic;
+        _savedOrthoSize = _cam.orthographicSize;
+        _savedFieldOfView = _cam.fieldOfView;
+
+        _followTarget = target;
+
+        ComputeThirdPersonEndPose(out Vector3 endPos, out Quaternion endRot, out float endFov);
+
+        Vector3 startPos = _savedPosition;
+        Quaternion startRot = _savedRotation;
+        float startFovPersp = _savedOrthographic
+            ? ApproxVerticalFovFromOrthoTopDown(_savedOrthoSize, _savedPosition.y)
+            : Mathf.Clamp(_savedFieldOfView, 5f, 170f);
+
+        ThirdPersonFollowActive = true;
+        HexCell.RefreshHoverAfterThirdPersonCamera();
+
+        _cam.orthographic = false;
+        _cam.fieldOfView = startFovPersp;
+
+        float duration = Mathf.Max(0.01f, _thirdPersonEnterDuration);
+        float elapsed = 0f;
+        while (elapsed < duration)
+        {
+            elapsed += Time.deltaTime;
+            float t = Mathf.Clamp01(elapsed / duration);
+            float k = t * t * (3f - 2f * t);
+
+            transform.position = Vector3.Lerp(startPos, endPos, k);
+            transform.rotation = Quaternion.Slerp(startRot, endRot, k);
+            _cam.fieldOfView = Mathf.Lerp(startFovPersp, endFov, k);
+            yield return null;
+        }
+
+        transform.SetPositionAndRotation(endPos, endRot);
+        _cam.fieldOfView = endFov;
+
+        _followThirdPersonActive = true;
+        HexCell.RefreshHoverAfterThirdPersonCamera();
+        _followCamPosVelocity = Vector3.zero;
+        ApplyThirdPersonFollowPose(instantRotation: true);
+    }
+
+    /// <summary>Плавный возврат к сохранённому орто-виду после анимации.</summary>
+    public IEnumerator ExitThirdPersonFollowRoutine()
+    {
+        if (!_followThirdPersonActive)
+            yield break;
+        if (_cam == null) _cam = GetComponent<Camera>();
+        if (_cam == null) yield break;
+
+        Vector3 startPos = transform.position;
+        Quaternion startRot = transform.rotation;
+        float startFov = _cam.fieldOfView;
+
+        _followTarget = null;
+        _followThirdPersonActive = false;
+
+        Vector3 endPos = _savedPosition;
+        Quaternion endRot = _savedRotation;
+        float endFovPersp = _savedOrthographic
+            ? ApproxVerticalFovFromOrthoTopDown(_savedOrthoSize, _savedPosition.y)
+            : Mathf.Clamp(_savedFieldOfView, 5f, 170f);
+
+        float duration = Mathf.Max(0.01f, _thirdPersonExitDuration);
+        float elapsed = 0f;
+        while (elapsed < duration)
+        {
+            elapsed += Time.deltaTime;
+            float t = Mathf.Clamp01(elapsed / duration);
+            float k = t * t * (3f - 2f * t);
+
+            transform.position = Vector3.Lerp(startPos, endPos, k);
+            transform.rotation = Quaternion.Slerp(startRot, endRot, k);
+            _cam.fieldOfView = Mathf.Lerp(startFov, endFovPersp, k);
+            _cam.orthographic = false;
+            yield return null;
+        }
+
+        ThirdPersonFollowActive = false;
+        HexCell.RefreshHoverAfterThirdPersonCamera();
+
+        transform.SetPositionAndRotation(_savedPosition, _savedRotation);
+        _cam.orthographic = _savedOrthographic;
+        _cam.orthographicSize = _savedOrthoSize;
+        _cam.fieldOfView = _savedFieldOfView;
+    }
+
+    /// <summary>Мгновенный сброс (прерывание, ForceStopMovement).</summary>
+    public void EndThirdPersonFollowImmediate()
+    {
+        if (!_followThirdPersonActive && !ThirdPersonFollowActive)
+            return;
+
+        StopAllCoroutines();
+
+        _followTarget = null;
+        _followThirdPersonActive = false;
+        ThirdPersonFollowActive = false;
+        HexCell.RefreshHoverAfterThirdPersonCamera();
+
+        if (_cam == null) _cam = GetComponent<Camera>();
+        if (_cam == null) return;
+
+        transform.SetPositionAndRotation(_savedPosition, _savedRotation);
+        _cam.orthographic = _savedOrthographic;
+        _cam.orthographicSize = _savedOrthoSize;
+        _cam.fieldOfView = _savedFieldOfView;
+    }
+
+    /// <summary>Устар.: используйте <see cref="EnterThirdPersonFollowRoutine"/>.</summary>
+    public void BeginThirdPersonFollow(Transform target, Vector3? initialHorizontalDir = null)
+    {
+        if (target == null) return;
+        StartCoroutine(EnterThirdPersonFollowRoutine(target, initialHorizontalDir));
+    }
+
+    /// <summary>Устар.: используйте <see cref="ExitThirdPersonFollowRoutine"/> или <see cref="EndThirdPersonFollowImmediate"/>.</summary>
+    public void EndThirdPersonFollow()
+    {
+        EndThirdPersonFollowImmediate();
+    }
+
     /// <summary>Пустой метод для совместимости с вызовами из GameSession и др.</summary>
     public void RefocusOnLocalPlayer() { }
 
     /// <summary>Центрирует камеру по XZ на заданной мировой позиции (Y сохраняется/пересчитывается от текущего зума).</summary>
     public void FocusOnWorldPosition(Vector3 worldPosition)
     {
+        if (_followThirdPersonActive || ThirdPersonFollowActive) return;
         if (_cam == null) _cam = GetComponent<Camera>();
         if (_cam == null) return;
         float camY = Mathf.Max(10f, _cam.orthographic ? _cam.orthographicSize : transform.position.y);
@@ -253,6 +516,9 @@ public class HexGridCamera : MonoBehaviour
         float elapsed = 0f;
         while (elapsed < safeDuration)
         {
+            if (_followThirdPersonActive || _cam == null || !_cam.orthographic)
+                yield break;
+
             elapsed += Time.unscaledDeltaTime;
             float t = Mathf.Clamp01(elapsed / safeDuration);
             // SmoothStep для более мягкого начала/конца
@@ -263,6 +529,9 @@ public class HexGridCamera : MonoBehaviour
             ClampPanToMap();
             yield return null;
         }
+
+        if (_followThirdPersonActive || _cam == null || !_cam.orthographic)
+            yield break;
 
         transform.position = targetPos;
         _cam.orthographicSize = targetSize;

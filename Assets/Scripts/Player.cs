@@ -267,6 +267,7 @@ public class Player : MonoBehaviour
                 continue;
 
             Vector3 target = _grid.GetCellWorldPosition(step.col, step.row);
+            Vector3 stepStart = transform.position;
             float elapsed = 0f;
 
             while (elapsed < _moveDurationPerHex)
@@ -279,7 +280,7 @@ public class Player : MonoBehaviour
 
                 elapsed += Time.deltaTime;
                 float t = Mathf.Clamp01(elapsed / _moveDurationPerHex);
-                transform.position = Vector3.Lerp(transform.position, target, t);
+                transform.position = Vector3.Lerp(stepStart, target, t);
                 yield return null;
             }
 
@@ -788,7 +789,8 @@ public class Player : MonoBehaviour
     }
 
     /// <summary>Проиграть анимацию движения по пути с сервера (actualPath). Запускать после ApplyServerTurnResult. Не меняет состояние.</summary>
-    public IEnumerator PlayPathAnimation(HexPosition[] path)
+    /// <param name="driveCamera">Если false — только движение юнита; Begin/End камеры делает GameSession (например, один цикл на весь таймлайн MoveStep с сервера).</param>
+    public IEnumerator PlayPathAnimation(HexPosition[] path, bool driveCamera = true)
     {
         if (_grid == null || path == null || path.Length < 2)
         {
@@ -797,40 +799,79 @@ public class Player : MonoBehaviour
             yield break;
         }
 
+        HexGridCamera hexCam = null;
+        Vector3? firstStepDir = null;
+        if (driveCamera)
+        {
+            hexCam = FindFirstObjectByType<HexGridCamera>();
+            Vector3 a = _grid.GetCellWorldPosition(path[0].col, path[0].row);
+            Vector3 b = _grid.GetCellWorldPosition(path[1].col, path[1].row);
+            Vector3 d = b - a;
+            d.y = 0f;
+            if (d.sqrMagnitude > 0.0001f)
+                firstStepDir = d.normalized;
+        }
+
         int interruptVersion = _movementInterruptVersion;
         _isMoving = true;
         transform.position = _grid.GetCellWorldPosition(path[0].col, path[0].row);
-
-        for (int i = 1; i < path.Length; i++)
+        bool enteredThirdPerson = false;
+        if (driveCamera && hexCam != null)
         {
-            if (interruptVersion != _movementInterruptVersion || IsDead || _isHidden)
-            {
-                _isMoving = false;
-                yield break;
-            }
+            yield return hexCam.EnterThirdPersonFollowRoutine(transform, firstStepDir);
+            enteredThirdPerson = true;
+        }
 
-            var step = path[i];
-            Vector3 target = _grid.GetCellWorldPosition(step.col, step.row);
-            float elapsed = 0f;
-
-            while (elapsed < _moveDurationPerHex)
+        bool interrupted = false;
+        try
+        {
+            for (int i = 1; i < path.Length; i++)
             {
                 if (interruptVersion != _movementInterruptVersion || IsDead || _isHidden)
                 {
-                    _isMoving = false;
-                    yield break;
+                    interrupted = true;
+                    break;
                 }
 
-                elapsed += Time.deltaTime;
-                float t = Mathf.Clamp01(elapsed / _moveDurationPerHex);
-                transform.position = Vector3.Lerp(transform.position, target, t);
-                yield return null;
+                var step = path[i];
+                Vector3 target = _grid.GetCellWorldPosition(step.col, step.row);
+                Vector3 stepStart = transform.position;
+                float elapsed = 0f;
+
+                while (elapsed < _moveDurationPerHex)
+                {
+                    if (interruptVersion != _movementInterruptVersion || IsDead || _isHidden)
+                    {
+                        interrupted = true;
+                        break;
+                    }
+
+                    elapsed += Time.deltaTime;
+                    float t = Mathf.Clamp01(elapsed / _moveDurationPerHex);
+                    transform.position = Vector3.Lerp(stepStart, target, t);
+                    yield return null;
+                }
+
+                if (interrupted)
+                    break;
+
+                transform.position = target;
             }
 
-            transform.position = target;
+            _isMoving = false;
+        }
+        finally
+        {
+            _isMoving = false;
         }
 
-        _isMoving = false;
+        if (enteredThirdPerson && hexCam != null)
+        {
+            if (interrupted)
+                hexCam.EndThirdPersonFollowImmediate();
+            else
+                yield return hexCam.ExitThirdPersonFollowRoutine();
+        }
     }
 
     /// <summary>Проиграть анимацию всего пути за ход (без изменения ОД и штрафов), используется при завершении хода с анимацией.</summary>
@@ -838,30 +879,54 @@ public class Player : MonoBehaviour
     {
         if (_grid == null || _turnPath == null || _turnPath.Count < 2) yield break;
 
+        HexGridCamera hexCam = FindFirstObjectByType<HexGridCamera>();
+        Vector3? firstStepDir = null;
+        {
+            Vector3 a = _grid.GetCellWorldPosition(_turnPath[0].col, _turnPath[0].row);
+            Vector3 b = _grid.GetCellWorldPosition(_turnPath[1].col, _turnPath[1].row);
+            Vector3 d = b - a;
+            d.y = 0f;
+            if (d.sqrMagnitude > 0.0001f)
+                firstStepDir = d.normalized;
+        }
+
         _isMoving = true;
 
         // Стартуем с исходной клетки хода.
         Vector3 startPos = _grid.GetCellWorldPosition(_turnPath[0].col, _turnPath[0].row);
         transform.position = startPos;
+        if (hexCam != null)
+            yield return hexCam.EnterThirdPersonFollowRoutine(transform, firstStepDir);
 
-        for (int i = 1; i < _turnPath.Count; i++)
+        try
         {
-            var step = _turnPath[i];
-            Vector3 target = _grid.GetCellWorldPosition(step.col, step.row);
-            float elapsed = 0f;
-
-            while (elapsed < _moveDurationPerHex)
+            for (int i = 1; i < _turnPath.Count; i++)
             {
-                elapsed += Time.deltaTime;
-                float t = Mathf.Clamp01(elapsed / _moveDurationPerHex);
-                transform.position = Vector3.Lerp(transform.position, target, t);
-                yield return null;
+                var step = _turnPath[i];
+                Vector3 target = _grid.GetCellWorldPosition(step.col, step.row);
+                Vector3 stepStart = transform.position;
+                float elapsed = 0f;
+
+                while (elapsed < _moveDurationPerHex)
+                {
+                    elapsed += Time.deltaTime;
+                    float t = Mathf.Clamp01(elapsed / _moveDurationPerHex);
+                    transform.position = Vector3.Lerp(stepStart, target, t);
+                    yield return null;
+                }
+
+                transform.position = target;
             }
 
-            transform.position = target;
+            _isMoving = false;
+        }
+        finally
+        {
+            _isMoving = false;
         }
 
-        _isMoving = false;
+        if (hexCam != null)
+            yield return hexCam.ExitThirdPersonFollowRoutine();
     }
 
     /// <summary>
@@ -872,6 +937,7 @@ public class Player : MonoBehaviour
     {
         _movementInterruptVersion++;
         StopAllCoroutines();
+        FindFirstObjectByType<HexGridCamera>()?.EndThirdPersonFollowImmediate();
         if (_grid != null)
             transform.position = _grid.GetCellWorldPosition(_currentCol, _currentRow);
         _isMoving = false;
