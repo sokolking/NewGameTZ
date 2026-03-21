@@ -9,6 +9,7 @@ public class HexCell : MonoBehaviour
     private static readonly int ColorId = Shader.PropertyToID("_Color");
     private static readonly Color HoverColor = new Color(0.5f, 0.5f, 0.5f, 0.6f);
     private static readonly Color ObstacleColor = new Color(0.28f, 0.28f, 0.28f, 1f);
+    private static readonly Color MovementFlagTint = new Color(0.95f, 0.75f, 0.1f, 1f);
 
     [SerializeField] private int _col;
     [SerializeField] private int _row;
@@ -21,6 +22,7 @@ public class HexCell : MonoBehaviour
 
     private bool _hovered;
     private bool _apMaskActive;
+    private bool _movementFlag;
     private bool _isObstacle;
     private Color _apMaskColor;
     private TextMesh _costLabel;
@@ -84,6 +86,13 @@ public class HexCell : MonoBehaviour
         ApplyCurrentColor();
     }
 
+    /// <summary>Маркер цели «добежать на следующем ходе» (двойной клик за пределы ОД).</summary>
+    public void SetMovementFlag(bool active)
+    {
+        _movementFlag = active;
+        ApplyCurrentColor();
+    }
+
     public void SetObstacle(bool active)
     {
         _isObstacle = active;
@@ -95,6 +104,8 @@ public class HexCell : MonoBehaviour
     private void ApplyCurrentColor()
     {
         Color color = _isObstacle ? ObstacleColor : _defaultColor;
+        if (_movementFlag && !_isObstacle)
+            color = Color.Lerp(color, MovementFlagTint, 0.5f);
         if (_apMaskActive) color = _apMaskColor;
         if (_hovered) color = HoverColor;
         ApplyColor(color);

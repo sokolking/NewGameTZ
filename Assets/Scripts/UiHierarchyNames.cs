@@ -44,6 +44,9 @@ public static class UiHierarchyNames
     public const string EndTurnButton = "EndTurn Button";
     public const string EndTurnButtonCompact = "EndTurnButton";
 
+    /// <summary>Анимация движения при планировании хода (вкл — как сейчас, выкл — телепорт).</summary>
+    public const string ToggleShowAnimation = "ToggleShowAnimation";
+
     public const string LoggerText = "LoggerText";
     public const string LogTextLegacy = "LogText";
     public const string LoggerUp = "LoggerUp";

@@ -22,6 +22,8 @@ public class ActionPointsUI : MonoBehaviour
     [SerializeField] private Button _hideButton;
     [SerializeField] private Button _skipButton;
     [SerializeField] private Button _stepBackButton;
+    [Tooltip("Вкл — пошаговая анимация движения при планировании; выкл — телепорт. Имя в сцене: ToggleShowAnimation.")]
+    [SerializeField] private Toggle _toggleShowAnimation;
     [SerializeField] private Image _walkBG;
     [SerializeField] private Image _runBG;
     [SerializeField] private Image _sitBG;
@@ -227,6 +229,8 @@ public class ActionPointsUI : MonoBehaviour
             _skipButton.onClick.RemoveListener(OnSkipClicked);
         if (_stepBackButton != null)
             _stepBackButton.onClick.RemoveListener(OnStepBackClicked);
+        if (_toggleShowAnimation != null)
+            _toggleShowAnimation.onValueChanged.RemoveListener(OnPlanningMovementAnimationToggle);
         if (_skipDialogOkButton != null)
             _skipDialogOkButton.onClick.RemoveListener(OnSkipDialogOkClicked);
         if (_skipDialogCancelButton != null)
@@ -498,12 +502,19 @@ public class ActionPointsUI : MonoBehaviour
 
         if (!_player.TryUndoLastQueuedAction(out string reason))
         {
+            if (_player.TryClearMovementFlagOnStepBackAtFullAp())
+                return;
             if (!string.IsNullOrEmpty(reason))
                 AppendLog(reason);
             return;
         }
 
         RefreshMovementButtons(_player.CurrentMovementPosture, skipSelected: false);
+    }
+
+    private static void OnPlanningMovementAnimationToggle(bool showAnimation)
+    {
+        MovementPlanningVisualSettings.ShowMovementAnimation = showAnimation;
     }
 
     private void ChangeMovementPosture(MovementPosture posture)
@@ -541,7 +552,9 @@ public class ActionPointsUI : MonoBehaviour
             return;
         }
 
-        if (_player.IsMoving) return;
+        if (_player != null && _player.IsMoving)
+            _player.ForceStopMovement();
+
         if (_gameSession != null && _gameSession.IsBattleAnimationPlaying) return;
 
         _endTurnInProgress = true;
@@ -1430,6 +1443,14 @@ public class ActionPointsUI : MonoBehaviour
         if (_stepBackButton == null)
             _stepBackButton = FindChildComponent<Button>(frontContent, UiHierarchyNames.StepBackButton)
                 ?? FindChildComponent<Button>(frontContent, UiHierarchyNames.StepBackButtonCamel);
+        if (_toggleShowAnimation == null)
+            _toggleShowAnimation = FindChildComponent<Toggle>(frontContent, UiHierarchyNames.ToggleShowAnimation);
+        if (_toggleShowAnimation == null)
+        {
+            Transform tAnim = FindNamedTransform(UiHierarchyNames.ToggleShowAnimation);
+            if (tAnim != null)
+                _toggleShowAnimation = tAnim.GetComponent<Toggle>();
+        }
         if (_walkBG == null)
             _walkBG = FindChildComponent<Image>(frontContent, UiHierarchyNames.WalkBg)
                 ?? FindChildComponent<Image>(frontContent, UiHierarchyNames.WalkBgPascal);
@@ -1731,6 +1752,13 @@ public class ActionPointsUI : MonoBehaviour
         {
             _skipDialogCancelButton.onClick.RemoveListener(OnSkipDialogCancelClicked);
             _skipDialogCancelButton.onClick.AddListener(OnSkipDialogCancelClicked);
+        }
+
+        if (_toggleShowAnimation != null)
+        {
+            _toggleShowAnimation.onValueChanged.RemoveListener(OnPlanningMovementAnimationToggle);
+            _toggleShowAnimation.onValueChanged.AddListener(OnPlanningMovementAnimationToggle);
+            MovementPlanningVisualSettings.ShowMovementAnimation = _toggleShowAnimation.isOn;
         }
 
         ApplySkipDialogInputFieldRules();

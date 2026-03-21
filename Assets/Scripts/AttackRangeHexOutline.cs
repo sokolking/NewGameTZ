@@ -10,9 +10,9 @@ public sealed class AttackRangeHexOutline : MonoBehaviour
     private const int MaxEdgeSegments = 400;
 
     [SerializeField] private HexGrid _grid;
-    [SerializeField] private float _yOffset = 0.04f;
-    [SerializeField] private float _lineWidth = 0.045f;
-    [SerializeField] private Color _lineColor = new Color(0.15f, 0.45f, 0.95f, 0.95f);
+    [SerializeField] private float _yOffset = 0.01f;
+    [SerializeField] private float _lineWidth = 0.25f;
+    [SerializeField] private Color _lineColor = new Color(0.94f, 0.42f, 0.30f, 0.95f);
     [SerializeField] private int _defaultWeaponRangeHexes = 1;
 
     private readonly List<LineRenderer> _pool = new();

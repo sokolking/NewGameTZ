@@ -34,7 +34,8 @@ LIMIT @take;
                 Name = reader.GetString(2),
                 Damage = reader.GetInt32(3),
                 Range = reader.GetInt32(4),
-                IconKey = reader.GetString(5)
+                IconKey = reader.GetString(5),
+                AttackApCost = reader.GetInt32(6)
             });
         }
 

@@ -55,6 +55,8 @@ public class HexInputManager : MonoBehaviour
     private bool _hasHoldIndicatorAnchor;
 
     private static readonly RaycastHit[] _hexRaycastHits = new RaycastHit[1];
+    /// <summary>Двойной клик: порядок попаданий луча (гекс vs моб) без аллокации.</summary>
+    private static readonly RaycastHit[] _doubleClickRaycastHits = new RaycastHit[48];
     private readonly List<(int col, int row)> _doubleClickPathBuffer = new(64);
     private float _holdCompositeHalfWidth = 0.5f;
     private float _holdCompositeHalfHeight = 0.5f;
@@ -167,8 +169,11 @@ public class HexInputManager : MonoBehaviour
 
     private void OnDoubleClick()
     {
-        HexCell cell = GetHexUnderCursor();
-        if (cell == null || _player == null || _player.IsMoving || _player.IsDead || _player.IsHidden) return;
+        // Двойной клик по коллайдеру юнита — только атака (удержание/клики), не ход.
+        // Двойной клик по гексу (в т.ч. клетка под мобом, если луч попал в пол) — движение.
+        if (!TryGetHexCellForDoubleClickMove(out HexCell cell) || _player == null || _player.IsMoving || _player.IsDead || _player.IsHidden)
+            return;
+
         if (!_player.EnsureMovablePostureForMovement())
         {
             GameSession.OnNetworkMessage?.Invoke("Недостаточно ОД для выхода из укрытия");
@@ -182,8 +187,18 @@ public class HexInputManager : MonoBehaviour
                 _doubleClickPathBuffer))
             return;
 
-        if (_doubleClickPathBuffer.Count > 0)
-            _player.MoveAlongPath(_doubleClickPathBuffer, animate: true);
+        int stepsToMove = _doubleClickPathBuffer.Count - 1;
+        if (stepsToMove <= 0)
+            return;
+
+        int allowed = _player.GetAllowedMoveStepsForPath(stepsToMove);
+        if (allowed >= stepsToMove)
+            _player.ClearMovementFlag();
+        else
+            _player.SetMovementFlag(cell.Col, cell.Row);
+
+        if (allowed > 0)
+            _player.MoveAlongPath(_doubleClickPathBuffer, MovementPlanningVisualSettings.ShowMovementAnimation);
     }
 
     private HexCell GetHexUnderCursor()
@@ -197,6 +212,49 @@ public class HexInputManager : MonoBehaviour
         return _hexRaycastHits[0].collider != null
             ? _hexRaycastHits[0].collider.GetComponent<HexCell>()
             : null;
+    }
+
+    /// <summary>
+    /// Клетка для движения по двойному клику: по лучу по расстоянию ищем первое попадание в юнита или в гекс.
+    /// Если раньше гекса идёт <see cref="RemoteBattleUnitView"/> — клик по силуэту, движение не выполняем.
+    /// </summary>
+    private bool TryGetHexCellForDoubleClickMove(out HexCell cell)
+    {
+        cell = null;
+        if (_camera == null || Mouse.current == null) return false;
+        Vector2 pos = Mouse.current.position.ReadValue();
+        Ray ray = _camera.ScreenPointToRay(new Vector3(pos.x, pos.y, 0f));
+        int n = Physics.RaycastNonAlloc(ray, _doubleClickRaycastHits, 1000f, Physics.DefaultRaycastLayers, QueryTriggerInteraction.Collide);
+        if (n <= 0) return false;
+
+        for (int a = 0; a < n - 1; a++)
+        {
+            for (int b = a + 1; b < n; b++)
+            {
+                if (_doubleClickRaycastHits[a].distance > _doubleClickRaycastHits[b].distance)
+                {
+                    RaycastHit tmp = _doubleClickRaycastHits[a];
+                    _doubleClickRaycastHits[a] = _doubleClickRaycastHits[b];
+                    _doubleClickRaycastHits[b] = tmp;
+                }
+            }
+        }
+
+        for (int i = 0; i < n; i++)
+        {
+            Collider c = _doubleClickRaycastHits[i].collider;
+            if (c == null) continue;
+            if (c.GetComponentInParent<RemoteBattleUnitView>() != null)
+                return false;
+            HexCell hex = c.GetComponentInParent<HexCell>();
+            if (hex != null)
+            {
+                cell = hex;
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private void UpdateLeftHoldIndicator()

@@ -582,6 +582,8 @@ public class GameSession : MonoBehaviour
             var p = _localPlayer != null ? _localPlayer : FindFirstObjectByType<Player>();
             p?.SetTurnTimerPaused(false);
             _waitingForServerRoundResolve = false;
+            if (p != null && !BlockPlayerInput)
+                p.TryAutoMoveTowardFlag();
         }
         else
         {
@@ -829,6 +831,8 @@ public class GameSession : MonoBehaviour
         }
 
         FindFirstObjectByType<HexGridCamera>()?.RefocusOnLocalPlayer();
+
+        local?.ClearMovementFlag();
     }
 
     private void StartTurnHistoryReplay(int targetPointer)

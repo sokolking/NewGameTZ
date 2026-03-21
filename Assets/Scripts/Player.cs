@@ -45,6 +45,11 @@ public class Player : MonoBehaviour
     // Эффективный максимум ОД в начале текущего хода (до трат в этом ходу).
     /// <summary>Подотрезок пути по ОД — без <see cref="List{T}.GetRange"/> (аллокация подсписка).</summary>
     private readonly List<(int col, int row)> _moveSubPathScratch = new(32);
+    /// <summary>Автопродолжение к цели после раунда — без аллокации.</summary>
+    private readonly List<(int col, int row)> _movementFlagPathBuffer = new(64);
+    private bool _movementFlagActive;
+    private int _movementFlagCol;
+    private int _movementFlagRow;
     // Полный путь за текущий ход (все переходы по гексам, в порядке кликов).
     private List<(int col, int row)> _turnPath;
     private List<BattleQueuedAction> _turnActions;
@@ -189,6 +194,15 @@ public class Player : MonoBehaviour
         int allowedSteps = GetAllowedSteps(PreviewMovementPosture, stepsAlready, stepsToMove, _currentAp);
         if (allowedSteps <= 0) return;
 
+        if (_turnPath == null)
+            _turnPath = new List<(int col, int row)>();
+        if (_turnActions == null)
+            _turnActions = new List<BattleQueuedAction>();
+
+        int actionsBeforeThisMove = _turnActions.Count;
+        int pathCountBeforeThisMove = _turnPath.Count;
+        int stepsBeforeThisMove = _stepsTakenThisTurn;
+
         MovementPosture posture = PreviewMovementPosture;
         int moveCost = GetMoveCost(posture, stepsAlready, allowedSteps);
         _apSpentThisTurn += moveCost;
@@ -205,10 +219,6 @@ public class Player : MonoBehaviour
 
         // Накопить полный путь за ход:
         // при первом перемещении добавляем стартовую клетку, далее — только новые шаги.
-        if (_turnPath == null)
-            _turnPath = new List<(int col, int row)>();
-        if (_turnActions == null)
-            _turnActions = new List<BattleQueuedAction>();
         if (_turnPath.Count == 0)
             _turnPath.Add((_currentCol, _currentRow));
         for (int i = 1; i < subPath.Count; i++)
@@ -234,11 +244,10 @@ public class Player : MonoBehaviour
 
             HexCell cell = _grid.GetCell(_currentCol, _currentRow);
             OnMovedToCell?.Invoke(cell);
+            TryClearMovementFlagIfReachedDestination();
         }
         else
-        {
             StartCoroutine(MoveAlongPathCoroutine(subPath));
-        }
     }
 
     private IEnumerator MoveAlongPathCoroutine(List<(int col, int row)> path)
@@ -286,6 +295,100 @@ public class Player : MonoBehaviour
         }
 
         _isMoving = false;
+        TryClearMovementFlagIfReachedDestination();
+    }
+
+    /// <summary>Сколько шагов по пути можно пройти за текущие ОД (учёт позы и шагов в ходу).</summary>
+    public int GetAllowedMoveStepsForPath(int pathEdgeCount)
+    {
+        if (pathEdgeCount <= 0)
+            return 0;
+        return GetAllowedSteps(PreviewMovementPosture, _stepsTakenThisTurn, pathEdgeCount, _currentAp);
+    }
+
+    /// <summary>Цель «добежать» на следующих ходах; подсветка на гексе.</summary>
+    public void SetMovementFlag(int col, int row)
+    {
+        if (_grid == null)
+            return;
+        ClearMovementFlagVisualOnly();
+        _movementFlagActive = true;
+        _movementFlagCol = col;
+        _movementFlagRow = row;
+        HexCell c = _grid.GetCell(col, row);
+        if (c != null)
+            c.SetMovementFlag(true);
+    }
+
+    public void ClearMovementFlag()
+    {
+        ClearMovementFlagVisualOnly();
+        _movementFlagActive = false;
+    }
+
+    private void ClearMovementFlagVisualOnly()
+    {
+        if (!_movementFlagActive || _grid == null)
+            return;
+        HexCell c = _grid.GetCell(_movementFlagCol, _movementFlagRow);
+        if (c != null)
+            c.SetMovementFlag(false);
+    }
+
+    private void TryClearMovementFlagIfReachedDestination()
+    {
+        if (!_movementFlagActive)
+            return;
+        if (_currentCol == _movementFlagCol && _currentRow == _movementFlagRow)
+            ClearMovementFlag();
+    }
+
+    /// <summary>После раунда — автоматически идти к флагу, если он ещё актуален.</summary>
+    public void TryAutoMoveTowardFlag()
+    {
+        if (!_movementFlagActive || _isMoving || IsDead || _isHidden || _grid == null)
+            return;
+        // Не используем BlockPlayerInput: удалённый юнит может ещё анимироваться, локальный уже может идти к флагу.
+        if (GameSession.Active != null)
+        {
+            if (GameSession.Active.IsWaitingForServerRoundResolve) return;
+            if (GameSession.Active.IsTurnHistoryReplayPlaying) return;
+            if (GameSession.Active.IsViewingHistoricalTurn) return;
+        }
+        if (!MovementPostureUtility.CanMove(_currentPosture))
+            return;
+        if (_currentPosture == MovementPosture.Hide)
+            return;
+        if (!EnsureMovablePostureForMovement())
+            return;
+
+        if (_currentCol == _movementFlagCol && _currentRow == _movementFlagRow)
+        {
+            ClearMovementFlag();
+            return;
+        }
+
+        if (!HexPathfinding.TryBuildPath(_grid, _currentCol, _currentRow, _movementFlagCol, _movementFlagRow, _movementFlagPathBuffer))
+            return;
+        if (_movementFlagPathBuffer.Count < 2)
+            return;
+
+        MoveAlongPath(_movementFlagPathBuffer, MovementPlanningVisualSettings.ShowMovementAnimation);
+    }
+
+    /// <summary>
+    /// «Шаг назад», когда отменять нечего: снять флаг «добежать», если в этом ходу ещё не тратил ОД (как при полном запасе до первого действия).
+    /// </summary>
+    public bool TryClearMovementFlagOnStepBackAtFullAp()
+    {
+        if (!_movementFlagActive)
+            return false;
+        if (_turnActions != null && _turnActions.Count > 0)
+            return false;
+        if (_apSpentThisTurn > 0)
+            return false;
+        ClearMovementFlag();
+        return true;
     }
 
     /// <summary>
@@ -753,10 +856,16 @@ public class Player : MonoBehaviour
         _isMoving = false;
     }
 
+    /// <summary>
+    /// Остановить анимацию движения. Очередь хода и <see cref="GetTurnActionsCopy"/> не меняются — на сервер уходит весь запланированный путь.
+    /// Логическая позиция остаётся на последней достигнутой клетке до ответа сервера.
+    /// </summary>
     public void ForceStopMovement()
     {
         _movementInterruptVersion++;
         StopAllCoroutines();
+        if (_grid != null)
+            transform.position = _grid.GetCellWorldPosition(_currentCol, _currentRow);
         _isMoving = false;
     }
 
