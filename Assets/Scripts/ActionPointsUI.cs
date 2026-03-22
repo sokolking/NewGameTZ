@@ -578,9 +578,11 @@ public class ActionPointsUI : MonoBehaviour
 
         if (IsOnlineSubmitFlow)
         {
-            _gameSession.BeginWaitingForServerRoundResolve(animateResolvedRound: false);
             ShowRoundWaitPanel();
-            SubmitTurnIfOnline();
+            _gameSession.SubmitTurnOnlineWithOptionalRangedFacing(
+                _player.GetTurnActionsCopy(),
+                _gameSession.ServerRoundIndexForSubmit,
+                animateResolvedRound: false);
             AppendLog("Отправка хода...");
             _endTurnInProgress = false;
             return;
@@ -598,9 +600,11 @@ public class ActionPointsUI : MonoBehaviour
 
         if (IsOnlineSubmitFlow)
         {
-            _gameSession.BeginWaitingForServerRoundResolve(animateResolvedRound: true);
             ShowRoundWaitPanel();
-            SubmitTurnIfOnline();
+            _gameSession.SubmitTurnOnlineWithOptionalRangedFacing(
+                _player.GetTurnActionsCopy(),
+                _gameSession.ServerRoundIndexForSubmit,
+                animateResolvedRound: true);
             AppendLog("Отправка хода...");
             _endTurnInProgress = false;
             yield break;
@@ -635,14 +639,6 @@ public class ActionPointsUI : MonoBehaviour
         if (!_roundWaitVisible)
             ShowRoundWaitPanel();
         AppendLog("Ход принят, ждём раунд");
-    }
-
-    private void SubmitTurnIfOnline()
-    {
-        if (_player == null || _gameSession == null || !_gameSession.IsOnlineMode) return;
-        if (!_gameSession.IsInBattleWithServer()) return;
-        var actions = _player.GetTurnActionsCopy();
-        _gameSession.SubmitTurnLocal(actions, _gameSession.ServerRoundIndexForSubmit);
     }
 
     private void OnTurnTrackerPrevClicked()

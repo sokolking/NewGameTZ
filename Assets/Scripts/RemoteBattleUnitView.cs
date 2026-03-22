@@ -10,8 +10,10 @@ public class RemoteBattleUnitView : MonoBehaviour
 {
     [SerializeField] private HexGrid _grid;
     [SerializeField] private float _moveDurationPerHex = 0.2f;
+    [SerializeField] private float _rangedFaceRotationSpeed = 14f;
 
     private bool _isMoving;
+    private Vector3? _horizontalFacingOverride;
     private int _maxHp = 10;
     private int _currentHp = 10;
 
@@ -22,6 +24,50 @@ public class RemoteBattleUnitView : MonoBehaviour
     public int CurrentRow { get; private set; }
     public int CurrentHp => _currentHp;
     public int MaxHp => _maxHp;
+
+    /// <summary>Точка выстрела для VFX: кость Humanoid RightHand, иначе над корнем юнита.</summary>
+    public bool TryGetRangedFireWorldPosition(out Vector3 worldPos)
+    {
+        Animator anim = GetComponentInChildren<Animator>();
+        if (anim != null && anim.isHuman && anim.isActiveAndEnabled)
+        {
+            Transform hand = anim.GetBoneTransform(HumanBodyBones.RightHand);
+            if (hand != null)
+            {
+                worldPos = hand.position;
+                return true;
+            }
+        }
+
+        worldPos = transform.position + Vector3.up * 1.2f;
+        return true;
+    }
+
+    public void SetHorizontalFacingOverride(Vector3 worldHorizontalDir)
+    {
+        worldHorizontalDir.y = 0f;
+        if (worldHorizontalDir.sqrMagnitude < 1e-8f)
+        {
+            _horizontalFacingOverride = null;
+            return;
+        }
+
+        _horizontalFacingOverride = worldHorizontalDir.normalized;
+    }
+
+    public void ClearHorizontalFacingOverride()
+    {
+        _horizontalFacingOverride = null;
+    }
+
+    private void LateUpdate()
+    {
+        if (!_horizontalFacingOverride.HasValue)
+            return;
+        Vector3 d = _horizontalFacingOverride.Value;
+        Quaternion target = Quaternion.LookRotation(d, Vector3.up);
+        transform.rotation = Quaternion.Slerp(transform.rotation, target, Time.deltaTime * _rangedFaceRotationSpeed);
+    }
 
     public void Initialize(string playerId, HexGrid grid, int startCol, int startRow, float moveDurationPerHex = -1f)
     {

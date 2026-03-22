@@ -1,3 +1,4 @@
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
@@ -65,8 +66,14 @@ public class GameSession : MonoBehaviour
     [Header("Дальний бой: пуля")]
     [Tooltip("Базовая длительность полёта пули (сек); масштабируется по числу гексов.")]
     [SerializeField] private float _bulletFlightSeconds = 0.14f;
-    [Tooltip("Высота центра сферы над центром гекса (мир).")]
+    [Tooltip("Запасная высота старта линии, если у атакующего нет Humanoid RightHand (мир).")]
     [SerializeField] private float _bulletHeightAboveGround = 0.28f;
+    [Tooltip("Смещение конца линии по Y от «дна» гекса (центр клетки на полу). 0 = ровно пол последнего гекса.")]
+    [SerializeField] private float _bulletHexEndYOffset = 0f;
+    [Tooltip("Макс. время ожидания разворота модели к направлению выстрела перед линией пули.")]
+    [SerializeField] private float _rangedFaceTurnMaxSeconds = 0.35f;
+    [Tooltip("Считаем разворот завершённым, если угол до цели меньше этого (градусы).")]
+    [SerializeField] private float _rangedFaceAngleThresholdDeg = 4f;
     [Tooltip("Необязательно: материал линии выстрела (иначе Sprites/Default, жёлтый).")]
     [SerializeField] private Material _bulletMaterial;
 
@@ -238,6 +245,12 @@ public class GameSession : MonoBehaviour
 
         if (isViewingHistory)
             CancelTurnReplayPlayback();
+
+        if (TryGetRangedFacingHorizontalForSubmitActions(draft.Actions, out Vector3 faceDir))
+        {
+            StartCoroutine(CoSubmitOnlineAfterRangedFace(draft.Actions, _serverRoundIndex, animateResolvedRound, faceDir));
+            return true;
+        }
 
         BeginWaitingForServerRoundResolve(animateResolvedRound);
         SubmitTurnLocal(draft.Actions, _serverRoundIndex);
@@ -425,7 +438,55 @@ public class GameSession : MonoBehaviour
             OnNetworkMessage?.Invoke($"Выстрел по гексу x{queued} в очередь");
         else
             OnNetworkMessage?.Invoke("Выстрел по гексу в очередь (Ctrl+клик)");
+
+        ApplyLocalPlayerRangedFacingTowardTargetHex(aimCol, aimRow);
         return true;
+    }
+
+    /// <summary>
+    /// Развернуть локального игрока к конечной клетке выстрела (с обрезкой по дальности оружия). ЛКМ по силуэту / Ctrl+клик.
+    /// </summary>
+    public void ApplyLocalPlayerRangedFacingTowardTargetHex(int targetCol, int targetRow)
+    {
+        if (_battleFinished)
+            return;
+        Player pl = _localPlayer != null ? _localPlayer : FindFirstObjectByType<Player>();
+        if (pl == null || pl.Grid == null)
+            return;
+        if (pl.WeaponRangeHexes <= 1)
+            return;
+
+        int fc = pl.CurrentCol;
+        int fr = pl.CurrentRow;
+        HexGrid grid = pl.Grid;
+        if (!grid.IsInBounds(fc, fr) || !grid.IsInBounds(targetCol, targetRow))
+            return;
+
+        int dist = HexGrid.GetDistance(fc, fr, targetCol, targetRow);
+        int weaponRange = pl.WeaponRangeHexes;
+        int finalHexCol = targetCol;
+        int finalHexRow = targetRow;
+        if (dist > weaponRange)
+        {
+            HexCubeOffset.GetHexLine(fc, fr, targetCol, targetRow, _bulletLineHexBuffer);
+            if (_bulletLineHexBuffer.Count == 0)
+                return;
+            int idx = Mathf.Min(weaponRange, dist);
+            if (idx >= _bulletLineHexBuffer.Count)
+                idx = _bulletLineHexBuffer.Count - 1;
+            (finalHexCol, finalHexRow) = _bulletLineHexBuffer[idx];
+        }
+
+        Vector3 end = grid.GetCellWorldPosition(finalHexCol, finalHexRow) + Vector3.up * _bulletHexEndYOffset;
+        Vector3 fromCell = grid.GetCellWorldPosition(fc, fr);
+        Vector3 horizontalDir = end - fromCell;
+        horizontalDir.y = 0f;
+        if (horizontalDir.sqrMagnitude < 1e-8f)
+            return;
+        horizontalDir.Normalize();
+
+        PlayerCharacterAnimator anim = pl.GetComponentInChildren<PlayerCharacterAnimator>();
+        anim?.SetHorizontalFacingOverride(horizontalDir);
     }
 
     private IEnumerator SpawnDebugMobWhenReady()
@@ -878,6 +939,257 @@ public class GameSession : MonoBehaviour
         return hitCol >= 0;
     }
 
+    /// <summary>Старт линии пули: кость RightHand (Humanoid) или запас от центра гекса.</summary>
+    private bool TryGetRangedBulletStartWorld(
+        TurnResultPayload result,
+        string attackerUnitId,
+        HexGrid grid,
+        int fc,
+        int fr,
+        out Vector3 start)
+    {
+        start = default;
+        if (!TryResolveAnimatedUnit(result, attackerUnitId, out object unit, out bool isLocal))
+        {
+            float h = Mathf.Max(0.05f, _bulletHeightAboveGround);
+            start = grid.GetCellWorldPosition(fc, fr) + Vector3.up * h;
+            return true;
+        }
+
+        if (isLocal && unit is Player pl)
+        {
+            pl.TryGetRangedFireWorldPosition(out start);
+            return true;
+        }
+
+        if (unit is RemoteBattleUnitView remote)
+        {
+            remote.TryGetRangedFireWorldPosition(out start);
+            return true;
+        }
+
+        float hf = Mathf.Max(0.05f, _bulletHeightAboveGround);
+        start = grid.GetCellWorldPosition(fc, fr) + Vector3.up * hf;
+        return true;
+    }
+
+    private static void ClearFacingForRangedShot(PlayerCharacterAnimator localAnim, RemoteBattleUnitView remote)
+    {
+        localAnim?.ClearHorizontalFacingOverride();
+        remote?.ClearHorizontalFacingOverride();
+    }
+
+    /// <summary>Включает разворот к <paramref name="horizontalDir"/> (XZ) для локального игрока или удалённого юнита.</summary>
+    private bool TryBeginFacingForRangedShot(
+        TurnResultPayload result,
+        string attackerUnitId,
+        Vector3 horizontalDir,
+        out PlayerCharacterAnimator localAnim,
+        out RemoteBattleUnitView remote)
+    {
+        localAnim = null;
+        remote = null;
+        if (!TryResolveAnimatedUnit(result, attackerUnitId, out object unit, out bool isLocal))
+            return false;
+
+        horizontalDir.y = 0f;
+        if (horizontalDir.sqrMagnitude < 1e-8f)
+            return false;
+        horizontalDir.Normalize();
+
+        if (isLocal && unit is Player pl)
+        {
+            localAnim = pl.GetComponentInChildren<PlayerCharacterAnimator>();
+            if (localAnim != null)
+            {
+                localAnim.SetHorizontalFacingOverride(horizontalDir);
+                return true;
+            }
+
+            return false;
+        }
+
+        if (unit is RemoteBattleUnitView r)
+        {
+            remote = r;
+            remote.SetHorizontalFacingOverride(horizontalDir);
+            return true;
+        }
+
+        return false;
+    }
+
+    private IEnumerator CoFaceUntilAligned(Transform pivot, Quaternion targetRot)
+    {
+        if (pivot == null)
+            yield break;
+
+        float elapsed = 0f;
+        float maxSec = Mathf.Max(0.02f, _rangedFaceTurnMaxSeconds);
+        float thr = Mathf.Max(0.5f, _rangedFaceAngleThresholdDeg);
+        while (elapsed < maxSec)
+        {
+            elapsed += Time.unscaledDeltaTime;
+            if (Quaternion.Angle(pivot.rotation, targetRot) < thr)
+                yield break;
+            yield return null;
+        }
+    }
+
+    /// <summary>Горизонтальное направление к «дну» конечной клетки выстрела по очереди (как у линии пули после раунда).</summary>
+    private bool TryGetRangedFacingHorizontalForSubmitActions(BattleQueuedAction[] actions, out Vector3 horizontalDir)
+    {
+        horizontalDir = default;
+        Player pl = _localPlayer != null ? _localPlayer : FindFirstObjectByType<Player>();
+        if (pl == null || pl.Grid == null)
+            return false;
+        if (pl.WeaponRangeHexes <= 1)
+            return false;
+        if (actions == null || actions.Length == 0)
+            return false;
+
+        BattleQueuedAction lastAttack = null;
+        for (int i = actions.Length - 1; i >= 0; i--)
+        {
+            BattleQueuedAction a = actions[i];
+            if (a != null && string.Equals(a.actionType, "Attack", StringComparison.OrdinalIgnoreCase))
+            {
+                lastAttack = a;
+                break;
+            }
+        }
+
+        if (lastAttack == null)
+            return false;
+
+        pl.GetTurnSimulationStartHex(out int fc, out int fr);
+        for (int i = 0; i < actions.Length; i++)
+        {
+            BattleQueuedAction a = actions[i];
+            if (a == lastAttack)
+                break;
+            if (a != null && string.Equals(a.actionType, "MoveStep", StringComparison.OrdinalIgnoreCase)
+                && a.targetPosition != null)
+            {
+                fc = a.targetPosition.col;
+                fr = a.targetPosition.row;
+            }
+        }
+
+        if (!TryResolveQueuedAttackTargetHex(lastAttack, out int tc, out int tr))
+            return false;
+
+        HexGrid grid = pl.Grid;
+        if (!grid.IsInBounds(fc, fr) || !grid.IsInBounds(tc, tr))
+            return false;
+
+        int weaponRange = pl.WeaponRangeHexes;
+        int dist = HexGrid.GetDistance(fc, fr, tc, tr);
+        int finalHexCol = tc;
+        int finalHexRow = tr;
+        if (dist > weaponRange)
+        {
+            HexCubeOffset.GetHexLine(fc, fr, tc, tr, _bulletLineHexBuffer);
+            if (_bulletLineHexBuffer.Count == 0)
+                return false;
+            int idx = Mathf.Min(weaponRange, dist);
+            if (idx >= _bulletLineHexBuffer.Count)
+                idx = _bulletLineHexBuffer.Count - 1;
+            (finalHexCol, finalHexRow) = _bulletLineHexBuffer[idx];
+        }
+
+        Vector3 end = grid.GetCellWorldPosition(finalHexCol, finalHexRow) + Vector3.up * _bulletHexEndYOffset;
+        Vector3 fromCell = grid.GetCellWorldPosition(fc, fr);
+        horizontalDir = end - fromCell;
+        horizontalDir.y = 0f;
+        if (horizontalDir.sqrMagnitude < 1e-8f)
+            return false;
+        horizontalDir.Normalize();
+        return true;
+    }
+
+    private bool TryResolveQueuedAttackTargetHex(BattleQueuedAction attack, out int tc, out int tr)
+    {
+        tc = tr = 0;
+        if (attack == null)
+            return false;
+
+        if (attack.targetPosition != null)
+        {
+            tc = attack.targetPosition.col;
+            tr = attack.targetPosition.row;
+            return true;
+        }
+
+        if (string.IsNullOrEmpty(attack.targetUnitId))
+            return false;
+
+        if (_remoteUnits.TryGetValue(attack.targetUnitId, out RemoteBattleUnitView rem) && rem != null)
+        {
+            tc = rem.CurrentCol;
+            tr = rem.CurrentRow;
+            return true;
+        }
+
+        foreach (KeyValuePair<string, RemoteBattleUnitView> kv in _remoteUnits)
+        {
+            if (kv.Value == null || string.IsNullOrEmpty(kv.Value.NetworkPlayerId))
+                continue;
+            if (string.Equals(kv.Value.NetworkPlayerId, attack.targetUnitId, StringComparison.OrdinalIgnoreCase))
+            {
+                tc = kv.Value.CurrentCol;
+                tr = kv.Value.CurrentRow;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>Отправка хода по сети: при дальнобойной атаке в очереди — разворот локального игрока, затем submit.</summary>
+    public void SubmitTurnOnlineWithOptionalRangedFacing(BattleQueuedAction[] actions, int roundIndex, bool animateResolvedRound)
+    {
+        if (_battleFinished || !IsInBattleWithServer())
+            return;
+
+        BattleQueuedAction[] safe = actions ?? Array.Empty<BattleQueuedAction>();
+        if (!TryGetRangedFacingHorizontalForSubmitActions(safe, out Vector3 faceDir))
+        {
+            BeginWaitingForServerRoundResolve(animateResolvedRound);
+            SubmitTurnLocal(safe, roundIndex);
+            return;
+        }
+
+        StartCoroutine(CoSubmitOnlineAfterRangedFace(safe, roundIndex, animateResolvedRound, faceDir));
+    }
+
+    private IEnumerator CoSubmitOnlineAfterRangedFace(
+        BattleQueuedAction[] actions,
+        int roundIndex,
+        bool animateResolvedRound,
+        Vector3 faceDir)
+    {
+        BeginWaitingForServerRoundResolve(animateResolvedRound);
+        PlayerCharacterAnimator faceA = null;
+        try
+        {
+            Player pl = _localPlayer != null ? _localPlayer : FindFirstObjectByType<Player>();
+            faceA = pl != null ? pl.GetComponentInChildren<PlayerCharacterAnimator>() : null;
+            if (faceA != null)
+            {
+                faceA.SetHorizontalFacingOverride(faceDir);
+                Quaternion targetRot = Quaternion.LookRotation(faceDir, Vector3.up);
+                yield return CoFaceUntilAligned(faceA.FacingPivot, targetRot);
+            }
+        }
+        finally
+        {
+            ClearFacingForRangedShot(faceA, null);
+        }
+
+        SubmitTurnLocal(actions, roundIndex);
+    }
+
     /// <summary>Пуля от атакующего к цели (или до исчерпания дальности оружия по линии гексов). Только при weaponRange &gt; 1.</summary>
     private IEnumerator PlayRangedBulletAnimation(TurnResultPayload result, BattleExecutedAction action)
     {
@@ -916,20 +1228,14 @@ public class GameSession : MonoBehaviour
             yield break;
 
         int dist = HexGrid.GetDistance(fc, fr, tc, tr);
-        float y = Mathf.Max(0.05f, _bulletHeightAboveGround);
-        Vector3 start = grid.GetCellWorldPosition(fc, fr) + Vector3.up * y;
-        Vector3 end;
-        int hexEndCol = tc;
-        int hexEndRow = tr;
 
-        // Конец полёта: всегда центр клетки цели, если цель в пределах дальности оружия.
-        // Нельзя брать _bulletLineHexBuffer[steps]: после дедупа в GetHexLine индекс ≠ «гекс на расстоянии steps»,
-        // из‑за этого пуля могла лететь к промежуточному гексу, а не к объекту (камень range 2 и т.п.).
-        if (dist <= weaponRange)
-        {
-            end = grid.GetCellWorldPosition(tc, tr) + Vector3.up * y;
-        }
-        else
+        Vector3 HexEndWorld(int col, int row) =>
+            grid.GetCellWorldPosition(col, row) + Vector3.up * _bulletHexEndYOffset;
+
+        // «Дно» конечной точки выстрела (цель или обрезка по дальности) — всегда, даже если пуля визуально упрётся в препятствие раньше.
+        int finalHexCol = tc;
+        int finalHexRow = tr;
+        if (dist > weaponRange)
         {
             // Атака вне дальности (редко при succeeded): обрезка по линии гексов к max range шагам.
             HexCubeOffset.GetHexLine(fc, fr, tc, tr, _bulletLineHexBuffer);
@@ -938,34 +1244,81 @@ public class GameSession : MonoBehaviour
             int idx = Mathf.Min(weaponRange, dist);
             if (idx >= _bulletLineHexBuffer.Count)
                 idx = _bulletLineHexBuffer.Count - 1;
-            (hexEndCol, hexEndRow) = _bulletLineHexBuffer[idx];
-            end = grid.GetCellWorldPosition(hexEndCol, hexEndRow) + Vector3.up * y;
+            (finalHexCol, finalHexRow) = _bulletLineHexBuffer[idx];
         }
 
-        int durationSteps = Mathf.Max(1, Mathf.Min(weaponRange, dist));
-        if (TryGetWallHitHexFromMapUpdates(result, action.tick, fc, fr, tc, tr, out int obsCol, out int obsRow)
+        Vector3 finalShotEndWorld = HexEndWorld(finalHexCol, finalHexRow);
+        int distToFinalHex = HexGrid.GetDistance(fc, fr, finalHexCol, finalHexRow);
+
+        int durationSteps = Mathf.Max(1, Mathf.Min(weaponRange, distToFinalHex));
+        bool obstacleBeforeFinal = false;
+        int obsCol = -1;
+        int obsRow = -1;
+        if (TryGetWallHitHexFromMapUpdates(result, action.tick, fc, fr, finalHexCol, finalHexRow, out obsCol, out obsRow)
             && grid.IsInBounds(obsCol, obsRow))
         {
-            hexEndCol = obsCol;
-            hexEndRow = obsRow;
-            end = grid.GetCellWorldPosition(obsCol, obsRow) + Vector3.up * y;
             int dObs = HexGrid.GetDistance(fc, fr, obsCol, obsRow);
-            durationSteps = Mathf.Max(1, Mathf.Min(weaponRange, dObs));
+            if (dObs < distToFinalHex)
+            {
+                obstacleBeforeFinal = true;
+                durationSteps = Mathf.Max(1, Mathf.Min(weaponRange, dObs));
+            }
         }
 
-        float pathLen = Vector3.Distance(start, end);
-        if (pathLen < 1e-5f)
+        Vector3 shotHorizontalDir = finalShotEndWorld - grid.GetCellWorldPosition(fc, fr);
+        shotHorizontalDir.y = 0f;
+        if (shotHorizontalDir.sqrMagnitude < 1e-8f)
             yield break;
+        shotHorizontalDir.Normalize();
 
-        Vector3 fireDir = (end - start) / pathLen;
-        HexCubeOffset.GetHexLine(fc, fr, hexEndCol, hexEndRow, _bulletLineHexBuffer);
+        PlayerCharacterAnimator faceA = null;
+        RemoteBattleUnitView faceR = null;
+        if (TryBeginFacingForRangedShot(result, action.unitId, shotHorizontalDir, out faceA, out faceR))
+        {
+            Transform pivot = faceA != null ? faceA.FacingPivot : faceR.transform;
+            Quaternion targetRot = Quaternion.LookRotation(shotHorizontalDir, Vector3.up);
+            yield return CoFaceUntilAligned(pivot, targetRot);
+        }
+
+        if (!TryGetRangedBulletStartWorld(result, action.unitId, grid, fc, fr, out Vector3 start))
+        {
+            ClearFacingForRangedShot(faceA, faceR);
+            yield break;
+        }
+
+        Vector3 toFinal = finalShotEndWorld - start;
+        float fullPathLen = toFinal.magnitude;
+        if (fullPathLen < 1e-5f)
+        {
+            ClearFacingForRangedShot(faceA, faceR);
+            yield break;
+        }
+
+        Vector3 fireDir = toFinal / fullPathLen;
+
+        float pathLen = fullPathLen;
+        if (obstacleBeforeFinal)
+        {
+            Vector3 pObs = HexEndWorld(obsCol, obsRow);
+            float u = Vector3.Dot(pObs - start, fireDir);
+            u = Mathf.Clamp(u, 0f, fullPathLen);
+            pathLen = Mathf.Min(fullPathLen, u);
+        }
+
+        if (pathLen < 1e-5f)
+        {
+            ClearFacingForRangedShot(faceA, faceR);
+            yield break;
+        }
+
+        HexCubeOffset.GetHexLine(fc, fr, finalHexCol, finalHexRow, _bulletLineHexBuffer);
         float oneHexWorld = grid.HexSize * Mathf.Sqrt(3f);
         if (_bulletLineHexBuffer.Count >= 2)
         {
             var h0 = _bulletLineHexBuffer[0];
             var h1 = _bulletLineHexBuffer[1];
-            Vector3 w0 = grid.GetCellWorldPosition(h0.col, h0.row) + Vector3.up * y;
-            Vector3 w1 = grid.GetCellWorldPosition(h1.col, h1.row) + Vector3.up * y;
+            Vector3 w0 = grid.GetCellWorldPosition(h0.col, h0.row) + Vector3.up * _bulletHexEndYOffset;
+            Vector3 w1 = grid.GetCellWorldPosition(h1.col, h1.row) + Vector3.up * _bulletHexEndYOffset;
             oneHexWorld = Vector3.Distance(w0, w1);
         }
 
@@ -1023,7 +1376,7 @@ public class GameSession : MonoBehaviour
         }
 
         {
-            Vector3 head = end;
+            Vector3 head = start + fireDir * pathLen;
             Vector3 tail = head - fireDir * segmentLen;
             if (Vector3.Dot(tail - start, fireDir) < 0f)
                 tail = start;
@@ -1031,6 +1384,7 @@ public class GameSession : MonoBehaviour
             line.SetPosition(1, head);
         }
 
+        ClearFacingForRangedShot(faceA, faceR);
         UnityEngine.Object.Destroy(bulletGo);
     }
 

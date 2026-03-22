@@ -446,6 +446,8 @@ public class HexInputManager : MonoBehaviour
             _heldRemoteTarget = remote;
             _holdIndicatorAnchorWorld = remoteHitPoint;
             _hasHoldIndicatorAnchor = true;
+            if (Mouse.current.leftButton.wasPressedThisFrame)
+                GameSession.Active?.ApplyLocalPlayerRangedFacingTowardTargetHex(remote.CurrentCol, remote.CurrentRow);
         }
 
         if (_heldRemoteTarget == null)

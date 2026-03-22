@@ -27,8 +27,8 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
     [SerializeField] private RuntimeAnimatorController _playableControllerOverride;
     [SerializeField] private float _uniformModelScale = 1f;
     [SerializeField] private bool _faceMovementDirection = true;
-    [Tooltip("Крутить transform родителя Player (рекомендуется, если скрипт на дочернем мешe).")]
-    [SerializeField] private bool _rotatePlayerRoot = true;
+    [Tooltip("Если выключено — крутится только этот объект (модель). Если включено — крутится корень Player (Transform).")]
+    [SerializeField] private bool _rotatePlayerRoot = false;
     [SerializeField] private float _rotationSpeed = 14f;
     [SerializeField] private float _moveFaceMinSqr = 0.0004f;
 
@@ -48,6 +48,8 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
     private AnimationClip _currentClip;
     private bool _deathPlayed;
     private Vector3 _lastWorldPos;
+    /// <summary>Если задано — <see cref="LateUpdate"/> крутит модель в эту сторону (выстрел), игнорируя лицо к движению.</summary>
+    private Vector3? _horizontalFacingOverride;
 
     private AnimationClip ClipIdle => _idle as AnimationClip;
     private AnimationClip ClipWalk => _walk as AnimationClip;
@@ -58,6 +60,27 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
     private AnimationClip ClipRunPistol => _runPistol as AnimationClip;
     private AnimationClip ClipSitPistol => _sitPistol as AnimationClip;
     private AnimationClip ClipDead => _dead as AnimationClip;
+
+    /// <summary>Тот же pivot, что и в <see cref="LateUpdate"/> (корень Player или этот объект).</summary>
+    public Transform FacingPivot => _rotatePlayerRoot && _player != null ? _player.transform : transform;
+
+    /// <summary>Горизонтальное направление «вперёд» для выстрела; сбросить через <see cref="ClearHorizontalFacingOverride"/>.</summary>
+    public void SetHorizontalFacingOverride(Vector3 worldHorizontalDir)
+    {
+        worldHorizontalDir.y = 0f;
+        if (worldHorizontalDir.sqrMagnitude < 1e-8f)
+        {
+            _horizontalFacingOverride = null;
+            return;
+        }
+
+        _horizontalFacingOverride = worldHorizontalDir.normalized;
+    }
+
+    public void ClearHorizontalFacingOverride()
+    {
+        _horizontalFacingOverride = null;
+    }
 
 #if UNITY_EDITOR
     private void OnValidate()
@@ -265,11 +288,24 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
 
     private void LateUpdate()
     {
-        if (!_faceMovementDirection || _player == null || _player.IsDead || _player.IsHidden)
+        if (_player == null || _player.IsDead || _player.IsHidden)
             return;
 
         Transform pivot = _rotatePlayerRoot ? _player.transform : transform;
         Vector3 worldPos = pivot.position;
+
+        if (_horizontalFacingOverride.HasValue)
+        {
+            Vector3 d = _horizontalFacingOverride.Value;
+            Quaternion target = Quaternion.LookRotation(d, Vector3.up);
+            pivot.rotation = Quaternion.Slerp(pivot.rotation, target, Time.deltaTime * _rotationSpeed);
+            _lastWorldPos = worldPos;
+            return;
+        }
+
+        if (!_faceMovementDirection)
+            return;
+
         Vector3 delta = worldPos - _lastWorldPos;
         delta.y = 0f;
         if (delta.sqrMagnitude > _moveFaceMinSqr)

@@ -376,16 +376,14 @@ public class HexGridCamera : MonoBehaviour
         }
     }
 
-    /// <summary>Горизонтальный «вперёд» цели слежения — камера стоит сзади (против этого вектора).</summary>
+    /// <summary>
+    /// Горизонтальный «вперёд» для расчёта точки «сзади» от цели. Не используем <see cref="Transform.forward"/> цели:
+    /// иначе поворот персонажа (модель/корень) крутит вектор камеры вместе с орбитой мышью.
+    /// Орбита задаётся пользователем через <see cref="_thirdPersonOrbitYawDeg"/>.
+    /// </summary>
     private Vector3 GetFollowBehindHorizontalForward()
     {
-        if (_followTarget == null)
-            return Vector3.forward;
-        Vector3 f = _followTarget.forward;
-        f.y = 0f;
-        if (f.sqrMagnitude < 1e-8f)
-            return Vector3.forward;
-        return f.normalized;
+        return Vector3.forward;
     }
 
     private static float ApproxVerticalFovFromOrthoTopDown(float orthoSize, float cameraY)
@@ -414,7 +412,7 @@ public class HexGridCamera : MonoBehaviour
     }
 
     /// <summary>Плавный переход из орто «сверху» в 3-е лицо. Дождаться в корутине перед анимацией хода.</summary>
-    /// <param name="initialHorizontalDir">Устарело: камера ориентируется по <see cref="Transform.forward"/> цели.</param>
+    /// <param name="initialHorizontalDir">Не используется; база «сзади» — мировой +Z, орбита — мышью.</param>
     public IEnumerator EnterThirdPersonFollowRoutine(Transform target, Vector3? initialHorizontalDir = null)
     {
         if (target == null) yield break;

@@ -20,6 +20,12 @@ public class Player : MonoBehaviour
     [Header("Движение")]
     [SerializeField] private float _moveDurationPerHex = 0.2f;
 
+    [Header("Дальний бой (VFX)")]
+    [Tooltip("Необязательно: точка выстрела вместо кости Humanoid RightHand.")]
+    [SerializeField] private Transform _rangedMuzzleOverride;
+    [Tooltip("Если нет Animator/Humanoid — старт линии на этой высоте над центром гекса.")]
+    [SerializeField] private float _rangedFireFallbackHeightAboveHex = 1.05f;
+
     [Header("Очки действия")]
     [SerializeField] private int _maxAp = 100;
     [Header("Жизни")]
@@ -73,6 +79,21 @@ public class Player : MonoBehaviour
 
     public int CurrentCol => _currentCol;
     public int CurrentRow => _currentRow;
+
+    /// <summary>Первая клетка пути в этом ходу (старт первого MoveStep) или текущая позиция — для симуляции гекса атаки до отправки хода.</summary>
+    public void GetTurnSimulationStartHex(out int col, out int row)
+    {
+        if (_turnPath != null && _turnPath.Count > 0)
+        {
+            col = _turnPath[0].col;
+            row = _turnPath[0].row;
+        }
+        else
+        {
+            col = _currentCol;
+            row = _currentRow;
+        }
+    }
     public bool IsMoving => _isMoving;
     public int MaxAp => _maxAp;
     public int MaxHp => _maxHp;
@@ -100,6 +121,37 @@ public class Player : MonoBehaviour
 
     public string WeaponCode => _weaponCode;
     public int WeaponDamage => _weaponDamage;
+    /// <summary>Мировая точка выстрела для линии пули: <see cref="_rangedMuzzleOverride"/>, иначе кость RightHand, иначе центр гекса + высота.</summary>
+    public bool TryGetRangedFireWorldPosition(out Vector3 worldPos)
+    {
+        if (_rangedMuzzleOverride != null)
+        {
+            worldPos = _rangedMuzzleOverride.position;
+            return true;
+        }
+
+        Animator anim = GetComponentInChildren<Animator>();
+        if (anim != null && anim.isHuman && anim.isActiveAndEnabled)
+        {
+            Transform hand = anim.GetBoneTransform(HumanBodyBones.RightHand);
+            if (hand != null)
+            {
+                worldPos = hand.position;
+                return true;
+            }
+        }
+
+        if (_grid != null)
+        {
+            worldPos = _grid.GetCellWorldPosition(_currentCol, _currentRow)
+                       + Vector3.up * Mathf.Max(0.05f, _rangedFireFallbackHeightAboveHex);
+            return true;
+        }
+
+        worldPos = transform.position + Vector3.up * Mathf.Max(0.05f, _rangedFireFallbackHeightAboveHex);
+        return true;
+    }
+
     /// <summary>Радиус атаки в гексах (hex distance), как у текущего оружия.</summary>
     public int WeaponRangeHexes => Mathf.Max(0, _weaponRangeHexes);
     /// <summary>Стоимость одной атаки текущим оружием (ОД), с сервера / weapons.attack_ap_cost.</summary>
