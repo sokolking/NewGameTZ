@@ -101,6 +101,8 @@ public class GameSession : MonoBehaviour
     private readonly List<(int col, int row)> _replayTwoPointMovePath = new(2);
     /// <summary>Буфер для линии гексов при расчёте конечной точки пули.</summary>
     private readonly List<(int col, int row)> _bulletLineHexBuffer = new(48);
+    /// <summary>Ctrl+прицел: линия от игрока к клику для подстановки гекса на границе дальности.</summary>
+    private readonly List<(int col, int row)> _hexAimLineScratch = new(48);
     private readonly HashSet<(int col, int row)> _mapUpdateLineMatchSet = new();
     private LiveTurnDraftSnapshot _liveTurnDraftSnapshot;
     private bool _debugMobSpawned;
@@ -364,18 +366,37 @@ public class GameSession : MonoBehaviour
         var local = _localPlayer != null ? _localPlayer : FindFirstObjectByType<Player>();
         if (local == null) return false;
 
-        int d = HexDistance(local.CurrentCol, local.CurrentRow, col, row);
+        int pc = local.CurrentCol;
+        int pr = local.CurrentRow;
+        int d = HexGrid.GetDistance(pc, pr, col, row);
         if (d == 0)
         {
             OnNetworkMessage?.Invoke("Выберите другой гекс");
             return false;
         }
 
-        if (d > local.WeaponRangeHexes)
+        int weaponRange = Mathf.Max(0, local.WeaponRangeHexes);
+        if (weaponRange <= 0)
         {
             OnNetworkMessage?.Invoke("Гекс вне дальности оружия");
             return false;
         }
+
+        HexCubeOffset.GetHexLine(pc, pr, col, row, _hexAimLineScratch);
+        if (_hexAimLineScratch.Count < 2)
+        {
+            OnNetworkMessage?.Invoke("Выберите другой гекс");
+            return false;
+        }
+
+        int step = Mathf.Min(weaponRange, d, _hexAimLineScratch.Count - 1);
+        if (step < 1)
+        {
+            OnNetworkMessage?.Invoke("Выберите другой гекс");
+            return false;
+        }
+
+        (int aimCol, int aimRow) = _hexAimLineScratch[step];
 
         int attackCost = Mathf.Max(1, local.WeaponAttackApCost);
         int apBefore = local.CurrentAp;
@@ -389,7 +410,7 @@ public class GameSession : MonoBehaviour
         int queued = 0;
         for (int i = 0; i < repeatCount; i++)
         {
-            if (!local.QueueHexAttackAction(col, row, attackCost))
+            if (!local.QueueHexAttackAction(aimCol, aimRow, attackCost))
                 break;
             queued++;
         }
@@ -405,18 +426,6 @@ public class GameSession : MonoBehaviour
         else
             OnNetworkMessage?.Invoke("Выстрел по гексу в очередь (Ctrl+клик)");
         return true;
-    }
-
-    private static int HexDistance(int colA, int rowA, int colB, int rowB)
-    {
-        // odd-r offset -> cube
-        int ax = colA - (rowA - (rowA & 1)) / 2;
-        int az = rowA;
-        int ay = -ax - az;
-        int bx = colB - (rowB - (rowB & 1)) / 2;
-        int bz = rowB;
-        int by = -bx - bz;
-        return (Mathf.Abs(ax - bx) + Mathf.Abs(ay - by) + Mathf.Abs(az - bz)) / 2;
     }
 
     private IEnumerator SpawnDebugMobWhenReady()

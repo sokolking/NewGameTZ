@@ -770,17 +770,21 @@ public class BattleRoom
                 {
                     nc = chain[i + 1].col;
                     nr = chain[i + 1].row;
+                    _wallYawDegrees[(col, row)] = HexSpawn.ComputeYawAlongEdgeDegrees(col, row, nc, nr, hexSize);
+                    HexSpawn.OffsetToWorldFlatTop(col, row, hexSize, out double ax, out double az);
+                    HexSpawn.OffsetToWorldFlatTop(nc, nr, hexSize, out double bx, out double bz);
+                    _wallOffsetHalfWorld[(col, row)] = ((float)((bx - ax) * 0.5), (float)((bz - az) * 0.5));
                 }
                 else
                 {
-                    nc = chain[i - 1].col;
-                    nr = chain[i - 1].row;
+                    // Тот же вектор вдоль цепочки, что и у предыдущих (prev→curr), иначе yaw на конце на 180° от средних.
+                    int pc = chain[i - 1].col;
+                    int pr = chain[i - 1].row;
+                    _wallYawDegrees[(col, row)] = HexSpawn.ComputeYawAlongEdgeDegrees(pc, pr, col, row, hexSize);
+                    HexSpawn.OffsetToWorldFlatTop(col, row, hexSize, out double ax, out double az);
+                    HexSpawn.OffsetToWorldFlatTop(pc, pr, hexSize, out double bx, out double bz);
+                    _wallOffsetHalfWorld[(col, row)] = ((float)((bx - ax) * 0.5), (float)((bz - az) * 0.5));
                 }
-
-                _wallYawDegrees[(col, row)] = HexSpawn.ComputeYawAlongEdgeDegrees(col, row, nc, nr, hexSize);
-                HexSpawn.OffsetToWorldFlatTop(col, row, hexSize, out double ax, out double az);
-                HexSpawn.OffsetToWorldFlatTop(nc, nr, hexSize, out double bx, out double bz);
-                _wallOffsetHalfWorld[(col, row)] = ((float)((bx - ax) * 0.5), (float)((bz - az) * 0.5));
             }
 
             placedWalls++;

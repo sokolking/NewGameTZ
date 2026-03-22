@@ -142,7 +142,10 @@ public static class HexSpawn
         worldZ = s * 1.5 * r;
     }
 
-    /// <summary>Горизонтальный угол (градусы, вокруг Y) от центра a к центру b — для ориентации стены вдоль цепочки.</summary>
+    /// <summary>
+    /// Горизонтальный yaw (градусы, вокруг Y) для стены между двумя соседними гексами: меш должен лежать вдоль <b>общего ребра</b>,
+    /// то есть перпендикулярно вектору центр(a)→центр(b) (flat-top XZ, как в Unity).
+    /// </summary>
     public static float ComputeYawAlongEdgeDegrees(int col0, int row0, int col1, int row1, float hexSize)
     {
         OffsetToWorldFlatTop(col0, row0, hexSize, out double ax, out double az);
@@ -151,7 +154,8 @@ public static class HexSpawn
         double dz = bz - az;
         if (Math.Abs(dx) < 1e-9 && Math.Abs(dz) < 1e-9)
             return 0f;
-        return (float)(Math.Atan2(dx, dz) * (180.0 / Math.PI));
+        // Перпендикуляр к (dx,dz) в плоскости XZ: (-dz, dx); Atan2(x,z) как в Unity для yaw вокруг Y.
+        return (float)(Math.Atan2(-dz, dx) * (180.0 / Math.PI));
     }
 
     private static void CubeRoundFromFloat(double fx, double fy, double fz, out int x, out int y, out int z)
