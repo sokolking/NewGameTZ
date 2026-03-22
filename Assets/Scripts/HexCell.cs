@@ -26,6 +26,19 @@ public class HexCell : MonoBehaviour
     private bool _isObstacle;
     private Color _apMaskColor;
     private TextMesh _costLabel;
+    private GameObject _obstacleModelInstance;
+
+    /// <summary>Масштаб FBX стены (как раньше) — визуально ок.</summary>
+    private const float WallObstacleScale = 0.9f;
+
+    /// <summary>Капсула игрока по умолчанию: height 2 × localScale.y 0.5 → ~1.0 по вертикали.</summary>
+    private const float PlayerCapsuleReferenceMaxExtent = 1f;
+
+    /// <summary>Камень: характерный размер ≈ половина «игрока» (см. <see cref="PlayerCapsuleReferenceMaxExtent"/>).</summary>
+    private const float RockFractionOfPlayerSize = 0.5f;
+
+    /// <summary>Кэш max(size.x,size.y,size.z) для стены при <see cref="WallObstacleScale"/> (без родителя-гекса).</summary>
+    private static float? _cachedWallPrefabMaxExtent;
 
     /// <summary>Гекс под курсором (OnMouseEnter) — для обновления цвета при смене орто/3-е лицо.</summary>
     private static HexCell _hoveredCellInstance;
@@ -102,11 +115,95 @@ public class HexCell : MonoBehaviour
 
     public void SetObstacle(bool active)
     {
+        if (!active)
+            ClearObstacleVisual();
         _isObstacle = active;
         ApplyCurrentColor();
     }
 
     public bool IsObstacle => _isObstacle;
+
+    /// <summary>Модель препятствия с сервера (Resources/Obstacles/{wall|tree|rock}).</summary>
+    public void SetObstacleVisual(string tag, float yawDegrees)
+    {
+        ClearObstacleVisual();
+        if (string.IsNullOrWhiteSpace(tag))
+            return;
+
+        string t = tag.Trim().ToLowerInvariant();
+        if (t != "wall" && t != "tree" && t != "rock")
+            return;
+
+        GameObject prefab = Resources.Load<GameObject>($"Obstacles/{t}_visual");
+        if (prefab == null)
+        {
+            Debug.LogWarning($"[HexCell] Нет Resources/Obstacles/{t} (fbx в папке Obstacles).");
+            return;
+        }
+
+        GameObject go = Instantiate(prefab, transform);
+        go.transform.localPosition = new Vector3(0f, 0.02f, 0f);
+
+        foreach (Renderer r in go.GetComponentsInChildren<Renderer>(true))
+        {
+            r.enabled = true;
+        }
+        switch (t)
+        {
+            case "wall":
+                go.transform.localRotation = Quaternion.Euler(0f, yawDegrees, 0f);
+                go.transform.localScale = Vector3.one * WallObstacleScale;
+                break;
+        }
+
+        _obstacleModelInstance = go;
+    }
+
+    private static float GetCachedWallPrefabMaxExtent()
+    {
+        if (_cachedWallPrefabMaxExtent.HasValue)
+            return _cachedWallPrefabMaxExtent.Value;
+
+        GameObject prefab = Resources.Load<GameObject>("Obstacles/wall");
+        if (prefab == null)
+        {
+            _cachedWallPrefabMaxExtent = WallObstacleScale;
+            return _cachedWallPrefabMaxExtent.Value;
+        }
+
+        GameObject go = Instantiate(prefab);
+        go.transform.SetPositionAndRotation(Vector3.zero, Quaternion.identity);
+        go.transform.localScale = Vector3.one * WallObstacleScale;
+        float ext = MaxExtent(ComputeWorldBoundsSize(go));
+        UnityEngine.Object.Destroy(go);
+        _cachedWallPrefabMaxExtent = Mathf.Max(ext, 0.0001f);
+        return _cachedWallPrefabMaxExtent.Value;
+    }
+
+    private static Vector3 ComputeWorldBoundsSize(GameObject root)
+    {
+        Renderer[] renderers = root.GetComponentsInChildren<Renderer>(true);
+        if (renderers.Length == 0)
+            return Vector3.one * 0.01f;
+
+        Bounds b = renderers[0].bounds;
+        for (int i = 1; i < renderers.Length; i++)
+            b.Encapsulate(renderers[i].bounds);
+
+        return b.size;
+    }
+
+    private static float MaxExtent(Vector3 size) =>
+        Mathf.Max(size.x, size.y, size.z, 0.0001f);
+
+    public void ClearObstacleVisual()
+    {
+        if (_obstacleModelInstance != null)
+        {
+            Destroy(_obstacleModelInstance);
+            _obstacleModelInstance = null;
+        }
+    }
 
     private void ApplyCurrentColor()
     {

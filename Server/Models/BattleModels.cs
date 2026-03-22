@@ -51,6 +51,21 @@ public class QueuedBattleActionDto
     public int WeaponAttackApCost { get; set; }
 }
 
+/// <summary>Баланс препятствий (таблица battle_obstacle_balance).</summary>
+public class BattleObstacleBalanceRowDto
+{
+    public int WallMaxHp { get; set; } = 5;
+    /// <summary>Снижение шанса попадания (0–95), если цель за деревом.</summary>
+    public int TreeCoverMissPercent { get; set; } = 15;
+    /// <summary>Снижение шанса попадания (0–95), если цель за камнем и поза sit/hide.</summary>
+    public int RockCoverMissPercent { get; set; } = 20;
+    public int WallSegmentsCount { get; set; } = 10;
+    public int RockCount { get; set; } = 5;
+    public int TreeCount { get; set; } = 5;
+
+    public static BattleObstacleBalanceRowDto Defaults => new BattleObstacleBalanceRowDto();
+}
+
 public class ExecutedBattleActionDto
 {
     public string UnitId { get; set; } = "";
@@ -65,6 +80,11 @@ public class ExecutedBattleActionDto
     public string? Posture { get; set; }
     public int Damage { get; set; }
     public bool TargetDied { get; set; }
+    /// <summary>Урон по препятствию-стене; -1 если не применимо.</summary>
+    public int ObstacleHitCol { get; set; } = -1;
+    public int ObstacleHitRow { get; set; } = -1;
+    public int ObstacleDamage { get; set; }
+    public bool ObstacleDestroyed { get; set; }
 }
 
 /// <summary>Команда юнита на один раунд (расширяемо под разные типы действий).</summary>
@@ -130,6 +150,9 @@ public class TurnResultPayloadDto
     /// <summary>allSubmitted — все сдали ход до таймера; timerExpired — время раунда вышло.</summary>
     public string RoundResolveReason { get; set; } = "";
     public bool BattleFinished { get; set; }
+    /// <summary>Снятые с гекса препятствия (параллельно removedObstacleRows).</summary>
+    public int[]? RemovedObstacleCols { get; set; }
+    public int[]? RemovedObstacleRows { get; set; }
 }
 
 /// <summary>Статус участника в текущем раунде (для GET состояния боя).</summary>
@@ -169,6 +192,10 @@ public class BattleStartedPayloadDto
     public int[]? SpawnWeaponAttackApCosts { get; set; }
     public int[]? ObstacleCols { get; set; }
     public int[]? ObstacleRows { get; set; }
+    /// <summary>Теги: wall | tree | rock — параллельно obstacleCols/Rows.</summary>
+    public string[]? ObstacleTags { get; set; }
+    /// <summary>Градусы поворота вокруг Y для стен; для дерева/камня можно 0.</summary>
+    public float[]? ObstacleWallYaws { get; set; }
 }
 
 public class BattleTurnHistoryStateDto

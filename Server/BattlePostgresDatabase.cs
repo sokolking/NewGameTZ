@@ -134,6 +134,20 @@ ON CONFLICT (user_id, slot_index) DO NOTHING;
 INSERT INTO user_inventory_slots (user_id, slot_index, weapon_id)
 SELECT u.id, 3, w.id FROM users u CROSS JOIN weapons w WHERE w.code = 'revolver'
 ON CONFLICT (user_id, slot_index) DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS battle_obstacle_balance (
+    id INT PRIMARY KEY,
+    wall_max_hp INT NOT NULL DEFAULT 5,
+    tree_cover_miss_percent INT NOT NULL DEFAULT 15,
+    rock_cover_miss_percent INT NOT NULL DEFAULT 20,
+    wall_segments_count INT NOT NULL DEFAULT 10,
+    rock_count INT NOT NULL DEFAULT 5,
+    tree_count INT NOT NULL DEFAULT 5
+);
+
+INSERT INTO battle_obstacle_balance (id, wall_max_hp, tree_cover_miss_percent, rock_cover_miss_percent, wall_segments_count, rock_count, tree_count)
+SELECT 1, 5, 15, 20, 10, 5, 5
+WHERE NOT EXISTS (SELECT 1 FROM battle_obstacle_balance WHERE id = 1);
 """;
             command.ExecuteNonQuery();
         }

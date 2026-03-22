@@ -13,10 +13,12 @@ builder.Services.AddSingleton<BattleHistoryDatabase>();
 builder.Services.AddSingleton<BattleTurnDatabase>();
 builder.Services.AddSingleton<BattleUserDatabase>();
 builder.Services.AddSingleton<BattleWeaponDatabase>();
+builder.Services.AddSingleton<BattleObstacleBalanceDatabase>();
 builder.Services.AddSingleton<BattleRoomStore>(sp => new BattleRoomStore(
     sp.GetRequiredService<BattleHistoryDatabase>(),
     sp.GetRequiredService<BattleTurnDatabase>(),
-    sp.GetRequiredService<BattleWeaponDatabase>()));
+    sp.GetRequiredService<BattleWeaponDatabase>(),
+    sp.GetRequiredService<BattleObstacleBalanceDatabase>()));
 builder.Services.AddCors(options =>
 {
     options.AddDefaultPolicy(p => p.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader());

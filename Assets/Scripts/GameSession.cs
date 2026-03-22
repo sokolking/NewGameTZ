@@ -511,6 +511,7 @@ public class GameSession : MonoBehaviour
     public void ApplyTurnResult(TurnResultPayload result)
     {
         if (result == null || result.results == null) return;
+        ApplyRemovedObstaclesFromTurnResult(result);
         AppendServerTurnLogs(result, showDamagePopupsImmediately: false);
         var animJobs = BuildTurnResultAnimationJobs(result, prepareForAnimation: true);
         var playback = BuildExecutedActionPlayback(result);
@@ -526,6 +527,7 @@ public class GameSession : MonoBehaviour
     public void ApplyTurnResultThenRoundState(TurnResultPayload result, int nextRoundIndex, long roundDeadlineUtcMs)
     {
         if (result == null || result.results == null) return;
+        ApplyRemovedObstaclesFromTurnResult(result);
         bool animateResolvedRound = _animateResolvedRoundForPendingSubmit;
         _animateResolvedRoundForPendingSubmit = true;
         AppendServerTurnLogs(result, showDamagePopupsImmediately: !animateResolvedRound);
@@ -1394,7 +1396,62 @@ public class GameSession : MonoBehaviour
             _obstacleCells.Add((col, row));
             HexCell cell = grid.GetCell(col, row);
             if (cell != null)
+            {
                 cell.SetObstacle(true);
+                string tag = payload.obstacleTags != null && i < payload.obstacleTags.Length && !string.IsNullOrEmpty(payload.obstacleTags[i])
+                    ? payload.obstacleTags[i]
+                    : "wall";
+                float yaw = payload.obstacleWallYaws != null && i < payload.obstacleWallYaws.Length ? payload.obstacleWallYaws[i] : 0f;
+                cell.SetObstacleVisual(tag, yaw);
+            }
+        }
+    }
+
+    private void ApplyRemovedObstaclesFromTurnResult(TurnResultPayload result)
+    {
+        if (result == null) return;
+
+        var toRemove = new System.Collections.Generic.HashSet<(int col, int row)>();
+
+        if (result.removedObstacleCols != null && result.removedObstacleRows != null
+            && result.removedObstacleCols.Length == result.removedObstacleRows.Length)
+        {
+            for (int i = 0; i < result.removedObstacleCols.Length; i++)
+                toRemove.Add((result.removedObstacleCols[i], result.removedObstacleRows[i]));
+        }
+
+        // Запасной путь, если массивы removed* не пришли (или десериализация их обнулила).
+        if (result.results != null)
+        {
+            foreach (PlayerTurnResult pr in result.results)
+            {
+                if (pr?.executedActions == null) continue;
+                foreach (BattleExecutedAction a in pr.executedActions)
+                {
+                    if (a == null || !a.obstacleDestroyed) continue;
+                    if (a.obstacleHitCol >= 0 && a.obstacleHitRow >= 0)
+                        toRemove.Add((a.obstacleHitCol, a.obstacleHitRow));
+                }
+            }
+        }
+
+        if (toRemove.Count == 0) return;
+
+        HexGrid grid = _localPlayer != null && _localPlayer.Grid != null
+            ? _localPlayer.Grid
+            : FindFirstObjectByType<HexGrid>();
+        if (grid == null)
+            return;
+
+        foreach ((int col, int row) in toRemove)
+        {
+            _obstacleCells.Remove((col, row));
+            HexCell cell = grid.GetCell(col, row);
+            if (cell != null)
+            {
+                cell.ClearObstacleVisual();
+                cell.SetObstacle(false);
+            }
         }
     }
 

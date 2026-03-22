@@ -2,6 +2,7 @@ using System;
 using System.Collections;
 using System.Net.Http;
 using System.Text;
+using Newtonsoft.Json;
 using UnityEngine;
 
 /// <summary>
@@ -165,7 +166,17 @@ public class BattleServerConnection : MonoBehaviour
             yield break;
         }
 
-        var response = JsonUtility.FromJson<BattleTurnResponsePayload>(body);
+        BattleTurnResponsePayload response = null;
+        try
+        {
+            response = JsonConvert.DeserializeObject<BattleTurnResponsePayload>(body);
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning("[BattleHTTP] turn JSON Newtonsoft failed: " + ex.Message + "; fallback JsonUtility");
+            response = JsonUtility.FromJson<BattleTurnResponsePayload>(body);
+        }
+
         if (response == null || response.turnResult == null)
         {
             onFailed?.Invoke("Сервер вернул пустой ход.");

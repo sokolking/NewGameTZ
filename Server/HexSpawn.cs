@@ -128,4 +128,100 @@ public static class HexSpawn
         var (dx, dz) = dirs[d];
         CubeToOffset(x + dx, z + dz, out outCol, out outRow);
     }
+
+    private const double Sqrt3 = 1.7320508075688772;
+
+    /// <summary>Центр гекса в плоскости XZ (как <see cref="HexCubeOffset.CubeToWorldFlatTop"/> в Unity).</summary>
+    public static void OffsetToWorldFlatTop(int col, int row, float hexSize, out double worldX, out double worldZ)
+    {
+        OffsetToCube(col, row, out int x, out _, out int z);
+        double q = x;
+        double r = z;
+        double s = hexSize;
+        worldX = s * Sqrt3 * (q + r * 0.5);
+        worldZ = s * 1.5 * r;
+    }
+
+    /// <summary>Горизонтальный угол (градусы, вокруг Y) от центра a к центру b — для ориентации стены вдоль цепочки.</summary>
+    public static float ComputeYawAlongEdgeDegrees(int col0, int row0, int col1, int row1, float hexSize)
+    {
+        OffsetToWorldFlatTop(col0, row0, hexSize, out double ax, out double az);
+        OffsetToWorldFlatTop(col1, row1, hexSize, out double bx, out double bz);
+        double dx = bx - ax;
+        double dz = bz - az;
+        if (Math.Abs(dx) < 1e-9 && Math.Abs(dz) < 1e-9)
+            return 0f;
+        return (float)(Math.Atan2(dx, dz) * (180.0 / Math.PI));
+    }
+
+    private static void CubeRoundFromFloat(double fx, double fy, double fz, out int x, out int y, out int z)
+    {
+        int qi = (int)Math.Round(fx, MidpointRounding.AwayFromZero);
+        int ri = (int)Math.Round(fy, MidpointRounding.AwayFromZero);
+        int si = (int)Math.Round(fz, MidpointRounding.AwayFromZero);
+        double qDiff = Math.Abs(qi - fx);
+        double rDiff = Math.Abs(ri - fy);
+        double sDiff = Math.Abs(si - fz);
+        if (qDiff > rDiff && qDiff > sDiff)
+            qi = -ri - si;
+        else if (rDiff > sDiff)
+            ri = -qi - si;
+        else
+            si = -qi - ri;
+        x = qi;
+        y = ri;
+        z = si;
+    }
+
+    /// <summary>Прямая линия гексов от (col0,row0) до (col1,row1), включая оба конца (как в Unity <see cref="HexCubeOffset.GetHexLine"/>).</summary>
+    public static void GetHexLineInclusive(int col0, int row0, int col1, int row1, List<(int col, int row)> outList)
+    {
+        if (outList == null)
+            return;
+        outList.Clear();
+        OffsetToCube(col0, row0, out int ax, out int ay, out int az);
+        OffsetToCube(col1, row1, out int bx, out int by, out int bz);
+        int n = HexDistance(col0, row0, col1, row1);
+        if (n == 0)
+        {
+            outList.Add((col0, row0));
+            return;
+        }
+
+        int lastQx = int.MinValue, lastQy = int.MinValue, lastQz = int.MinValue;
+        bool hasLast = false;
+        for (int i = 0; i <= n; i++)
+        {
+            double t = i / (double)n;
+            double fx = ax + (bx - ax) * t;
+            double fy = ay + (by - ay) * t;
+            double fz = az + (bz - az) * t;
+            CubeRoundFromFloat(fx, fy, fz, out int qx, out int qy, out int qz);
+            if (hasLast && qx == lastQx && qy == lastQy && qz == lastQz)
+                continue;
+            CubeToOffset(qx, qz, out int c, out int r);
+            outList.Add((c, r));
+            lastQx = qx;
+            lastQy = qy;
+            lastQz = qz;
+            hasLast = true;
+        }
+    }
+
+    /// <summary>Клетки строго между атакующим и целью (без их гексов), в порядке от атакующего к цели.</summary>
+    public static void GetHexLineBetweenExclusive(int attackerCol, int attackerRow, int targetCol, int targetRow, List<(int col, int row)> buffer)
+    {
+        if (buffer == null)
+            return;
+        buffer.Clear();
+        GetHexLineInclusive(attackerCol, attackerRow, targetCol, targetRow, buffer);
+        if (buffer.Count <= 2)
+        {
+            buffer.Clear();
+            return;
+        }
+
+        buffer.RemoveAt(buffer.Count - 1);
+        buffer.RemoveAt(0);
+    }
 }

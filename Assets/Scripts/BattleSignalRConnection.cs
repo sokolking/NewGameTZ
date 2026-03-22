@@ -6,6 +6,7 @@ using System.Net.WebSockets;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using Newtonsoft.Json;
 using UnityEngine;
 
 /// <summary>
@@ -294,8 +295,19 @@ public class BattleSignalRConnection : MonoBehaviour
             _gameSession = FindFirstObjectByType<GameSession>();
         if (_gameSession == null) return;
 
-        var push = JsonUtility.FromJson<BattleRoundWsPush>(json);
-        if (push.turnResult == null) return;
+        BattleRoundWsPush push = null;
+        try
+        {
+            // JsonUtility не заполняет вложенные массивы/объекты в turnResult (removedObstacle*, executedActions и т.д.).
+            push = JsonConvert.DeserializeObject<BattleRoundWsPush>(json);
+        }
+        catch (Exception ex)
+        {
+            EnqueueLogWarn($"Round push Newtonsoft failed: {ex.Message}; fallback JsonUtility");
+            push = JsonUtility.FromJson<BattleRoundWsPush>(json);
+        }
+
+        if (push?.turnResult == null) return;
 
         _gameSession.ReplaceTurnHistoryIds(push.turnHistoryIds, push.currentTurnPointer);
         if (push.turnHistoryIds != null

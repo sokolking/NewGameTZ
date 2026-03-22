@@ -9,16 +9,18 @@ public class BattleRoomStore
     private readonly BattleHistoryDatabase _battleHistoryDb;
     private readonly BattleTurnDatabase _battleTurnDb;
     private readonly BattleWeaponDatabase _weaponDb;
+    private readonly BattleObstacleBalanceDatabase _obstacleDb;
     /// <summary>Очередь ожидающих (один игрок). Как только второй присоединился — создаём бой из двух.</summary>
     private string? _waitingBattleId;
 
     private readonly Dictionary<string, BattleRoom> _rooms = new();
 
-    public BattleRoomStore(BattleHistoryDatabase battleHistoryDb, BattleTurnDatabase battleTurnDb, BattleWeaponDatabase weaponDb)
+    public BattleRoomStore(BattleHistoryDatabase battleHistoryDb, BattleTurnDatabase battleTurnDb, BattleWeaponDatabase weaponDb, BattleObstacleBalanceDatabase obstacleDb)
     {
         _battleHistoryDb = battleHistoryDb;
         _battleTurnDb = battleTurnDb;
         _weaponDb = weaponDb;
+        _obstacleDb = obstacleDb;
     }
 
     /// <summary>Таймер раундов (вызывать из фона).</summary>
@@ -40,7 +42,7 @@ public class BattleRoomStore
             {
                 var bid = Guid.NewGuid().ToString("N")[..8];
                 _waitingBattleId = bid;
-                var room = new BattleRoom(bid, _weaponDb);
+                var room = new BattleRoom(bid, _weaponDb, _obstacleDb);
                 int p1c = Math.Clamp(startCol, 0, HexSpawn.DefaultGridWidth - 1);
                 int p1r = Math.Clamp(startRow, 0, HexSpawn.DefaultGridLength - 1);
                 room.AddPlayer("P1", p1c, p1r);
@@ -92,7 +94,7 @@ public class BattleRoomStore
             if (solo)
             {
                 var soloBattleId = Guid.NewGuid().ToString("N")[..8];
-                var soloRoom = new BattleRoom(soloBattleId, _weaponDb) { IsSolo = true };
+                var soloRoom = new BattleRoom(soloBattleId, _weaponDb, _obstacleDb) { IsSolo = true };
                 int soloCol = Math.Clamp(startCol, 0, HexSpawn.DefaultGridWidth - 1);
                 int soloRow = Math.Clamp(startRow, 0, HexSpawn.DefaultGridLength - 1);
                 soloRoom.AddPlayer("P1", soloCol, soloRow);
@@ -124,7 +126,7 @@ public class BattleRoomStore
             }
 
             var bid = Guid.NewGuid().ToString("N")[..8];
-            var r = new BattleRoom(bid, _weaponDb);
+            var r = new BattleRoom(bid, _weaponDb, _obstacleDb);
             int pc = Math.Clamp(startCol, 0, HexSpawn.DefaultGridWidth - 1);
             int pr = Math.Clamp(startRow, 0, HexSpawn.DefaultGridLength - 1);
             r.AddPlayer("P1", pc, pr);

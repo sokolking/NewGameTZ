@@ -1,4 +1,5 @@
 using System;
+using Newtonsoft.Json;
 
 /// <summary>
 /// Модели данных для обмена клиент–сервер по плану ServerSyncPlan.
@@ -67,6 +68,10 @@ public class BattleExecutedAction
     public string posture;
     public int damage;
     public bool targetDied;
+    public int obstacleHitCol = -1;
+    public int obstacleHitRow = -1;
+    public int obstacleDamage;
+    public bool obstacleDestroyed;
 }
 
 /// <summary>Результат хода для одного игрока (часть TurnResult).</summary>
@@ -74,7 +79,9 @@ public class BattleExecutedAction
 public class PlayerTurnResult
 {
     public string unitId;
-    public int unitType; // 0 = Player, 1 = Mob (совместимо с серверным UnitType)
+    /// <summary>Сервер (JsonStringEnumConverter): "Player" | "Mob". Свойство + JsonConverter надёжнее поля для Newtonsoft.</summary>
+    [JsonConverter(typeof(UnitTypeIntOrStringNewtonsoftConverter))]
+    public int unitType { get; set; } // 0 = Player, 1 = Mob
     public string playerId;
     public bool accepted;
     public HexPosition finalPosition;
@@ -148,6 +155,8 @@ public class TurnResultPayload
     /// <summary>Сервер: allSubmitted | timerExpired</summary>
     public string roundResolveReason;
     public bool battleFinished;
+    public int[] removedObstacleCols;
+    public int[] removedObstacleRows;
 }
 
 /// <summary>Старт раунда (Server → Client): RoundStarted — один раз в начале раунда.</summary>
@@ -191,6 +200,10 @@ public class BattleStartedPayload
     public int[] spawnWeaponAttackApCosts;
     public int[] obstacleCols;
     public int[] obstacleRows;
+    /// <summary>wall | tree | rock — параллельно obstacleCols/Rows.</summary>
+    public string[] obstacleTags;
+    /// <summary>Градусы Y для стен.</summary>
+    public float[] obstacleWallYaws;
 }
 
 /// <summary>POST /api/battle/.../equip-weapon (клиент).</summary>
@@ -232,4 +245,32 @@ public class UserInventorySlotPayload
     public string iconKey;
     /// <summary>Стоимость атаки этим оружием (ОД), из weapons.attack_ap_cost.</summary>
     public int attackApCost;
+}
+
+/// <summary>Newtonsoft: сервер отдаёт <c>unitType</c> как "Player"/"Mob", не как 0/1.</summary>
+public sealed class UnitTypeIntOrStringNewtonsoftConverter : JsonConverter
+{
+    public override bool CanConvert(Type objectType) => objectType == typeof(int);
+
+    public override object ReadJson(JsonReader reader, Type objectType, object existingValue, JsonSerializer serializer)
+    {
+        if (reader.TokenType == JsonToken.Integer)
+            return Convert.ToInt32(reader.Value);
+        if (reader.TokenType == JsonToken.String)
+        {
+            var s = (reader.Value as string)?.Trim();
+            if (string.IsNullOrEmpty(s)) return 0;
+            if (string.Equals(s, "Mob", StringComparison.OrdinalIgnoreCase)) return 1;
+            if (string.Equals(s, "Player", StringComparison.OrdinalIgnoreCase)) return 0;
+            if (int.TryParse(s, out var i)) return i;
+        }
+        if (reader.TokenType == JsonToken.Null)
+            return 0;
+        return 0;
+    }
+
+    public override void WriteJson(JsonWriter writer, object value, JsonSerializer serializer)
+    {
+        writer.WriteValue(value);
+    }
 }
