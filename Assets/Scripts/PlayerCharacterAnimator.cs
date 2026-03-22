@@ -31,6 +31,9 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
     [SerializeField] private bool _rotatePlayerRoot = false;
     [SerializeField] private float _rotationSpeed = 14f;
     [SerializeField] private float _moveFaceMinSqr = 0.0004f;
+    [Header("Походка по гексам")]
+    [Tooltip("Доля полного цикла walk/run на один переход между соседними гексами (0.5 ≈ половина цикла — чередование ног при фазе 0 и 0.5).")]
+    [SerializeField] [Range(0.1f, 1f)] private float _locomotionCycleFractionPerHex = 0.5f;
 
     [Header("Clips — Object: перетащите клип из раскрытого FBX (иконка зелёного слайдера)")]
     [SerializeField] private UnityEngine.Object _idle;
@@ -50,6 +53,8 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
     private Vector3 _lastWorldPos;
     /// <summary>Если задано — <see cref="LateUpdate"/> крутит модель в эту сторону (выстрел), игнорируя лицо к движению.</summary>
     private Vector3? _horizontalFacingOverride;
+    /// <summary>Чередование старта walk/run: true — время 0, false — середина цикла (другая нога впереди).</summary>
+    private bool _hexWalkPhaseFlip;
 
     private AnimationClip ClipIdle => _idle as AnimationClip;
     private AnimationClip ClipWalk => _walk as AnimationClip;
@@ -80,6 +85,46 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
     public void ClearHorizontalFacingOverride()
     {
         _horizontalFacingOverride = null;
+    }
+
+    /// <summary>Сбросить чередование фазы walk/run перед новым путём (как в начале планирования с первой клетки пути).</summary>
+    /// <remarks>После предпросмотра движения <see cref="_hexWalkPhaseFlip"/> уже переключён; без сброса повтор по <c>actualPath</c> с сервера начинает с «другой ноги», чем первый шаг планирования.</remarks>
+    public void ResetHexWalkPhaseForNewPath()
+    {
+        _hexWalkPhaseFlip = false;
+    }
+
+    /// <summary>
+    /// Вызывается из <see cref="Player"/> в начале каждого шага по гексу: один цикл walk/run с фазой 0 или 0.5 и скоростью под длительность шага.
+    /// </summary>
+    public void NotifyHexStepStarted(float stepDurationSeconds)
+    {
+        if (_animator == null || _player == null)
+            return;
+        if (stepDurationSeconds <= 1e-5f)
+            return;
+        if (!_player.IsMoving)
+            return;
+
+        AnimationClip clip = ResolveLocomotionClip();
+        if (clip == null || clip.length <= 1e-5f)
+            return;
+        if (!IsWalkOrRunLocomotionClip(clip))
+            return;
+
+        _hexWalkPhaseFlip = !_hexWalkPhaseFlip;
+        float frac = Mathf.Clamp(_locomotionCycleFractionPerHex, 0.05f, 1f);
+        double startTime = _hexWalkPhaseFlip ? 0.0 : clip.length * 0.5;
+        float cyclePortion = clip.length * frac;
+        float speed = cyclePortion / stepDurationSeconds;
+        PlayClipInternal(clip, speed, startTime);
+    }
+
+    private bool IsWalkOrRunLocomotionClip(AnimationClip clip)
+    {
+        if (clip == null)
+            return false;
+        return clip == ClipWalk || clip == ClipRun || clip == ClipWalkPistol || clip == ClipRunPistol;
     }
 
 #if UNITY_EDITOR
@@ -280,16 +325,18 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
 
             return;
         }
-
-        AnimationClip clip = ResolveLocomotionClip();
-        if (clip != null)
-            PlayClip(clip);
     }
 
     private void LateUpdate()
     {
         if (_player == null || _player.IsDead || _player.IsHidden)
             return;
+
+        // Локомоцию применяем здесь, а не в Update: корутины движения (PlayPathAnimation и т.д.)
+        // выполняются после Update, но до LateUpdate — иначе один кадр IsMoving ещё false,
+        // PlayClip(idle) сносит walk/run граф до NotifyHexStepStarted (серверная анимация «глючит»).
+        if (_animator != null)
+            ApplyResolvedLocomotionClip();
 
         Transform pivot = _rotatePlayerRoot ? _player.transform : transform;
         Vector3 worldPos = pivot.position;
@@ -357,6 +404,27 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
         return ClipIdle;
     }
 
+    /// <summary>
+    /// Не вызывать <see cref="PlayClip"/> на каждом кадре во время движения, если уже играет walk/run от
+    /// <see cref="NotifyHexStepStarted"/>: <see cref="ResolveLocomotionClip"/> может отличаться (run vs walk,
+    /// пистолет vs без), тогда <see cref="PlayClip"/> пересоздаёт граф с speed=1 и сбивает фазу/скорость — на планировании
+    /// поза стабильна, после ответа сервера — нет, и анимация «глючит».
+    /// </summary>
+    private void ApplyResolvedLocomotionClip()
+    {
+        AnimationClip resolved = ResolveLocomotionClip();
+        if (resolved == null)
+            return;
+
+        if (_player.IsMoving && IsWalkOrRunLocomotionClip(resolved))
+        {
+            if (_graph.IsValid() && _currentClip != null && IsWalkOrRunLocomotionClip(_currentClip))
+                return;
+        }
+
+        PlayClip(resolved);
+    }
+
     private void PlayClip(AnimationClip clip)
     {
         if (clip == null || _animator == null)
@@ -364,13 +432,19 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
         if (_currentClip == clip && _graph.IsValid())
             return;
 
+        PlayClipInternal(clip, 1f, 0.0);
+    }
+
+    private void PlayClipInternal(AnimationClip clip, float speed, double startTimeSeconds)
+    {
         DestroyGraph();
 
         _graph = PlayableGraph.Create("PlayerCharacter");
         _graph.SetTimeUpdateMode(DirectorUpdateMode.GameTime);
         _clipPlayable = AnimationClipPlayable.Create(_graph, clip);
         _clipPlayable.SetApplyFootIK(true);
-        _clipPlayable.SetSpeed(1f);
+        _clipPlayable.SetSpeed(speed);
+        _clipPlayable.SetTime(startTimeSeconds);
 
         var output = AnimationPlayableOutput.Create(_graph, "Animation", _animator);
         output.SetSourcePlayable(_clipPlayable);

@@ -19,6 +19,7 @@ public class Player : MonoBehaviour
 
     [Header("Движение")]
     [SerializeField] private float _moveDurationPerHex = 0.2f;
+    private PlayerCharacterAnimator _characterAnimator;
 
     [Header("Дальний бой (VFX)")]
     [Tooltip("Необязательно: точка выстрела вместо кости Humanoid RightHand.")]
@@ -95,6 +96,10 @@ public class Player : MonoBehaviour
         }
     }
     public bool IsMoving => _isMoving;
+
+    /// <summary>Гарантированно выключить флаг движения после журнала (например, обрыв таймлайна).</summary>
+    public void ClearMovementPlaybackState() => _isMoving = false;
+
     public int MaxAp => _maxAp;
     public int MaxHp => _maxHp;
     public int CurrentHp => _currentHp;
@@ -191,6 +196,7 @@ public class Player : MonoBehaviour
         _turnTimeExpired = false;
         _turnPath = new List<(int col, int row)>();
         _turnActions = new List<BattleQueuedAction>();
+        _characterAnimator = GetComponentInChildren<PlayerCharacterAnimator>();
     }
 
     private void Start()
@@ -306,6 +312,10 @@ public class Player : MonoBehaviour
 
             if (step.col == _currentCol && step.row == _currentRow)
                 continue;
+
+            if (_characterAnimator == null)
+                _characterAnimator = GetComponentInChildren<PlayerCharacterAnimator>();
+            _characterAnimator?.NotifyHexStepStarted(_moveDurationPerHex);
 
             Vector3 target = _grid.GetCellWorldPosition(step.col, step.row);
             Vector3 stepStart = transform.position;
@@ -855,7 +865,9 @@ public class Player : MonoBehaviour
 
     /// <summary>Проиграть анимацию движения по пути с сервера (actualPath). Запускать после ApplyServerTurnResult. Не меняет состояние.</summary>
     /// <param name="driveCamera">Если true — при старте включается слежение 3-го лица (только по явному вызову; <see cref="GameSession"/> для серверных анимаций передаёт false).</param>
-    public IEnumerator PlayPathAnimation(HexPosition[] path, bool driveCamera = true)
+    /// <param name="resetHexWalkPhase">Если true — сбросить чередование фазы походки перед первым шагом (полный путь с сервера). False — следующий сегмент в журнале executedActions.</param>
+    /// <param name="clearMovementStateWhenDone">Если false — не сбрасывать <see cref="IsMoving"/> по завершении (следующий MoveStep того же юнита в журнале). Иначе аниматор на кадр уходит в idle и ломает плавность как при планировании.</param>
+    public IEnumerator PlayPathAnimation(HexPosition[] path, bool driveCamera = true, bool resetHexWalkPhase = true, bool clearMovementStateWhenDone = true)
     {
         if (_grid == null || path == null || path.Length < 2)
         {
@@ -880,6 +892,12 @@ public class Player : MonoBehaviour
         int interruptVersion = _movementInterruptVersion;
         _isMoving = true;
         transform.position = _grid.GetCellWorldPosition(path[0].col, path[0].row);
+        if (resetHexWalkPhase)
+        {
+            if (_characterAnimator == null)
+                _characterAnimator = GetComponentInChildren<PlayerCharacterAnimator>();
+            _characterAnimator?.ResetHexWalkPhaseForNewPath();
+        }
         bool enteredThirdPerson = false;
         if (driveCamera && hexCam != null)
         {
@@ -899,6 +917,10 @@ public class Player : MonoBehaviour
                 }
 
                 var step = path[i];
+                if (_characterAnimator == null)
+                    _characterAnimator = GetComponentInChildren<PlayerCharacterAnimator>();
+                _characterAnimator?.NotifyHexStepStarted(_moveDurationPerHex);
+
                 Vector3 target = _grid.GetCellWorldPosition(step.col, step.row);
                 Vector3 stepStart = transform.position;
                 float elapsed = 0f;
@@ -922,12 +944,11 @@ public class Player : MonoBehaviour
 
                 transform.position = target;
             }
-
-            _isMoving = false;
         }
         finally
         {
-            _isMoving = false;
+            if (clearMovementStateWhenDone || interrupted)
+                _isMoving = false;
         }
 
         if (enteredThirdPerson && hexCam != null)
@@ -953,12 +974,19 @@ public class Player : MonoBehaviour
         // Стартуем с исходной клетки хода.
         Vector3 startPos = _grid.GetCellWorldPosition(_turnPath[0].col, _turnPath[0].row);
         transform.position = startPos;
+        if (_characterAnimator == null)
+            _characterAnimator = GetComponentInChildren<PlayerCharacterAnimator>();
+        _characterAnimator?.ResetHexWalkPhaseForNewPath();
 
         try
         {
             for (int i = 1; i < _turnPath.Count; i++)
             {
                 var step = _turnPath[i];
+                if (_characterAnimator == null)
+                    _characterAnimator = GetComponentInChildren<PlayerCharacterAnimator>();
+                _characterAnimator?.NotifyHexStepStarted(_moveDurationPerHex);
+
                 Vector3 target = _grid.GetCellWorldPosition(step.col, step.row);
                 Vector3 stepStart = transform.position;
                 float elapsed = 0f;

@@ -819,11 +819,21 @@ public class GameSession : MonoBehaviour
 
         yield return CoEnterServerRoundThirdPersonCamera();
 
+        {
+            Player localForPhase = _localPlayer != null ? _localPlayer : FindFirstObjectByType<Player>();
+            if (localForPhase != null)
+            {
+                var anim = localForPhase.GetComponentInChildren<PlayerCharacterAnimator>();
+                anim?.ResetHexWalkPhaseForNewPath();
+            }
+        }
+
         int currentTick = -1;
         bool abortTimeline = false;
         var appliedMapTicks = new HashSet<int>();
-        foreach (var entry in playback)
+        for (int pi = 0; pi < playback.Count; pi++)
         {
+            ExecutedActionPlaybackEntry entry = playback[pi];
             // После смерти/окончания боя мы не должны останавливать отображение уже сохраненной истории.
             if (_battleFinished && !_isTurnHistoryReplayPlaying)
             {
@@ -842,7 +852,7 @@ public class GameSession : MonoBehaviour
             }
 
             currentTick = action.tick;
-            yield return PlayExecutedAction(result, action);
+            yield return PlayExecutedAction(result, action, playback, pi);
         }
 
         if (!abortTimeline && currentTick >= 0)
@@ -867,11 +877,20 @@ public class GameSession : MonoBehaviour
                 ApplyMapUpdatesFromTurnResult(result, t);
         }
 
+        {
+            Player p = _localPlayer != null ? _localPlayer : FindFirstObjectByType<Player>();
+            p?.ClearMovementPlaybackState();
+        }
+
         if (abortTimeline)
             yield break;
     }
 
-    private IEnumerator PlayExecutedAction(TurnResultPayload result, BattleExecutedAction action)
+    private IEnumerator PlayExecutedAction(
+        TurnResultPayload result,
+        BattleExecutedAction action,
+        List<ExecutedActionPlaybackEntry> playback,
+        int playbackIndex)
     {
         if (action == null)
             yield break;
@@ -879,7 +898,7 @@ public class GameSession : MonoBehaviour
         if (action.actionType == "MoveStep")
         {
             if (action.succeeded)
-                yield return PlayMoveStepAction(result, action);
+                yield return PlayMoveStepAction(result, action, playback, playbackIndex);
             yield break;
         }
 
@@ -1422,7 +1441,11 @@ public class GameSession : MonoBehaviour
         return false;
     }
 
-    private IEnumerator PlayMoveStepAction(TurnResultPayload result, BattleExecutedAction action)
+    private IEnumerator PlayMoveStepAction(
+        TurnResultPayload result,
+        BattleExecutedAction action,
+        List<ExecutedActionPlaybackEntry> playback,
+        int playbackIndex)
     {
         if (action?.toPosition == null)
             yield break;
@@ -1434,8 +1457,30 @@ public class GameSession : MonoBehaviour
         HexPosition to = action.toPosition;
         var path = new[] { new HexPosition(from.col, from.row), new HexPosition(to.col, to.row) };
 
+        bool prevMoveSameUnit = false;
+        if (playbackIndex > 0)
+        {
+            BattleExecutedAction prev = playback[playbackIndex - 1].Action;
+            if (prev != null && prev.succeeded
+                && string.Equals(prev.actionType, "MoveStep", StringComparison.OrdinalIgnoreCase)
+                && string.Equals(prev.unitId, action.unitId, StringComparison.Ordinal))
+                prevMoveSameUnit = true;
+        }
+
+        bool nextMoveSameUnit = false;
+        if (playbackIndex + 1 < playback.Count)
+        {
+            BattleExecutedAction next = playback[playbackIndex + 1].Action;
+            if (next != null && next.succeeded
+                && string.Equals(next.actionType, "MoveStep", StringComparison.OrdinalIgnoreCase)
+                && string.Equals(next.unitId, action.unitId, StringComparison.Ordinal))
+                nextMoveSameUnit = true;
+        }
+
+        bool resetHex = !prevMoveSameUnit;
+
         if (isLocal && unit is Player local)
-            yield return local.PlayPathAnimation(path, driveCamera: false);
+            yield return local.PlayPathAnimation(path, driveCamera: false, resetHexWalkPhase: resetHex, clearMovementStateWhenDone: !nextMoveSameUnit);
         else if (!isLocal && unit is RemoteBattleUnitView remote)
             yield return remote.PlayPathAnimation(path);
     }
