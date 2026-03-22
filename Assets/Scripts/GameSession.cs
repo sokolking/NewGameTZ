@@ -67,7 +67,7 @@ public class GameSession : MonoBehaviour
     [SerializeField] private float _bulletFlightSeconds = 0.14f;
     [Tooltip("Высота центра сферы над центром гекса (мир).")]
     [SerializeField] private float _bulletHeightAboveGround = 0.28f;
-    [Tooltip("Необязательно: материал сферы-пули (иначе Unlit жёлтый).")]
+    [Tooltip("Необязательно: материал линии выстрела (иначе Sprites/Default, жёлтый).")]
     [SerializeField] private Material _bulletMaterial;
 
     [Header("Debug")]
@@ -919,6 +919,8 @@ public class GameSession : MonoBehaviour
         float y = Mathf.Max(0.05f, _bulletHeightAboveGround);
         Vector3 start = grid.GetCellWorldPosition(fc, fr) + Vector3.up * y;
         Vector3 end;
+        int hexEndCol = tc;
+        int hexEndRow = tr;
 
         // Конец полёта: всегда центр клетки цели, если цель в пределах дальности оружия.
         // Нельзя брать _bulletLineHexBuffer[steps]: после дедупа в GetHexLine индекс ≠ «гекс на расстоянии steps»,
@@ -936,64 +938,100 @@ public class GameSession : MonoBehaviour
             int idx = Mathf.Min(weaponRange, dist);
             if (idx >= _bulletLineHexBuffer.Count)
                 idx = _bulletLineHexBuffer.Count - 1;
-            (int endCol, int endRow) = _bulletLineHexBuffer[idx];
-            end = grid.GetCellWorldPosition(endCol, endRow) + Vector3.up * y;
+            (hexEndCol, hexEndRow) = _bulletLineHexBuffer[idx];
+            end = grid.GetCellWorldPosition(hexEndCol, hexEndRow) + Vector3.up * y;
         }
 
         int durationSteps = Mathf.Max(1, Mathf.Min(weaponRange, dist));
         if (TryGetWallHitHexFromMapUpdates(result, action.tick, fc, fr, tc, tr, out int obsCol, out int obsRow)
             && grid.IsInBounds(obsCol, obsRow))
         {
+            hexEndCol = obsCol;
+            hexEndRow = obsRow;
             end = grid.GetCellWorldPosition(obsCol, obsRow) + Vector3.up * y;
             int dObs = HexGrid.GetDistance(fc, fr, obsCol, obsRow);
             durationSteps = Mathf.Max(1, Mathf.Min(weaponRange, dObs));
         }
+
+        float pathLen = Vector3.Distance(start, end);
+        if (pathLen < 1e-5f)
+            yield break;
+
+        Vector3 fireDir = (end - start) / pathLen;
+        HexCubeOffset.GetHexLine(fc, fr, hexEndCol, hexEndRow, _bulletLineHexBuffer);
+        float oneHexWorld = grid.HexSize * Mathf.Sqrt(3f);
+        if (_bulletLineHexBuffer.Count >= 2)
+        {
+            var h0 = _bulletLineHexBuffer[0];
+            var h1 = _bulletLineHexBuffer[1];
+            Vector3 w0 = grid.GetCellWorldPosition(h0.col, h0.row) + Vector3.up * y;
+            Vector3 w1 = grid.GetCellWorldPosition(h1.col, h1.row) + Vector3.up * y;
+            oneHexWorld = Vector3.Distance(w0, w1);
+        }
+
+        float segmentLen = Mathf.Min(pathLen, oneHexWorld);
 
         float duration = Mathf.Clamp(
             _bulletFlightSeconds * (0.45f + durationSteps * 0.18f),
             _bulletFlightSeconds * 0.35f,
             _bulletFlightSeconds * 2.5f);
 
-        var bullet = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-        bullet.name = "RangedBulletVFX";
-        UnityEngine.Object.Destroy(bullet.GetComponent<Collider>());
-        float scale = Mathf.Max(0.04f, grid.HexSize * 0.11f);
-        bullet.transform.localScale = Vector3.one * scale;
+        var bulletGo = new GameObject("RangedBulletVFX");
+        var line = bulletGo.AddComponent<LineRenderer>();
+        line.positionCount = 2;
+        line.useWorldSpace = true;
+        line.loop = false;
+        float lineWidth = Mathf.Max(0.008f, grid.HexSize * 0.022f);
+        line.startWidth = lineWidth;
+        line.endWidth = lineWidth;
+        var yellow = new Color(1f, 0.92f, 0.12f, 1f);
+        line.startColor = yellow;
+        line.endColor = yellow;
+        line.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+        line.receiveShadows = false;
 
-        var mr = bullet.GetComponent<MeshRenderer>();
-        if (mr != null)
+        if (_bulletMaterial != null)
+            line.sharedMaterial = _bulletMaterial;
+        else
         {
-            if (_bulletMaterial != null)
-                mr.sharedMaterial = _bulletMaterial;
-            else
+            Shader sh = Shader.Find("Sprites/Default")
+                        ?? Shader.Find("Universal Render Pipeline/Unlit")
+                        ?? Shader.Find("Unlit/Color");
+            if (sh != null)
             {
-                Shader sh = Shader.Find("Universal Render Pipeline/Unlit")
-                            ?? Shader.Find("Unlit/Color")
-                            ?? Shader.Find("Sprites/Default");
-                if (sh != null)
-                {
-                    var mat = new Material(sh);
-                    if (mat.HasProperty("_BaseColor"))
-                        mat.SetColor("_BaseColor", new Color(1f, 0.88f, 0.15f));
-                    else if (mat.HasProperty("_Color"))
-                        mat.color = new Color(1f, 0.88f, 0.15f);
-                    mr.sharedMaterial = mat;
-                }
+                var mat = new Material(sh);
+                if (mat.HasProperty("_BaseColor"))
+                    mat.SetColor("_BaseColor", yellow);
+                else if (mat.HasProperty("_Color"))
+                    mat.color = yellow;
+                line.sharedMaterial = mat;
             }
         }
 
-        bullet.transform.position = start;
         float t = 0f;
         while (t < duration)
         {
             t += Time.unscaledDeltaTime;
             float u = Mathf.Clamp01(t / duration);
-            bullet.transform.position = Vector3.Lerp(start, end, u);
+            Vector3 head = start + fireDir * (u * pathLen);
+            Vector3 tail = head - fireDir * segmentLen;
+            if (Vector3.Dot(tail - start, fireDir) < 0f)
+                tail = start;
+            line.SetPosition(0, tail);
+            line.SetPosition(1, head);
             yield return null;
         }
 
-        bullet.transform.position = end;
-        UnityEngine.Object.Destroy(bullet);
+        {
+            Vector3 head = end;
+            Vector3 tail = head - fireDir * segmentLen;
+            if (Vector3.Dot(tail - start, fireDir) < 0f)
+                tail = start;
+            line.SetPosition(0, tail);
+            line.SetPosition(1, head);
+        }
+
+        UnityEngine.Object.Destroy(bulletGo);
     }
 
     private static bool TryGetWeaponRangeForUnit(TurnResultPayload result, string unitId, out int weaponRange)
