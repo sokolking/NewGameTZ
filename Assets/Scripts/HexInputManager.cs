@@ -50,7 +50,8 @@ public class HexInputManager : MonoBehaviour
     private SpriteRenderer _holdIndicatorBaseRenderer;
     private static Sprite _holdBlockSprite;
     private static Material _holdOverlayMaterial;
-    private readonly Dictionary<BodyPart, SpriteRenderer> _holdPartRenderers = new();
+    // Индекс = (int)BodyPart (0=None,1=Head,2=Torso,3=Legs). Массив вместо Dictionary — нет foreach-аллокации.
+    private readonly SpriteRenderer[] _holdPartRenderers = new SpriteRenderer[4];
     private BodyPart _hoveredBodyPart = BodyPart.None;
     private RemoteBattleUnitView _heldRemoteTarget;
     private Vector3 _holdIndicatorAnchorWorld;
@@ -81,9 +82,29 @@ public class HexInputManager : MonoBehaviour
 
     private Vector2 _lastBodyPartHighlightMousePos = new Vector2(float.NaN, float.NaN);
 
+    // Кэш camera.transform — чтобы не дёргать native bridge каждый кадр.
+    private Transform _cameraTransform;
+
+    // Предвычисленные границы UV-зон для ClassifyBodyPartFromUv — без Mathf.Clamp01 в хот-пасе.
+    private float _headMinU, _headMaxU, _headMinV, _headMaxV;
+    private float _torsoMinU, _torsoMaxU, _torsoMinV, _torsoMaxV;
+    private float _legsMinU, _legsMaxU, _legsMinV, _legsMaxV;
+
     private void Awake()
     {
         _hexGridCamera = FindFirstObjectByType<HexGridCamera>();
+        if (_camera != null) _cameraTransform = _camera.transform;
+        PrecomputeUvBounds();
+    }
+
+    private void PrecomputeUvBounds()
+    {
+        _headMinU  = Mathf.Clamp01(_headUvRect.xMin);  _headMaxU  = Mathf.Clamp01(_headUvRect.xMax);
+        _headMinV  = Mathf.Clamp01(_headUvRect.yMin);  _headMaxV  = Mathf.Clamp01(_headUvRect.yMax);
+        _torsoMinU = Mathf.Clamp01(_torsoUvRect.xMin); _torsoMaxU = Mathf.Clamp01(_torsoUvRect.xMax);
+        _torsoMinV = Mathf.Clamp01(_torsoUvRect.yMin); _torsoMaxV = Mathf.Clamp01(_torsoUvRect.yMax);
+        _legsMinU  = Mathf.Clamp01(_legsUvRect.xMin);  _legsMaxU  = Mathf.Clamp01(_legsUvRect.xMax);
+        _legsMinV  = Mathf.Clamp01(_legsUvRect.yMin);  _legsMaxV  = Mathf.Clamp01(_legsUvRect.yMax);
     }
 
     /// <summary>Сортировка по distance (insertion sort; при n ≤ 32 дёшево). Не используем System.Array.Sort — в Unity конфликтует с UnityEngine.Array.</summary>
@@ -107,8 +128,12 @@ public class HexInputManager : MonoBehaviour
     private void Update()
     {
         if (_grid == null) return;
-        if (_camera == null) _camera = Camera.main;
-        if (_camera == null) return;
+        if (_camera == null)
+        {
+            _camera = Camera.main; // FindObjectWithTag — дорого, только при null
+            if (_camera == null) return;
+            _cameraTransform = _camera.transform;
+        }
         Mouse mouse = Mouse.current;
         if (mouse == null) return;
         if (GameplayMapInputBlock.IsBlocked)
@@ -167,7 +192,10 @@ public class HexInputManager : MonoBehaviour
     private void UpdateCtrlAttackRangeOutline(Keyboard kb)
     {
         if (_player == null || _player.IsMoving || _player.IsDead || _player.IsHidden)
+        {
+            HideAttackRangeOutline();
             return;
+        }
         if (kb == null)
             return;
         if (_hexGridCamera == null)
@@ -241,7 +269,7 @@ public class HexInputManager : MonoBehaviour
             if (c == null)
                 continue;
 
-            RemoteBattleUnitView remote = c.gameObject.GetComponentInParent<RemoteBattleUnitView>();
+            RemoteBattleUnitView remote = c.GetComponentInParent<RemoteBattleUnitView>();
             if (remote != null)
             {
                 cell = _grid.GetCell(remote.CurrentCol, remote.CurrentRow);
@@ -250,7 +278,7 @@ public class HexInputManager : MonoBehaviour
 
             if (_player != null)
             {
-                Player pl = c.gameObject.GetComponentInParent<Player>();
+                Player pl = c.GetComponentInParent<Player>();
                 if (pl != null && pl == _player)
                 {
                     cell = _grid.GetCell(pl.CurrentCol, pl.CurrentRow);
@@ -258,7 +286,7 @@ public class HexInputManager : MonoBehaviour
                 }
             }
 
-            HexCell hex = c.gameObject.GetComponentInParent<HexCell>();
+            HexCell hex = c.GetComponent<HexCell>();
             if (hex != null)
             {
                 cell = hex;
@@ -275,11 +303,20 @@ public class HexInputManager : MonoBehaviour
         bool mouseMoved = !_hoverRaycastCacheValid ||
             (mousePos - _lastHoverMousePos).sqrMagnitude > HoverMouseMoveEpsilonSq;
         bool cameraMoved = !_hoverRaycastCacheValid;
-        if (!cameraMoved && _camera != null)
+        if (!cameraMoved && _cameraTransform != null)
         {
-            Transform t = _camera.transform;
-            cameraMoved = (t.position - _lastHoverCamPos).sqrMagnitude > 1e-10f
-                || Quaternion.Angle(t.rotation, _lastHoverCamRot) > 1e-3f;
+            Vector3 camPos = _cameraTransform.position;
+            float dx = camPos.x - _lastHoverCamPos.x, dy = camPos.y - _lastHoverCamPos.y, dz = camPos.z - _lastHoverCamPos.z;
+            cameraMoved = dx * dx + dy * dy + dz * dz > 1e-10f;
+            if (!cameraMoved)
+            {
+                // Dot product вместо Quaternion.Angle (избегаем Acos).
+                // dot^2 < 1 означает ненулевой угол; порог ~0.01 deg.
+                Quaternion cr = _cameraTransform.rotation;
+                float dot = cr.x * _lastHoverCamRot.x + cr.y * _lastHoverCamRot.y
+                           + cr.z * _lastHoverCamRot.z + cr.w * _lastHoverCamRot.w;
+                cameraMoved = dot * dot < 1f - 1e-10f;
+            }
         }
 
         HexCell cell;
@@ -289,10 +326,10 @@ public class HexInputManager : MonoBehaviour
         {
             cell = GetHexUnderCursor(mouse);
             _lastHoverMousePos = mousePos;
-            if (_camera != null)
+            if (_cameraTransform != null)
             {
-                _lastHoverCamPos = _camera.transform.position;
-                _lastHoverCamRot = _camera.transform.rotation;
+                _lastHoverCamPos = _cameraTransform.position;
+                _lastHoverCamRot = _cameraTransform.rotation;
             }
             _hoverRaycastCacheValid = true;
         }
@@ -395,7 +432,7 @@ public class HexInputManager : MonoBehaviour
         Collider col = _hexRaycastHits[0].collider;
         if (col == null)
             return null;
-        return col.gameObject.GetComponentInParent<HexCell>();
+        return col.GetComponent<HexCell>();
     }
 
     /// <summary>
@@ -418,9 +455,9 @@ public class HexInputManager : MonoBehaviour
         {
             Collider c = _doubleClickRaycastHits[i].collider;
             if (c == null) continue;
-            if (c.gameObject.GetComponentInParent<RemoteBattleUnitView>() != null)
+            if (c.GetComponentInParent<RemoteBattleUnitView>() != null)
                 return false;
-            HexCell hex = c.gameObject.GetComponentInParent<HexCell>();
+            HexCell hex = c.GetComponent<HexCell>();
             if (hex == null)
                 continue;
             cell = hex;
@@ -507,8 +544,8 @@ public class HexInputManager : MonoBehaviour
         _holdIndicatorGo.transform.position = _hasHoldIndicatorAnchor
             ? _holdIndicatorAnchorWorld
             : _heldRemoteTarget.transform.position + _holdIndicatorWorldOffset;
-        if (_camera != null)
-            _holdIndicatorGo.transform.rotation = Quaternion.LookRotation(-_camera.transform.forward, _camera.transform.up);
+        if (_cameraTransform != null)
+            _holdIndicatorGo.transform.rotation = Quaternion.LookRotation(-_cameraTransform.forward, _cameraTransform.up);
         UpdateHoldIndicatorBodyPartHighlight(mouse);
         SetHoldIndicatorVisible(true);
         IsHoldingRemoteTargetWithLeftMouse = true;
@@ -561,7 +598,7 @@ public class HexInputManager : MonoBehaviour
         {
             Collider col = _remoteHoldRaycastHits[i].collider;
             if (col == null) continue;
-            RemoteBattleUnitView remote = col.gameObject.GetComponentInParent<RemoteBattleUnitView>();
+            RemoteBattleUnitView remote = col.GetComponentInParent<RemoteBattleUnitView>();
             if (remote == null)
                 continue;
             float d = _remoteHoldRaycastHits[i].distance;
@@ -664,7 +701,7 @@ public class HexInputManager : MonoBehaviour
         sr.sprite = s;
         ConfigureOverlayRenderer(sr, 5001);
         sr.color = _holdPartBaseColor;
-        _holdPartRenderers[part] = sr;
+        _holdPartRenderers[(int)part] = sr;
     }
 
     private static void ConfigureOverlayRenderer(SpriteRenderer sr, int sortingOrder)
@@ -713,9 +750,9 @@ public class HexInputManager : MonoBehaviour
             maxHalfH = Mathf.Max(maxHalfH, Mathf.Abs(bb.extents.y));
         }
 
-        foreach (var kv in _holdPartRenderers)
+        for (int i = 1; i < _holdPartRenderers.Length; i++) // 0=None, пропускаем
         {
-            SpriteRenderer sr = kv.Value;
+            SpriteRenderer sr = _holdPartRenderers[i];
             if (sr == null || sr.sprite == null) continue;
             Bounds b = sr.bounds;
             maxHalfW = Mathf.Max(maxHalfW, Mathf.Abs(b.extents.x));
@@ -737,19 +774,10 @@ public class HexInputManager : MonoBehaviour
 
     private BodyPart ClassifyBodyPartFromUv(float u, float v)
     {
-        if (ContainsUv(_headUvRect, u, v)) return BodyPart.Head;
-        if (ContainsUv(_torsoUvRect, u, v)) return BodyPart.Torso;
-        if (ContainsUv(_legsUvRect, u, v)) return BodyPart.Legs;
+        if (u >= _headMinU  && u <= _headMaxU  && v >= _headMinV  && v <= _headMaxV)  return BodyPart.Head;
+        if (u >= _torsoMinU && u <= _torsoMaxU && v >= _torsoMinV && v <= _torsoMaxV) return BodyPart.Torso;
+        if (u >= _legsMinU  && u <= _legsMaxU  && v >= _legsMinV  && v <= _legsMaxV)  return BodyPart.Legs;
         return BodyPart.None;
-    }
-
-    private static bool ContainsUv(Rect rect, float u, float v)
-    {
-        float minU = Mathf.Clamp01(rect.xMin);
-        float maxU = Mathf.Clamp01(rect.xMax);
-        float minV = Mathf.Clamp01(rect.yMin);
-        float maxV = Mathf.Clamp01(rect.yMax);
-        return u >= minU && u <= maxU && v >= minV && v <= maxV;
     }
 
     private void UpdateHoldIndicatorBodyPartHighlight(Mouse mouse)
@@ -822,10 +850,12 @@ public class HexInputManager : MonoBehaviour
         if (_hoveredBodyPart == highlightedPart) return;
         _hoveredBodyPart = highlightedPart;
 
-        foreach (var kv in _holdPartRenderers)
+        int highlighted = (int)highlightedPart;
+        for (int i = 1; i < _holdPartRenderers.Length; i++) // 0=None, пропускаем
         {
-            if (kv.Value == null) continue;
-            kv.Value.color = kv.Key == highlightedPart ? _holdPartHighlightColor : _holdPartBaseColor;
+            SpriteRenderer sr = _holdPartRenderers[i];
+            if (sr == null) continue;
+            sr.color = i == highlighted ? _holdPartHighlightColor : _holdPartBaseColor;
         }
     }
 }

@@ -74,11 +74,14 @@ public sealed class AttackRangeHexOutline : MonoBehaviour
             return;
         }
 
-        if (_visible
-            && centerCol == _lastCenterCol
+        if (centerCol == _lastCenterCol
             && centerRow == _lastCenterRow
             && r == _lastRangeHexes)
         {
+            // Кэш валиден — просто включаем renderer если был скрыт.
+            if (!_visible && _meshRenderer != null)
+                _meshRenderer.enabled = true;
+            _visible = true;
             return;
         }
 
@@ -130,12 +133,14 @@ public sealed class AttackRangeHexOutline : MonoBehaviour
             return;
         }
 
+        // Вершины в локальном пространстве mesh-объекта (дочерний к grid).
         _meshVertices.Clear();
+        Transform meshTransform = _meshFilter.transform;
         for (int i = 0; i < segCount; i++)
         {
             var s = _segmentsScratch[i];
-            _meshVertices.Add(s.a);
-            _meshVertices.Add(s.b);
+            _meshVertices.Add(meshTransform.InverseTransformPoint(s.a));
+            _meshVertices.Add(meshTransform.InverseTransformPoint(s.b));
         }
 
         int vc = _meshVertices.Count;
@@ -163,7 +168,16 @@ public sealed class AttackRangeHexOutline : MonoBehaviour
         ShowFromPlayer(player);
     }
 
+    /// <summary>Скрыть renderer, но сохранить mesh и кэш. Повторный ShowFromCell с теми же параметрами — мгновенный.</summary>
     public void Hide()
+    {
+        if (_meshRenderer != null)
+            _meshRenderer.enabled = false;
+        _visible = false;
+    }
+
+    /// <summary>Полный сброс: очистка mesh и кэша. Следующий ShowFromCell пересоберёт mesh.</summary>
+    public void HideAndInvalidate()
     {
         if (_lineMesh != null)
             _lineMesh.Clear();
