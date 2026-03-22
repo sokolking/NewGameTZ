@@ -32,10 +32,14 @@ public struct HexCube
 
     public static int Distance(HexCube a, HexCube b)
     {
-        return Mathf.Max(
-            Mathf.Abs(a.x - b.x),
-            Mathf.Abs(a.y - b.y),
-            Mathf.Abs(a.z - b.z));
+        int dx = a.x - b.x;
+        int dy = a.y - b.y;
+        int dz = a.z - b.z;
+        int ax = dx < 0 ? -dx : dx;
+        int ay = dy < 0 ? -dy : dy;
+        int az = dz < 0 ? -dz : dz;
+        int m = ax >= ay ? ax : ay;
+        return az >= m ? az : m;
     }
 
     public int DistanceTo(HexCube other) => Distance(this, other);
@@ -130,6 +134,21 @@ public static class HexCubeOffset
         return col >= 0 && col < width && row >= 0 && row < length;
     }
 
+    /// <summary>Расстояние в шагах (cube / axial) между двумя offset-клетками без лишних структур <see cref="HexCube"/>.</summary>
+    public static int DistanceBetweenOffsets(int col1, int row1, int col2, int row2)
+    {
+        int q1 = col1, s1 = row1 - (col1 - (col1 & 1)) / 2;
+        int q2 = col2, s2 = row2 - (col2 - (col2 & 1)) / 2;
+        int dx = q1 - q2;
+        int dz = s1 - s2;
+        int dy = -dx - dz;
+        int ax = dx < 0 ? -dx : dx;
+        int ay = dy < 0 ? -dy : dy;
+        int az = dz < 0 ? -dz : dz;
+        int m = ax >= ay ? ax : ay;
+        return az >= m ? az : m;
+    }
+
     /// <summary>Центр гекса в мире (flat-top): x = size*sqrt(3)*(q+r/2), z = size*(3/2)*r.</summary>
     public static void CubeToWorldFlatTop(HexCube cube, float size, out float worldX, out float worldZ)
     {
@@ -147,7 +166,7 @@ public static class HexCubeOffset
         outList.Clear();
         HexCube a = FromOffset(col0, row0);
         HexCube b = FromOffset(col1, row1);
-        int n = HexCube.Distance(a, b);
+        int n = DistanceBetweenOffsets(col0, row0, col1, row1);
         if (n == 0)
         {
             outList.Add((col0, row0));

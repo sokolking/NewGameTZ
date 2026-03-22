@@ -133,6 +133,9 @@ public class ActionPointsUI : MonoBehaviour
     /// <summary>Fallback BindGlobalUiFallbacks уже выполнялся при отсутствии Front Content Maker.</summary>
     private bool _fallbackBindDoneWhenNoFrontContent;
 
+    /// <summary>BindUiCallbacks уже выполнен — не вызывать каждый кадр (UnityEvent + RefreshLoggerView давали ~100+ KB GC/кадр).</summary>
+    private bool _uiCallbacksBound;
+
     /// <summary>Кэш для миникарты (без FindFirstObjectByType каждый кадр).</summary>
     private HexGridCamera _cachedHexGridCamera;
 
@@ -159,7 +162,11 @@ public class ActionPointsUI : MonoBehaviour
 
     private void Awake()
     {
-        AutoBindSceneReferences();
+        // Полная привязка UI — в Start (один раз), здесь только то, что нужно до Start для подписок.
+        if (_player == null)
+            _player = FindFirstObjectByType<Player>();
+        if (_gameSession == null)
+            _gameSession = FindFirstObjectByType<GameSession>();
 
         if (_roundWaitBarCycleSeconds <= 0.05f)
             _roundWaitBarCycleSeconds = 1.25f;
@@ -188,7 +195,7 @@ public class ActionPointsUI : MonoBehaviour
     /// </summary>
     private void EnsureUiBlockOverlaySync()
     {
-        if (GetComponent<UiBlockOverlaySync>() == null)
+        if (!TryGetComponent<UiBlockOverlaySync>(out _))
             gameObject.AddComponent<UiBlockOverlaySync>();
     }
 
@@ -347,6 +354,7 @@ public class ActionPointsUI : MonoBehaviour
         StartCoroutine(BattleBeginSequenceCoroutine());
     }
 
+    /// <summary>Интро боя: текст по центру → пауза → плавный зум камеры к игроку (<see cref="HexGridCamera.FocusAndZoomSmooth"/>).</summary>
     private System.Collections.IEnumerator BattleBeginSequenceCoroutine()
     {
         _battleBeginSequenceRunning = true;
@@ -734,7 +742,8 @@ public class ActionPointsUI : MonoBehaviour
             return false;
 
         GameObject go = EventSystem.current.currentSelectedGameObject;
-        return go.GetComponent<InputField>() != null || go.GetComponent<TMP_InputField>() != null;
+        // TryGetComponent — без внутреннего GetComponentNullErrorMessage при отсутствии компонента (профайлер).
+        return go.TryGetComponent<InputField>(out _) || go.TryGetComponent<TMP_InputField>(out _);
     }
 
     private void RefreshMovementButtons(MovementPosture posture, bool skipSelected)
@@ -984,7 +993,6 @@ public class ActionPointsUI : MonoBehaviour
 
     private void EnsureMiniMap()
     {
-        AutoBindSceneReferences();
         if (_miniMapPanel == null || _miniMapStatsPanel == null || _miniMapTimeText == null || _miniMapApText == null)
             return;
 
@@ -1220,8 +1228,8 @@ public class ActionPointsUI : MonoBehaviour
 
         HexGridCamera gridCamController = GetCachedHexGridCamera();
         Camera mainCam = null;
-        if (gridCamController != null)
-            mainCam = gridCamController.GetComponent<Camera>();
+        if (gridCamController != null && gridCamController.TryGetComponent<Camera>(out Camera camOnController))
+            mainCam = camOnController;
         if (mainCam == null)
             mainCam = Camera.main;
         if (mainCam == null)
@@ -1596,9 +1604,14 @@ public class ActionPointsUI : MonoBehaviour
 
     private void BindSkipDialogReferences(Transform frontContent)
     {
+        if (_skipDialogPanel != null && _skipDialogOkButton != null && _skipDialogCancelButton != null)
+            return;
+
         // Корень должен называться SkipDialogPanel (полноэкранный Canvas). Частая ошибка в инспекторе —
         // ссылка на дочерний SkipDialogDialog: тогда SetActive не включает родителя и диалог не в иерархии.
-        Transform skipRoot = FindNamedTransform(UiHierarchyNames.SkipDialogPanel);
+        Transform skipRoot = _skipDialogPanel == null
+            ? FindNamedTransform(UiHierarchyNames.SkipDialogPanel)
+            : _skipDialogPanel.transform;
         if (skipRoot != null)
             _skipDialogPanel = skipRoot.gameObject;
         else if (_skipDialogPanel != null && _skipDialogPanel.name != UiHierarchyNames.SkipDialogPanel)
@@ -1669,6 +1682,9 @@ public class ActionPointsUI : MonoBehaviour
 
     private void BindUiCallbacks()
     {
+        if (_uiCallbacksBound)
+            return;
+
         if (_endTurnButton != null)
         {
             _endTurnButton.onClick.RemoveListener(OnEndTurnClicked);
@@ -1764,6 +1780,8 @@ public class ActionPointsUI : MonoBehaviour
         ApplySkipDialogInputFieldRules();
 
         RefreshLoggerView();
+        // Повторяем привязку, пока не появятся основные кнопки хода (иначе UI подгрузился позже).
+        _uiCallbacksBound = _endTurnButton != null || _walkButton != null;
     }
 
     private void HandleBattleFinished(bool victory)

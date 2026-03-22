@@ -45,8 +45,19 @@ public sealed class InventoryUI : MonoBehaviour
         BattleSessionStateHooks.OnBattleIdentified += OnBattleIdentifiedForInventory;
         // Сразу убираем белый квадрат по умолчанию (Image без спрайта) и подставляем иконку, если Player уже есть.
         OnPlayerEquippedWeaponChanged();
-        StartCoroutine(LoadInventoryFromServerCoroutine());
-        StartCoroutine(RefreshActiveWeaponAfterLayoutCoroutine());
+        StartCoroutine(InventoryOnEnableCoroutine());
+    }
+
+    /// <summary>
+    /// Профайлер: один вход вместо двух <see cref="StartCoroutine"/>; внутри параллельно
+    /// <see cref="LoadInventoryFromServerCoroutine"/> (HTTP) и <see cref="RefreshActiveWeaponAfterLayoutCoroutine"/> (2 кадра после layout).
+    /// </summary>
+    private IEnumerator InventoryOnEnableCoroutine()
+    {
+        Coroutine load = StartCoroutine(LoadInventoryFromServerCoroutine());
+        Coroutine layout = StartCoroutine(RefreshActiveWeaponAfterLayoutCoroutine());
+        yield return load;
+        yield return layout;
     }
 
     private void OnDisable()
@@ -196,6 +207,7 @@ public sealed class InventoryUI : MonoBehaviour
         return null;
     }
 
+    /// <summary>GET слотов с <c>/api/db/user/inventory</c>, заполнение ячеек; при ошибке — локальный fallback.</summary>
     private IEnumerator LoadInventoryFromServerCoroutine()
     {
         ResolveHierarchyIfNeeded();
@@ -409,6 +421,7 @@ public sealed class InventoryUI : MonoBehaviour
         SetImageIcon(_activeWeaponImage, null, ActiveIconSize);
     }
 
+    /// <summary>Два кадра после enable — RectTransform/Canvas успевают пересчитаться; убирает «белый квадрат» у активного оружия.</summary>
     private IEnumerator RefreshActiveWeaponAfterLayoutCoroutine()
     {
         yield return null;

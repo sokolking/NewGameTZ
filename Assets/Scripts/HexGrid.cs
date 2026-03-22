@@ -192,7 +192,7 @@ public class HexGrid : MonoBehaviour
         HexCubeOffset.FromOffset(col, row);
 
     public static int GetDistance(int col1, int row1, int col2, int row2) =>
-        HexCube.Distance(GetCube(col1, row1), GetCube(col2, row2));
+        HexCubeOffset.DistanceBetweenOffsets(col1, row1, col2, row2);
 
     public static void GetNeighbor(int col, int row, int direction, out int outCol, out int outRow)
     {

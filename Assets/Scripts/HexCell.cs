@@ -26,6 +26,7 @@ public class HexCell : MonoBehaviour
     private bool _isObstacle;
     private Color _apMaskColor;
     private TextMesh _costLabel;
+    private int _lastCostLabelValue = int.MinValue;
     private GameObject _obstacleModelInstance;
 
 
@@ -37,6 +38,11 @@ public class HexCell : MonoBehaviour
 
     /// <summary>Кэш max(size.x,size.y,size.z) для wall_visual (масштаб как в префабе).</summary>
     private static float? _cachedWallPrefabMaxExtent;
+
+    private static GameObject _cachedPrefabWall;
+    private static GameObject _cachedPrefabDamagedWall;
+    private static GameObject _cachedPrefabTree;
+    private static GameObject _cachedPrefabRock;
 
     /// <summary>Гекс под курсором (OnMouseEnter) — для обновления цвета при смене орто/3-е лицо.</summary>
     private static HexCell _hoveredCellInstance;
@@ -132,7 +138,7 @@ public class HexCell : MonoBehaviour
         if (t != "wall" && t != "damaged_wall" && t != "tree" && t != "rock")
             return;
 
-        GameObject prefab = Resources.Load<GameObject>($"Obstacles/{t}_visual");
+        GameObject prefab = GetCachedObstaclePrefab(t);
         if (prefab == null)
         {
             Debug.LogWarning($"[HexCell] Нет Resources/Obstacles/{t}_visual.");
@@ -162,12 +168,29 @@ public class HexCell : MonoBehaviour
         _obstacleModelInstance = go;
     }
 
+    private static GameObject GetCachedObstaclePrefab(string t)
+    {
+        switch (t)
+        {
+            case "wall":
+                return _cachedPrefabWall ?? (_cachedPrefabWall = Resources.Load<GameObject>("Obstacles/wall_visual"));
+            case "damaged_wall":
+                return _cachedPrefabDamagedWall ?? (_cachedPrefabDamagedWall = Resources.Load<GameObject>("Obstacles/damaged_wall_visual"));
+            case "tree":
+                return _cachedPrefabTree ?? (_cachedPrefabTree = Resources.Load<GameObject>("Obstacles/tree_visual"));
+            case "rock":
+                return _cachedPrefabRock ?? (_cachedPrefabRock = Resources.Load<GameObject>("Obstacles/rock_visual"));
+            default:
+                return null;
+        }
+    }
+
     private static float GetCachedWallPrefabMaxExtent()
     {
         if (_cachedWallPrefabMaxExtent.HasValue)
             return _cachedWallPrefabMaxExtent.Value;
 
-        GameObject prefab = Resources.Load<GameObject>("Obstacles/wall_visual");
+        GameObject prefab = GetCachedObstaclePrefab("wall");
         if (prefab == null)
         {
             _cachedWallPrefabMaxExtent = 1f;
@@ -252,9 +275,13 @@ public class HexCell : MonoBehaviour
     {
         if (cost < 0)
         {
+            _lastCostLabelValue = int.MinValue;
             SetCostLabelVisible(false);
             return;
         }
+
+        if (_costLabel != null && cost == _lastCostLabelValue && _costLabel.gameObject.activeSelf)
+            return;
 
         if (_costLabel == null)
         {
@@ -279,6 +306,7 @@ public class HexCell : MonoBehaviour
         }
 
         _costLabel.text = cost.ToString();
+        _lastCostLabelValue = cost;
         SetCostLabelVisible(true);
     }
 
