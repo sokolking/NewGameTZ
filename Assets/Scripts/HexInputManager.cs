@@ -546,7 +546,7 @@ public class HexInputManager : MonoBehaviour
             : _heldRemoteTarget.transform.position + _holdIndicatorWorldOffset;
         if (_cameraTransform != null)
             _holdIndicatorGo.transform.rotation = Quaternion.LookRotation(-_cameraTransform.forward, _cameraTransform.up);
-        UpdateHoldIndicatorBodyPartHighlight(mouse);
+        UpdateHoldIndicatorBodyPartHighlight(mouse, mouse.leftButton.wasPressedThisFrame);
         SetHoldIndicatorVisible(true);
         IsHoldingRemoteTargetWithLeftMouse = true;
     }
@@ -780,16 +780,17 @@ public class HexInputManager : MonoBehaviour
         return BodyPart.None;
     }
 
-    private void UpdateHoldIndicatorBodyPartHighlight(Mouse mouse)
+    private void UpdateHoldIndicatorBodyPartHighlight(Mouse mouse, bool forceImmediate = false)
     {
         if (_holdIndicatorGo == null || _camera == null)
             return;
 
         Vector2 mousePos = mouse.position.ReadValue();
         // Каждый второй кадр + пропуск при почти неподвижной мыши — меньше Plane.Raycast / InverseTransform.
-        if ((Time.frameCount & 1) != 0)
+        // forceImmediate: при первом нажатии обязательно определяем body part, иначе быстрый клик-отпуск не зарегистрирует атаку.
+        if (!forceImmediate && (Time.frameCount & 1) != 0)
             return;
-        if (!float.IsNaN(_lastBodyPartHighlightMousePos.x) &&
+        if (!forceImmediate && !float.IsNaN(_lastBodyPartHighlightMousePos.x) &&
             (mousePos - _lastBodyPartHighlightMousePos).sqrMagnitude < 0.25f)
             return;
         _lastBodyPartHighlightMousePos = mousePos;
