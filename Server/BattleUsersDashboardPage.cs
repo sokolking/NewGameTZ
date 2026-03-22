@@ -139,6 +139,8 @@ public static class BattleUsersDashboardPage
       <div class="nav">
         <a href="/db">Battles</a>
         <a href="/users" class="active">Users</a>
+        <a href="/weapons">Weapons</a>
+        <a href="/obstacle-balance">Obstacle balance</a>
       </div>
       <input id="userSearch" type="search" placeholder="Search username">
       <button id="refreshBtn" type="button">Refresh</button>

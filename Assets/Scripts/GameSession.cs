@@ -81,6 +81,8 @@ public class GameSession : MonoBehaviour
     // Ключ: идентификатор сущности в сети (для игроков — playerId, для мобов — unitId сервера).
     private readonly Dictionary<string, RemoteBattleUnitView> _remoteUnits = new();
     private readonly HashSet<(int col, int row)> _obstacleCells = new();
+    /// <summary>Yaw стены с BattleStarted — для смены wall ↔ damaged_wall по mapUpdates.</summary>
+    private readonly Dictionary<(int col, int row), float> _obstacleWallYawByCell = new();
     private readonly Dictionary<string, ReplayUnitSnapshot> _initialReplayState = new();
     private readonly List<string> _turnHistoryIds = new();
     private readonly Dictionary<string, TurnResultPayload> _turnHistoryCache = new();
@@ -99,6 +101,7 @@ public class GameSession : MonoBehaviour
     private readonly List<(int col, int row)> _replayTwoPointMovePath = new(2);
     /// <summary>Буфер для линии гексов при расчёте конечной точки пули.</summary>
     private readonly List<(int col, int row)> _bulletLineHexBuffer = new(48);
+    private readonly HashSet<(int col, int row)> _mapUpdateLineMatchSet = new();
     private LiveTurnDraftSnapshot _liveTurnDraftSnapshot;
     private bool _debugMobSpawned;
     private bool _battleFinished;
@@ -354,6 +357,56 @@ public class GameSession : MonoBehaviour
         return true;
     }
 
+    /// <summary>Ctrl+клик по гексу: дальнобойный выстрел по направлению (стена на ЛС / враг на клетке).</summary>
+    public bool TryPerformHexAimAttack(int col, int row, bool shiftRepeat = false)
+    {
+        if (_battleFinished) return false;
+        var local = _localPlayer != null ? _localPlayer : FindFirstObjectByType<Player>();
+        if (local == null) return false;
+
+        int d = HexDistance(local.CurrentCol, local.CurrentRow, col, row);
+        if (d == 0)
+        {
+            OnNetworkMessage?.Invoke("Выберите другой гекс");
+            return false;
+        }
+
+        if (d > local.WeaponRangeHexes)
+        {
+            OnNetworkMessage?.Invoke("Гекс вне дальности оружия");
+            return false;
+        }
+
+        int attackCost = Mathf.Max(1, local.WeaponAttackApCost);
+        int apBefore = local.CurrentAp;
+        int repeatCount = shiftRepeat ? apBefore / attackCost : 1;
+        if (repeatCount <= 0)
+        {
+            OnNetworkMessage?.Invoke("Недостаточно ОД");
+            return false;
+        }
+
+        int queued = 0;
+        for (int i = 0; i < repeatCount; i++)
+        {
+            if (!local.QueueHexAttackAction(col, row, attackCost))
+                break;
+            queued++;
+        }
+
+        if (queued <= 0)
+        {
+            OnNetworkMessage?.Invoke("Недостаточно ОД");
+            return false;
+        }
+
+        if (queued > 1)
+            OnNetworkMessage?.Invoke($"Выстрел по гексу x{queued} в очередь");
+        else
+            OnNetworkMessage?.Invoke("Выстрел по гексу в очередь (Ctrl+клик)");
+        return true;
+    }
+
     private static int HexDistance(int colA, int rowA, int colB, int rowB)
     {
         // odd-r offset -> cube
@@ -511,14 +564,17 @@ public class GameSession : MonoBehaviour
     public void ApplyTurnResult(TurnResultPayload result)
     {
         if (result == null || result.results == null) return;
-        ApplyRemovedObstaclesFromTurnResult(result);
         AppendServerTurnLogs(result, showDamagePopupsImmediately: false);
         var animJobs = BuildTurnResultAnimationJobs(result, prepareForAnimation: true);
         var playback = BuildExecutedActionPlayback(result);
         if (playback.Count > 0)
             StartCoroutine(PlayExecutedActionTimeline(result, playback));
-        else if (animJobs.Count > 0)
-            StartCoroutine(PlayAllTurnAnimationsParallel(animJobs));
+        else
+        {
+            ApplyMapUpdatesFromTurnResult(result);
+            if (animJobs.Count > 0)
+                StartCoroutine(PlayAllTurnAnimationsParallel(animJobs));
+        }
         if (result.battleFinished)
             HandleBattleFinishedFromServer(result);
     }
@@ -527,9 +583,10 @@ public class GameSession : MonoBehaviour
     public void ApplyTurnResultThenRoundState(TurnResultPayload result, int nextRoundIndex, long roundDeadlineUtcMs)
     {
         if (result == null || result.results == null) return;
-        ApplyRemovedObstaclesFromTurnResult(result);
         bool animateResolvedRound = _animateResolvedRoundForPendingSubmit;
         _animateResolvedRoundForPendingSubmit = true;
+        if (!animateResolvedRound)
+            ApplyMapUpdatesFromTurnResult(result);
         AppendServerTurnLogs(result, showDamagePopupsImmediately: !animateResolvedRound);
         var animJobs = BuildTurnResultAnimationJobs(result, animateResolvedRound);
         var playback = animateResolvedRound ? BuildExecutedActionPlayback(result) : null;
@@ -616,8 +673,13 @@ public class GameSession : MonoBehaviour
     {
         if (playback != null && playback.Count > 0)
             yield return PlayExecutedActionTimeline(result, playback);
-        else if (jobs.Count > 0)
-            yield return PlayAllTurnAnimationsParallel(jobs);
+        else
+        {
+            if (playback != null)
+                ApplyMapUpdatesFromTurnResult(result);
+            if (jobs.Count > 0)
+                yield return PlayAllTurnAnimationsParallel(jobs);
+        }
         if (result == null || !result.battleFinished)
         {
             ApplyRoundState(nextRoundIndex, roundDeadlineUtcMs);
@@ -689,6 +751,7 @@ public class GameSession : MonoBehaviour
 
         int currentTick = -1;
         bool abortTimeline = false;
+        var appliedMapTicks = new HashSet<int>();
         foreach (var entry in playback)
         {
             // После смерти/окончания боя мы не должны останавливать отображение уже сохраненной истории.
@@ -702,10 +765,36 @@ public class GameSession : MonoBehaviour
                 continue;
 
             if (currentTick >= 0 && action.tick != currentTick)
+            {
+                ApplyMapUpdatesFromTurnResult(result, currentTick);
+                appliedMapTicks.Add(currentTick);
                 yield return new WaitForSecondsRealtime(Mathf.Max(0f, _tickPauseSeconds));
+            }
 
             currentTick = action.tick;
             yield return PlayExecutedAction(result, action);
+        }
+
+        if (!abortTimeline && currentTick >= 0)
+        {
+            ApplyMapUpdatesFromTurnResult(result, currentTick);
+            appliedMapTicks.Add(currentTick);
+        }
+
+        if (!abortTimeline && result.mapUpdates != null)
+        {
+            var orphanTicks = new List<int>();
+            foreach (var u in result.mapUpdates)
+            {
+                if (u == null) continue;
+                if (appliedMapTicks.Contains(u.tick)) continue;
+                if (orphanTicks.Contains(u.tick)) continue;
+                orphanTicks.Add(u.tick);
+            }
+
+            orphanTicks.Sort();
+            foreach (int t in orphanTicks)
+                ApplyMapUpdatesFromTurnResult(result, t);
         }
 
         if (abortTimeline)
@@ -738,6 +827,46 @@ public class GameSession : MonoBehaviour
             if (pause > 0f)
                 yield return new WaitForSecondsRealtime(pause);
         }
+    }
+
+    /// <summary>Гекс попадания в стену по журналу mapUpdates: тот же тик, что у Attack, и ближайший к стрелку гекс на линии выстрела.</summary>
+    private bool TryGetWallHitHexFromMapUpdates(
+        TurnResultPayload result,
+        int tick,
+        int fc,
+        int fr,
+        int tc,
+        int tr,
+        out int hitCol,
+        out int hitRow)
+    {
+        hitCol = -1;
+        hitRow = -1;
+        if (result?.mapUpdates == null || result.mapUpdates.Length == 0)
+            return false;
+
+        _mapUpdateLineMatchSet.Clear();
+        HexCubeOffset.GetHexLine(fc, fr, tc, tr, _bulletLineHexBuffer);
+        foreach (var cell in _bulletLineHexBuffer)
+            _mapUpdateLineMatchSet.Add(cell);
+
+        int bestDist = int.MaxValue;
+        foreach (BattleMapUpdate u in result.mapUpdates)
+        {
+            if (u == null || u.tick != tick)
+                continue;
+            if (!_mapUpdateLineMatchSet.Contains((u.col, u.row)))
+                continue;
+            int d = HexGrid.GetDistance(fc, fr, u.col, u.row);
+            if (d < bestDist)
+            {
+                bestDist = d;
+                hitCol = u.col;
+                hitRow = u.row;
+            }
+        }
+
+        return hitCol >= 0;
     }
 
     /// <summary>Пуля от атакующего к цели (или до исчерпания дальности оружия по линии гексов). Только при weaponRange &gt; 1.</summary>
@@ -803,6 +932,14 @@ public class GameSession : MonoBehaviour
         }
 
         int durationSteps = Mathf.Max(1, Mathf.Min(weaponRange, dist));
+        if (TryGetWallHitHexFromMapUpdates(result, action.tick, fc, fr, tc, tr, out int obsCol, out int obsRow)
+            && grid.IsInBounds(obsCol, obsRow))
+        {
+            end = grid.GetCellWorldPosition(obsCol, obsRow) + Vector3.up * y;
+            int dObs = HexGrid.GetDistance(fc, fr, obsCol, obsRow);
+            durationSteps = Mathf.Max(1, Mathf.Min(weaponRange, dObs));
+        }
+
         float duration = Mathf.Clamp(
             _bulletFlightSeconds * (0.45f + durationSteps * 0.18f),
             _bulletFlightSeconds * 0.35f,
@@ -1378,6 +1515,7 @@ public class GameSession : MonoBehaviour
     private void ApplyObstacleMap(BattleStartedPayload payload, HexGrid grid)
     {
         _obstacleCells.Clear();
+        _obstacleWallYawByCell.Clear();
         if (grid == null) return;
 
         foreach (HexCell cell in grid.GetComponentsInChildren<HexCell>())
@@ -1403,39 +1541,17 @@ public class GameSession : MonoBehaviour
                     : "wall";
                 float yaw = payload.obstacleWallYaws != null && i < payload.obstacleWallYaws.Length ? payload.obstacleWallYaws[i] : 0f;
                 cell.SetObstacleVisual(tag, yaw);
+                if (tag == "wall" || tag == "damaged_wall")
+                    _obstacleWallYawByCell[(col, row)] = yaw;
             }
         }
     }
 
-    private void ApplyRemovedObstaclesFromTurnResult(TurnResultPayload result)
+    /// <summary>Применить смену состояния стен с сервера (Full/Damaged/None). Если <paramref name="onlyTick"/> задан — только события этого тика (синхрон с журналом действий).</summary>
+    private void ApplyMapUpdatesFromTurnResult(TurnResultPayload result, int? onlyTick = null)
     {
-        if (result == null) return;
-
-        var toRemove = new System.Collections.Generic.HashSet<(int col, int row)>();
-
-        if (result.removedObstacleCols != null && result.removedObstacleRows != null
-            && result.removedObstacleCols.Length == result.removedObstacleRows.Length)
-        {
-            for (int i = 0; i < result.removedObstacleCols.Length; i++)
-                toRemove.Add((result.removedObstacleCols[i], result.removedObstacleRows[i]));
-        }
-
-        // Запасной путь, если массивы removed* не пришли (или десериализация их обнулила).
-        if (result.results != null)
-        {
-            foreach (PlayerTurnResult pr in result.results)
-            {
-                if (pr?.executedActions == null) continue;
-                foreach (BattleExecutedAction a in pr.executedActions)
-                {
-                    if (a == null || !a.obstacleDestroyed) continue;
-                    if (a.obstacleHitCol >= 0 && a.obstacleHitRow >= 0)
-                        toRemove.Add((a.obstacleHitCol, a.obstacleHitRow));
-                }
-            }
-        }
-
-        if (toRemove.Count == 0) return;
+        if (result?.mapUpdates == null || result.mapUpdates.Length == 0)
+            return;
 
         HexGrid grid = _localPlayer != null && _localPlayer.Grid != null
             ? _localPlayer.Grid
@@ -1443,15 +1559,52 @@ public class GameSession : MonoBehaviour
         if (grid == null)
             return;
 
-        foreach ((int col, int row) in toRemove)
+        foreach (BattleMapUpdate u in result.mapUpdates)
         {
-            _obstacleCells.Remove((col, row));
-            HexCell cell = grid.GetCell(col, row);
-            if (cell != null)
+            if (u == null) continue;
+            if (onlyTick.HasValue && u.tick != onlyTick.Value) continue;
+            int col = u.col;
+            int row = u.row;
+            if (!grid.IsInBounds(col, row)) continue;
+
+            switch (u.newState)
             {
-                cell.ClearObstacleVisual();
-                cell.SetObstacle(false);
+                case CellObjectState.None:
+                    RemoveObstacleAtCell(grid, col, row);
+                    break;
+                case CellObjectState.Full:
+                    _obstacleCells.Add((col, row));
+                    HexCell fullCell = grid.GetCell(col, row);
+                    if (fullCell != null)
+                    {
+                        float yaw = _obstacleWallYawByCell.TryGetValue((col, row), out float y) ? y : 0f;
+                        fullCell.SetObstacle(true);
+                        fullCell.SetObstacleVisual("wall", yaw);
+                    }
+                    break;
+                case CellObjectState.Damaged:
+                    _obstacleCells.Add((col, row));
+                    HexCell damagedCell = grid.GetCell(col, row);
+                    if (damagedCell != null)
+                    {
+                        float yaw = _obstacleWallYawByCell.TryGetValue((col, row), out float yd) ? yd : 0f;
+                        damagedCell.SetObstacle(true);
+                        damagedCell.SetObstacleVisual("damaged_wall", yaw);
+                    }
+                    break;
             }
+        }
+    }
+
+    private void RemoveObstacleAtCell(HexGrid grid, int col, int row)
+    {
+        _obstacleCells.Remove((col, row));
+        _obstacleWallYawByCell.Remove((col, row));
+        HexCell cell = grid.GetCell(col, row);
+        if (cell != null)
+        {
+            cell.ClearObstacleVisual();
+            cell.SetObstacle(false);
         }
     }
 

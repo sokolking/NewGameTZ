@@ -1,5 +1,6 @@
 using System;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Converters;
 
 /// <summary>
 /// Модели данных для обмена клиент–сервер по плану ServerSyncPlan.
@@ -68,10 +69,6 @@ public class BattleExecutedAction
     public string posture;
     public int damage;
     public bool targetDied;
-    public int obstacleHitCol = -1;
-    public int obstacleHitRow = -1;
-    public int obstacleDamage;
-    public bool obstacleDestroyed;
 }
 
 /// <summary>Результат хода для одного игрока (часть TurnResult).</summary>
@@ -145,6 +142,25 @@ public class BattleTurnResponsePayload
     public TurnResultPayload turnResult;
 }
 
+/// <summary>Состояние клетки препятствия (сервер: имя enum в JSON, см. <see cref="BattleMapUpdate.newState"/>).</summary>
+public enum CellObjectState
+{
+    None = 0,
+    Full = 1,
+    Damaged = 2
+}
+
+/// <summary>Одно изменение карты за тик (сервер MapUpdateDto, camelCase). newState: сервер отдаёт имя enum (JsonStringEnumConverter).</summary>
+[Serializable]
+public class BattleMapUpdate
+{
+    public int tick;
+    public int col;
+    public int row;
+    [JsonConverter(typeof(StringEnumConverter))]
+    public CellObjectState newState;
+}
+
 /// <summary>Ответ сервера (Server → Client): TurnResult.</summary>
 [Serializable]
 public class TurnResultPayload
@@ -155,8 +171,8 @@ public class TurnResultPayload
     /// <summary>Сервер: allSubmitted | timerExpired</summary>
     public string roundResolveReason;
     public bool battleFinished;
-    public int[] removedObstacleCols;
-    public int[] removedObstacleRows;
+    /// <summary>Смена состояния стен/препятствий за раунд (урон, разрушение).</summary>
+    public BattleMapUpdate[] mapUpdates;
 }
 
 /// <summary>Старт раунда (Server → Client): RoundStarted — один раз в начале раунда.</summary>

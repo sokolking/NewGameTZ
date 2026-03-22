@@ -28,8 +28,6 @@ public class HexCell : MonoBehaviour
     private TextMesh _costLabel;
     private GameObject _obstacleModelInstance;
 
-    /// <summary>Масштаб FBX стены (как раньше) — визуально ок.</summary>
-    private const float WallObstacleScale = 0.9f;
 
     /// <summary>Капсула игрока по умолчанию: height 2 × localScale.y 0.5 → ~1.0 по вертикали.</summary>
     private const float PlayerCapsuleReferenceMaxExtent = 1f;
@@ -37,7 +35,7 @@ public class HexCell : MonoBehaviour
     /// <summary>Камень: характерный размер ≈ половина «игрока» (см. <see cref="PlayerCapsuleReferenceMaxExtent"/>).</summary>
     private const float RockFractionOfPlayerSize = 0.5f;
 
-    /// <summary>Кэш max(size.x,size.y,size.z) для стены при <see cref="WallObstacleScale"/> (без родителя-гекса).</summary>
+    /// <summary>Кэш max(size.x,size.y,size.z) для wall_visual (масштаб как в префабе).</summary>
     private static float? _cachedWallPrefabMaxExtent;
 
     /// <summary>Гекс под курсором (OnMouseEnter) — для обновления цвета при смене орто/3-е лицо.</summary>
@@ -123,7 +121,7 @@ public class HexCell : MonoBehaviour
 
     public bool IsObstacle => _isObstacle;
 
-    /// <summary>Модель препятствия с сервера (Resources/Obstacles/{wall|tree|rock}).</summary>
+    /// <summary>Модель препятствия с сервера (Resources/Obstacles/{wall|damaged_wall|tree|rock}_visual).</summary>
     public void SetObstacleVisual(string tag, float yawDegrees)
     {
         ClearObstacleVisual();
@@ -131,13 +129,13 @@ public class HexCell : MonoBehaviour
             return;
 
         string t = tag.Trim().ToLowerInvariant();
-        if (t != "wall" && t != "tree" && t != "rock")
+        if (t != "wall" && t != "damaged_wall" && t != "tree" && t != "rock")
             return;
 
         GameObject prefab = Resources.Load<GameObject>($"Obstacles/{t}_visual");
         if (prefab == null)
         {
-            Debug.LogWarning($"[HexCell] Нет Resources/Obstacles/{t} (fbx в папке Obstacles).");
+            Debug.LogWarning($"[HexCell] Нет Resources/Obstacles/{t}_visual.");
             return;
         }
 
@@ -148,12 +146,17 @@ public class HexCell : MonoBehaviour
         {
             r.enabled = true;
         }
+
+        // Префабы стен задают ориентацию меша (часто −90° по X); yaw с сервера — вокруг нормали гекса, без затирания корня.
         switch (t)
         {
             case "wall":
-                go.transform.localRotation = Quaternion.Euler(0f, yawDegrees, 0f);
-                go.transform.localScale = Vector3.one * WallObstacleScale;
-                break;
+            case "damaged_wall":
+                {
+                    Quaternion bakedRot = go.transform.localRotation;
+                    go.transform.localRotation = Quaternion.AngleAxis(yawDegrees, transform.up) * bakedRot;
+                    break;
+                }
         }
 
         _obstacleModelInstance = go;
@@ -164,16 +167,15 @@ public class HexCell : MonoBehaviour
         if (_cachedWallPrefabMaxExtent.HasValue)
             return _cachedWallPrefabMaxExtent.Value;
 
-        GameObject prefab = Resources.Load<GameObject>("Obstacles/wall");
+        GameObject prefab = Resources.Load<GameObject>("Obstacles/wall_visual");
         if (prefab == null)
         {
-            _cachedWallPrefabMaxExtent = WallObstacleScale;
+            _cachedWallPrefabMaxExtent = 1f;
             return _cachedWallPrefabMaxExtent.Value;
         }
 
         GameObject go = Instantiate(prefab);
         go.transform.SetPositionAndRotation(Vector3.zero, Quaternion.identity);
-        go.transform.localScale = Vector3.one * WallObstacleScale;
         float ext = MaxExtent(ComputeWorldBoundsSize(go));
         UnityEngine.Object.Destroy(go);
         _cachedWallPrefabMaxExtent = Mathf.Max(ext, 0.0001f);

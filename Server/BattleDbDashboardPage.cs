@@ -192,6 +192,8 @@ public static class BattleDbDashboardPage
       <div class="nav">
         <a href="/db" class="active">Battles</a>
         <a href="/users">Users</a>
+        <a href="/weapons">Weapons</a>
+        <a href="/obstacle-balance">Obstacle balance</a>
       </div>
       <input id="battleSearch" type="search" placeholder="Search battleId">
       <input id="turnSearch" type="search" placeholder="Search turnId / resolve reason">

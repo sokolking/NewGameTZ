@@ -349,6 +349,16 @@ app.MapPost("/api/db/weapons", (BattleWeaponDatabase db, WeaponUpsertRequest req
     return Results.Ok(new { ok = true });
 });
 
+app.MapGet("/api/db/obstacle-balance", (BattleObstacleBalanceDatabase db) =>
+    Results.Json(db.GetBalance(), jsonOpt));
+app.MapPut("/api/db/obstacle-balance", (BattleObstacleBalanceDatabase db, BattleObstacleBalanceRowDto? body) =>
+{
+    if (body == null)
+        return Results.Json(new { error = "body required" }, jsonOpt, statusCode: 400);
+    db.UpsertBalance(body);
+    return Results.Ok(new { ok = true });
+});
+
 app.MapGet("/api/logs/recent", (BattleLogStore logs, int? take) =>
 {
     int requested = take ?? 200;
@@ -396,6 +406,7 @@ app.MapGet("/logs", () => Results.Content(BattleLogDashboardPage.Html, "text/htm
 app.MapGet("/db", () => Results.Content(BattleDbDashboardPage.Html, "text/html; charset=utf-8"));
 app.MapGet("/users", () => Results.Content(BattleUsersDashboardPage.Html, "text/html; charset=utf-8"));
 app.MapGet("/weapons", () => Results.Content(BattleWeaponsDashboardPage.Html, "text/html; charset=utf-8"));
+app.MapGet("/obstacle-balance", () => Results.Content(BattleObstacleBalanceDashboardPage.Html, "text/html; charset=utf-8"));
 
 // POST leave — только вне игровой сцены (отмена очереди с меню; в бою выход — disconnect WS + leave по сокету).
 app.MapPost("/api/battle/{battleId}/leave", (string battleId, string playerId, BattleRoomStore s) =>

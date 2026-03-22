@@ -298,7 +298,7 @@ public class BattleSignalRConnection : MonoBehaviour
         BattleRoundWsPush push = null;
         try
         {
-            // JsonUtility не заполняет вложенные массивы/объекты в turnResult (removedObstacle*, executedActions и т.д.).
+            // JsonUtility не заполняет вложенные массивы/объекты в turnResult (executedActions и т.д.).
             push = JsonConvert.DeserializeObject<BattleRoundWsPush>(json);
         }
         catch (Exception ex)

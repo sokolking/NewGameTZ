@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+using System.Linq;
 using BattleServer.Models;
 
 namespace BattleServer;
@@ -89,15 +91,64 @@ public class BattleRoom
 
     /// <summary>Кто в этом раунде завершил ход досрочно (пока таймер не истёк).</summary>
     public Dictionary<string, bool> EndedTurnEarlyThisRound { get; } = new();
-    /// <summary>Тег препятствия на клетке: wall | tree | rock.</summary>
+    /// <summary>Тег препятствия на клетке: wall | damaged_wall | tree | rock.</summary>
     private readonly Dictionary<(int col, int row), string> _obstacleTags = new();
     private readonly Dictionary<(int col, int row), int> _wallHpRemaining = new();
     private readonly Dictionary<(int col, int row), float> _wallYawDegrees = new();
+    /// <summary>Смещение модели стены от центра гекса к середине общего ребра (половина вектора центр→сосед в мировых XZ).</summary>
+    private readonly Dictionary<(int col, int row), (float ox, float oz)> _wallOffsetHalfWorld = new();
     private readonly List<(int col, int row)> _hexLineBuffer = new();
+    /// <summary>Линия к изначально выбранной цели до LOS-редиректа — для дерева/камня на пути (редирекнутый буфер теряет клетки за первым врагом).</summary>
+    private readonly List<(int col, int row)> _coverLineBuffer = new();
 
     private readonly Random _rng;
     private readonly BattleWeaponDatabase? _weaponDb;
     private readonly BattleObstacleBalanceDatabase? _obstacleDb;
+
+    private static bool IsWallObstacleTag(string? tag) =>
+        tag == "wall" || tag == "damaged_wall";
+
+    /// <summary>Полная стена при HP ≥ половины от max; повреждённая (damaged_wall) — при HP строго меньше половины (но &gt; 0).</summary>
+    private void SetWallTagFromRemainingHp((int col, int row) wc, int hpRemaining, int wallMaxHp)
+    {
+        if (hpRemaining <= 0)
+            return;
+        int maxHp = Math.Max(1, wallMaxHp);
+        bool belowHalf = hpRemaining * 2 < maxHp;
+        string tag = belowHalf ? "damaged_wall" : "wall";
+        _obstacleTags[wc] = tag;
+    }
+
+    /// <summary>Урон по стене; каждое попадание добавляет запись в mapUpdates (клиент: VFX пули и состояние стены).</summary>
+    private void ApplyWallDamageAndRecord(
+        int tick,
+        (int col, int row) wc,
+        int rawDamage,
+        BattleObstacleBalanceRowDto bal,
+        List<MapUpdateDto> mapUpdates)
+    {
+        if (!_obstacleTags.TryGetValue(wc, out var oldTag) || !IsWallObstacleTag(oldTag))
+            return;
+
+        int hp = _wallHpRemaining.GetValueOrDefault(wc, bal.WallMaxHp);
+        hp -= Math.Max(0, rawDamage);
+
+        if (hp <= 0)
+        {
+            _obstacleTags.Remove(wc);
+            _wallHpRemaining.Remove(wc);
+            _wallYawDegrees.Remove(wc);
+            _wallOffsetHalfWorld.Remove(wc);
+            mapUpdates.Add(new MapUpdateDto { Tick = tick, Col = wc.col, Row = wc.row, NewState = CellObjectState.None });
+            return;
+        }
+
+        _wallHpRemaining[wc] = hp;
+        SetWallTagFromRemainingHp(wc, hp, bal.WallMaxHp);
+        _obstacleTags.TryGetValue(wc, out var newTag);
+        var newState = newTag == "damaged_wall" ? CellObjectState.Damaged : CellObjectState.Full;
+        mapUpdates.Add(new MapUpdateDto { Tick = tick, Col = wc.col, Row = wc.row, NewState = newState });
+    }
 
     private int GetWeaponAttackApCostFromDb(string weaponCode)
     {
@@ -727,6 +778,9 @@ public class BattleRoom
                 }
 
                 _wallYawDegrees[(col, row)] = HexSpawn.ComputeYawAlongEdgeDegrees(col, row, nc, nr, hexSize);
+                HexSpawn.OffsetToWorldFlatTop(col, row, hexSize, out double ax, out double az);
+                HexSpawn.OffsetToWorldFlatTop(nc, nr, hexSize, out double bx, out double bz);
+                _wallOffsetHalfWorld[(col, row)] = ((float)((bx - ax) * 0.5), (float)((bz - az) * 0.5));
             }
 
             placedWalls++;
@@ -1058,6 +1112,21 @@ public class BattleRoom
         var obstacleRows = sortedKeys.Select(k => k.row).ToArray();
         var obstacleTags = sortedKeys.Select(k => _obstacleTags[k]).ToArray();
         var obstacleWallYaws = sortedKeys.Select(k => _wallYawDegrees.TryGetValue(k, out var y) ? y : 0f).ToArray();
+        var obstacleWallOffsetX = sortedKeys.Select(k => _wallOffsetHalfWorld.TryGetValue(k, out var o) ? o.ox : 0f).ToArray();
+        var obstacleWallOffsetZ = sortedKeys.Select(k => _wallOffsetHalfWorld.TryGetValue(k, out var o) ? o.oz : 0f).ToArray();
+        var mapStateStart = new List<CellObject>();
+        foreach (var kv in _obstacleTags.OrderBy(k => k.Key.col).ThenBy(k => k.Key.row))
+        {
+            if (!IsWallObstacleTag(kv.Value))
+                continue;
+            (int col, int row) wc = kv.Key;
+            mapStateStart.Add(new CellObject
+            {
+                Hex = new HexPositionDto { Col = wc.col, Row = wc.row },
+                State = kv.Value == "damaged_wall" ? CellObjectState.Damaged : CellObjectState.Full
+            });
+        }
+
         return new BattleStartedPayloadDto
         {
             BattleId = BattleId,
@@ -1079,7 +1148,10 @@ public class BattleRoom
             ObstacleCols = obstacleCols,
             ObstacleRows = obstacleRows,
             ObstacleTags = obstacleTags,
-            ObstacleWallYaws = obstacleWallYaws
+            ObstacleWallYaws = obstacleWallYaws,
+            ObstacleWallOffsetX = obstacleWallOffsetX,
+            ObstacleWallOffsetZ = obstacleWallOffsetZ,
+            MapState = mapStateStart.Count > 0 ? mapStateStart.ToArray() : System.Array.Empty<CellObject>()
         };
     }
 
@@ -1174,9 +1246,6 @@ public class BattleRoom
         Console.WriteLine($"[tzInfo] CloseRound begin: battleId={BattleId}, roundIndex={RoundIndex}, reason={resolveReason}, submissions={Submissions.Count}, units={Units.Count}");
         EnsureMobCommandsForCurrentRound();
 
-        var removedObstacleCols = new List<int>();
-        var removedObstacleRows = new List<int>();
-
         var order = new List<string>();
         foreach (var pid in SubmissionOrder)
         {
@@ -1246,6 +1315,7 @@ public class BattleRoom
             .Where(kv => alive.TryGetValue(kv.Key, out var isAlive) && isAlive)
             .Select(kv => kv.Value));
         int lifecycleTickCount = Math.Max(1, roundStartAp.Values.DefaultIfEmpty(1).Max());
+        var mapUpdates = new List<MapUpdateDto>();
 
         for (int tick = 1; tick <= lifecycleTickCount; tick++)
         {
@@ -1383,7 +1453,218 @@ public class BattleRoom
                         string? resolvedTargetId = ResolveUnitId(action.TargetUnitId);
                         if (string.IsNullOrEmpty(resolvedTargetId))
                         {
-                            executed.FailureReason = "Attack target missing";
+                            // Выстрел по гексу без цели-юнита: направление и урон по стене на ЛС — TargetPosition.
+                            if (action.TargetPosition == null)
+                            {
+                                executed.FailureReason = "Attack aim hex missing";
+                            }
+                            else
+                            {
+                                int ac = action.TargetPosition.Col;
+                                int ar = action.TargetPosition.Row;
+                                if (ac < 0 || ar < 0 || ac >= HexSpawn.DefaultGridWidth || ar >= HexSpawn.DefaultGridLength)
+                                {
+                                    executed.FailureReason = "Attack aim out of bounds";
+                                }
+                                else
+                                {
+                                    executed.ToPosition = new HexPositionDto { Col = ac, Row = ar };
+                                    int dist = HexSpawn.HexDistance(currentPos.col, currentPos.row, ac, ar);
+                                    int weaponRange = Math.Max(0, unit.WeaponRange);
+                                    int rawDamage = Math.Max(0, unit.WeaponDamage);
+                                    var bal = _obstacleDb?.GetBalance() ?? BattleObstacleBalanceRowDto.Defaults;
+
+                                    if (dist > weaponRange)
+                                    {
+                                        executed.Succeeded = true;
+                                        executed.Damage = 0;
+                                    }
+                                    else
+                                    {
+                                        HexSpawn.GetHexLineBetweenExclusive(currentPos.col, currentPos.row, ac, ar, _hexLineBuffer);
+
+                                        (int col, int row)? firstWall = null;
+                                        foreach (var cell in _hexLineBuffer)
+                                        {
+                                            if (_obstacleTags.TryGetValue(cell, out var tag) && IsWallObstacleTag(tag))
+                                            {
+                                                firstWall = cell;
+                                                break;
+                                            }
+                                        }
+
+                                        bool wallDone = false;
+                                        if (firstWall.HasValue)
+                                        {
+                                            var wc = firstWall.Value;
+                                            executed.Succeeded = true;
+                                            executed.Damage = 0;
+                                            ApplyWallDamageAndRecord(tick, wc, rawDamage, bal, mapUpdates);
+                                            wallDone = true;
+                                        }
+                                        else if (_obstacleTags.TryGetValue((ac, ar), out var aimTag) && IsWallObstacleTag(aimTag))
+                                        {
+                                            // Соседний гекс: линия «между» пуста — стена на гексе прицела.
+                                            (int col, int row) wc = (ac, ar);
+                                            executed.Succeeded = true;
+                                            executed.Damage = 0;
+                                            ApplyWallDamageAndRecord(tick, wc, rawDamage, bal, mapUpdates);
+                                            wallDone = true;
+                                        }
+
+                                        if (!wallDone)
+                                        {
+                                            // Первый враг на линии к гексу прицела (Ctrl+hex) — та же логика, что при атаке по юниту за укрытием.
+                                            string? hexHitId = null;
+                                            UnitStateDto? hexHitUnit = null;
+                                            (int col, int row) hexHitPos = default;
+
+                                            foreach (var kv in positions)
+                                            {
+                                                if (kv.Value.col != ac || kv.Value.row != ar)
+                                                    continue;
+                                                string oid = kv.Key;
+                                                if (oid == uid)
+                                                    continue;
+                                                if (!alive.GetValueOrDefault(oid))
+                                                    continue;
+                                                if (!Units.TryGetValue(oid, out var ou))
+                                                    continue;
+                                                if (!AreEnemies(unit, ou))
+                                                    continue;
+                                                hexHitId = oid;
+                                                hexHitUnit = ou;
+                                                hexHitPos = kv.Value;
+                                                break;
+                                            }
+
+                                            if (hexHitId == null)
+                                            {
+                                                foreach (var cell in _hexLineBuffer)
+                                                {
+                                                    foreach (var kv in positions)
+                                                    {
+                                                        if (kv.Value.col != cell.col || kv.Value.row != cell.row)
+                                                            continue;
+                                                        string oid = kv.Key;
+                                                        if (oid == uid)
+                                                            continue;
+                                                        if (!alive.GetValueOrDefault(oid))
+                                                            continue;
+                                                        if (!Units.TryGetValue(oid, out var ou))
+                                                            continue;
+                                                        if (!AreEnemies(unit, ou))
+                                                            continue;
+                                                        hexHitId = oid;
+                                                        hexHitUnit = ou;
+                                                        hexHitPos = kv.Value;
+                                                        break;
+                                                    }
+
+                                                    if (hexHitId != null)
+                                                        break;
+                                                }
+                                            }
+
+                                            if (hexHitId == null || hexHitUnit == null)
+                                            {
+                                                executed.Succeeded = true;
+                                                executed.Damage = 0;
+                                            }
+                                            else
+                                            {
+                                                executed.TargetUnitId = hexHitId;
+                                                executed.ToPosition = new HexPositionDto { Col = hexHitPos.col, Row = hexHitPos.row };
+
+                                                _coverLineBuffer.Clear();
+                                                _coverLineBuffer.AddRange(_hexLineBuffer);
+
+                                                int distHex = HexSpawn.HexDistance(currentPos.col, currentPos.row, hexHitPos.col, hexHitPos.row);
+                                                int weaponRangeHex = Math.Max(0, unit.WeaponRange);
+                                                double pHex;
+                                                if (distHex == 1)
+                                                {
+                                                    pHex = 1.0;
+                                                }
+                                                else
+                                                {
+                                                    pHex = (weaponRangeHex + 1 - distHex) / (double)Math.Max(1, weaponRangeHex);
+                                                    if (pHex < 0)
+                                                        pHex = 0;
+                                                    if (pHex > 1)
+                                                        pHex = 1;
+                                                }
+
+                                                bool anyTreeHex = false;
+                                                bool anyRockHex = false;
+                                                foreach (var cell in _coverLineBuffer)
+                                                {
+                                                    if (_obstacleTags.TryGetValue(cell, out var otag))
+                                                    {
+                                                        if (otag == "tree")
+                                                            anyTreeHex = true;
+                                                        if (otag == "rock")
+                                                            anyRockHex = true;
+                                                    }
+                                                }
+
+                                                if (_obstacleTags.TryGetValue((hexHitPos.col, hexHitPos.row), out var tgtObstacleTagHex))
+                                                {
+                                                    if (tgtObstacleTagHex == "tree")
+                                                        anyTreeHex = true;
+                                                    if (tgtObstacleTagHex == "rock")
+                                                        anyRockHex = true;
+                                                }
+
+                                                string tgtPostureHex = postureByUnit.TryGetValue(hexHitId, out var tpHex) ? NormalizePosture(tpHex) : PostureWalk;
+                                                if (anyTreeHex)
+                                                {
+                                                    double f = 1.0 - bal.TreeCoverMissPercent / 100.0;
+                                                    if (f < 0)
+                                                        f = 0;
+                                                    pHex *= f;
+                                                }
+
+                                                if (anyRockHex && (string.Equals(tgtPostureHex, PostureSit, StringComparison.OrdinalIgnoreCase)
+                                                    || string.Equals(tgtPostureHex, PostureHide, StringComparison.OrdinalIgnoreCase)))
+                                                {
+                                                    double f = 1.0 - bal.RockCoverMissPercent / 100.0;
+                                                    if (f < 0)
+                                                        f = 0;
+                                                    pHex *= f;
+                                                }
+
+                                                bool hitHex = _rng.NextDouble() < pHex;
+                                                if (!hitHex)
+                                                {
+                                                    executed.Succeeded = true;
+                                                    executed.TargetUnitId = hexHitId;
+                                                    executed.Damage = 0;
+                                                    attackTargetByUnit[uid] = hexHitId;
+                                                }
+                                                else
+                                                {
+                                                    int damageHex = rawDamage;
+                                                    hexHitUnit.CurrentHp = Math.Max(0, hexHitUnit.CurrentHp - damageHex);
+                                                    Units[hexHitId] = hexHitUnit;
+                                                    executed.Succeeded = true;
+                                                    executed.TargetUnitId = hexHitId;
+                                                    executed.Damage = damageHex;
+                                                    attackTargetByUnit[uid] = hexHitId;
+                                                    damageByUnit[uid] = damageByUnit.GetValueOrDefault(uid) + damageHex;
+
+                                                    if (hexHitUnit.CurrentHp <= 0)
+                                                    {
+                                                        alive[hexHitId] = false;
+                                                        occupied.Remove(hexHitPos);
+                                                        executed.TargetDied = true;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                         else if (!Units.TryGetValue(resolvedTargetId, out var targetUnit))
                         {
@@ -1423,7 +1704,7 @@ public class BattleRoom
                                 (int col, int row)? firstWall = null;
                                 foreach (var cell in _hexLineBuffer)
                                 {
-                                    if (_obstacleTags.TryGetValue(cell, out var tag) && tag == "wall")
+                                    if (_obstacleTags.TryGetValue(cell, out var tag) && IsWallObstacleTag(tag))
                                     {
                                         firstWall = cell;
                                         break;
@@ -1433,33 +1714,50 @@ public class BattleRoom
                                 if (firstWall.HasValue)
                                 {
                                     var wc = firstWall.Value;
-                                    int hp = _wallHpRemaining.GetValueOrDefault(wc, bal.WallMaxHp);
-                                    int dmg = rawDamage;
-                                    hp -= dmg;
                                     executed.Succeeded = true;
                                     executed.TargetUnitId = resolvedTargetId;
                                     executed.Damage = 0;
-                                    executed.ObstacleHitCol = wc.col;
-                                    executed.ObstacleHitRow = wc.row;
-                                    executed.ObstacleDamage = dmg;
-                                    if (hp <= 0)
-                                    {
-                                        _obstacleTags.Remove(wc);
-                                        _wallHpRemaining.Remove(wc);
-                                        _wallYawDegrees.Remove(wc);
-                                        executed.ObstacleDestroyed = true;
-                                        removedObstacleCols.Add(wc.col);
-                                        removedObstacleRows.Add(wc.row);
-                                    }
-                                    else
-                                    {
-                                        _wallHpRemaining[wc] = hp;
-                                    }
-
+                                    ApplyWallDamageAndRecord(tick, wc, rawDamage, bal, mapUpdates);
                                     attackTargetByUnit[uid] = resolvedTargetId;
                                 }
                                 else
                                 {
+                                    // Укрытие (дерево/камень): считаем по линии к изначально выбранной цели; после редиректа на ближнего врага _hexLineBuffer укорачивается и теряет клетки «между» врагом и целью прицела.
+                                    _coverLineBuffer.Clear();
+                                    _coverLineBuffer.AddRange(_hexLineBuffer);
+
+                                    // LOS: первый враг на линии к выбранной цели (строго между стрелком и целью) получает выстрел — не «пролетать» сквозь врага.
+                                    bool losRedirected = false;
+                                    foreach (var cell in _hexLineBuffer)
+                                    {
+                                        foreach (var kv in positions)
+                                        {
+                                            if (kv.Value != cell)
+                                                continue;
+                                            string oid = kv.Key;
+                                            if (oid == uid)
+                                                continue;
+                                            if (!alive.GetValueOrDefault(oid))
+                                                continue;
+                                            if (!Units.TryGetValue(oid, out var ou))
+                                                continue;
+                                            if (!AreEnemies(unit, ou))
+                                                continue;
+
+                                            resolvedTargetId = oid;
+                                            targetUnit = ou;
+                                            targetPos = positions[oid];
+                                            executed.ToPosition = new HexPositionDto { Col = targetPos.col, Row = targetPos.row };
+                                            dist = HexSpawn.HexDistance(currentPos.col, currentPos.row, targetPos.col, targetPos.row);
+                                            HexSpawn.GetHexLineBetweenExclusive(currentPos.col, currentPos.row, targetPos.col, targetPos.row, _hexLineBuffer);
+                                            losRedirected = true;
+                                            break;
+                                        }
+
+                                        if (losRedirected)
+                                            break;
+                                    }
+
                                     double p;
                                     if (dist == 1)
                                     {
@@ -1474,7 +1772,7 @@ public class BattleRoom
 
                                     bool anyTree = false;
                                     bool anyRock = false;
-                                    foreach (var cell in _hexLineBuffer)
+                                    foreach (var cell in _coverLineBuffer)
                                     {
                                         if (_obstacleTags.TryGetValue(cell, out var otag))
                                         {
@@ -1483,6 +1781,15 @@ public class BattleRoom
                                             if (otag == "rock")
                                                 anyRock = true;
                                         }
+                                    }
+
+                                    // Дерево/камень на гексе цели тоже влияют на укрытие (линия «между» их не включает).
+                                    if (_obstacleTags.TryGetValue((targetPos.col, targetPos.row), out var tgtObstacleTag))
+                                    {
+                                        if (tgtObstacleTag == "tree")
+                                            anyTree = true;
+                                        if (tgtObstacleTag == "rock")
+                                            anyRock = true;
                                     }
 
                                     string tgtPosture = postureByUnit.TryGetValue(resolvedTargetId, out var tp) ? NormalizePosture(tp) : PostureWalk;
@@ -1665,6 +1972,19 @@ public class BattleRoom
         bool hasMobsAlive = Units.Values.Any(u => u.UnitType == UnitType.Mob);
         bool battleFinished = IsSolo ? (!hasPlayersAlive || !hasMobsAlive) : Units.Values.Count(u => u.UnitType == UnitType.Player) <= 1;
 
+        var mapState = new List<CellObject>();
+        foreach (var kv in _obstacleTags.OrderBy(k => k.Key.col).ThenBy(k => k.Key.row))
+        {
+            if (!IsWallObstacleTag(kv.Value))
+                continue;
+            (int col, int row) wc = kv.Key;
+            mapState.Add(new CellObject
+            {
+                Hex = new HexPositionDto { Col = wc.col, Row = wc.row },
+                State = kv.Value == "damaged_wall" ? CellObjectState.Damaged : CellObjectState.Full
+            });
+        }
+
         LastTurnResult = new TurnResultPayloadDto
         {
             BattleId = BattleId,
@@ -1672,8 +1992,8 @@ public class BattleRoom
             Results = results.ToArray(),
             RoundResolveReason = resolveReason,
             BattleFinished = battleFinished,
-            RemovedObstacleCols = removedObstacleCols.Count > 0 ? removedObstacleCols.ToArray() : null,
-            RemovedObstacleRows = removedObstacleRows.Count > 0 ? removedObstacleRows.ToArray() : null
+            MapState = mapState.Count > 0 ? mapState.ToArray() : System.Array.Empty<CellObject>(),
+            MapUpdates = mapUpdates.Count > 0 ? mapUpdates.ToArray() : System.Array.Empty<MapUpdateDto>()
         };
 
         RoundIndex++;

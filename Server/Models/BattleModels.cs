@@ -54,7 +54,7 @@ public class QueuedBattleActionDto
 /// <summary>Баланс препятствий (таблица battle_obstacle_balance).</summary>
 public class BattleObstacleBalanceRowDto
 {
-    public int WallMaxHp { get; set; } = 5;
+    public int WallMaxHp { get; set; } = 35;
     /// <summary>Снижение шанса попадания (0–95), если цель за деревом.</summary>
     public int TreeCoverMissPercent { get; set; } = 15;
     /// <summary>Снижение шанса попадания (0–95), если цель за камнем и поза sit/hide.</summary>
@@ -80,11 +80,6 @@ public class ExecutedBattleActionDto
     public string? Posture { get; set; }
     public int Damage { get; set; }
     public bool TargetDied { get; set; }
-    /// <summary>Урон по препятствию-стене; -1 если не применимо.</summary>
-    public int ObstacleHitCol { get; set; } = -1;
-    public int ObstacleHitRow { get; set; } = -1;
-    public int ObstacleDamage { get; set; }
-    public bool ObstacleDestroyed { get; set; }
 }
 
 /// <summary>Команда юнита на один раунд (расширяемо под разные типы действий).</summary>
@@ -142,6 +137,27 @@ public class PlayerTurnResultDto
     public ExecutedBattleActionDto[]? ExecutedActions { get; set; }
 }
 
+public enum CellObjectState
+{
+    None = 0,
+    Full = 1,
+    Damaged = 2
+}
+
+public class MapUpdateDto
+{
+    public int Tick { get; set; }
+    public int Col { get; set; }
+    public int Row { get; set; }
+    public CellObjectState NewState { get; set; }
+}
+
+public class CellObject
+{
+    public HexPositionDto? Hex { get; set; }
+    public CellObjectState State { get; set; }
+}
+
 public class TurnResultPayloadDto
 {
     public string BattleId { get; set; } = "";
@@ -150,9 +166,8 @@ public class TurnResultPayloadDto
     /// <summary>allSubmitted — все сдали ход до таймера; timerExpired — время раунда вышло.</summary>
     public string RoundResolveReason { get; set; } = "";
     public bool BattleFinished { get; set; }
-    /// <summary>Снятые с гекса препятствия (параллельно removedObstacleRows).</summary>
-    public int[]? RemovedObstacleCols { get; set; }
-    public int[]? RemovedObstacleRows { get; set; }
+    public CellObject[]? MapState { get; set; }
+    public MapUpdateDto[]? MapUpdates { get; set; }
 }
 
 /// <summary>Статус участника в текущем раунде (для GET состояния боя).</summary>
@@ -196,6 +211,10 @@ public class BattleStartedPayloadDto
     public string[]? ObstacleTags { get; set; }
     /// <summary>Градусы поворота вокруг Y для стен; для дерева/камня можно 0.</summary>
     public float[]? ObstacleWallYaws { get; set; }
+    /// <summary>Смещение половины стены по X в мировых единицах (параллельно obstacleCols/Rows).</summary>
+    public float[]? ObstacleWallOffsetX { get; set; }
+    public float[]? ObstacleWallOffsetZ { get; set; }
+    public CellObject[]? MapState { get; set; }
 }
 
 public class BattleTurnHistoryStateDto

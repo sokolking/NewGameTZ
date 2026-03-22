@@ -106,8 +106,125 @@ public class HexInputManager : MonoBehaviour
         }
 
         UpdateHover();
+        UpdateCtrlHexAttack();
         UpdateDoubleClick();
         UpdateLeftHoldIndicator();
+        UpdateCtrlAttackRangeOutline();
+    }
+
+    /// <summary>
+    /// Контур дальности атаки при зажатом Ctrl (прицел по гексу). После удержания ЛКМ по цели — не гасим, если ещё держим цель.
+    /// </summary>
+    private void UpdateCtrlAttackRangeOutline()
+    {
+        if (_player == null || _player.IsMoving || _player.IsDead || _player.IsHidden)
+            return;
+        if (Keyboard.current == null)
+            return;
+
+        bool ctrl = Keyboard.current.leftCtrlKey.isPressed || Keyboard.current.rightCtrlKey.isPressed;
+        if (ctrl)
+        {
+            EnsureAttackRangeOutline();
+            if (_attackRangeOutline != null)
+                _attackRangeOutline.ShowFromPlayer(_player);
+        }
+        else if (!IsHoldingRemoteTargetWithLeftMouse)
+        {
+            HideAttackRangeOutline();
+        }
+    }
+
+    /// <summary>Ctrl+ЛКМ по гексу — выстрел по прицелу (стена на ЛС / враг на клетке), дальность &gt; 1.</summary>
+    private void UpdateCtrlHexAttack()
+    {
+        if (_grid == null || _player == null || _player.IsMoving || _player.IsDead || _player.IsHidden)
+            return;
+        if (Mouse.current == null || Keyboard.current == null)
+            return;
+        if (!Mouse.current.leftButton.wasPressedThisFrame)
+            return;
+        if (!Keyboard.current.leftCtrlKey.isPressed && !Keyboard.current.rightCtrlKey.isPressed)
+            return;
+        if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject())
+            return;
+        if (GameplayMapInputBlock.IsBlocked)
+            return;
+        if (GameSession.Active != null && GameSession.Active.BlockPlayerInput)
+            return;
+
+        if (!TryGetHexCellForCtrlAim(out HexCell cell) || cell == null)
+            return;
+
+        bool shiftRepeat = Keyboard.current.leftShiftKey.isPressed || Keyboard.current.rightShiftKey.isPressed;
+        GameSession session = GameSession.Active != null ? GameSession.Active : FindFirstObjectByType<GameSession>();
+        if (session != null && session.TryPerformHexAimAttack(cell.Col, cell.Row, shiftRepeat))
+        {
+            // Не даём этому клику стать первым в паре «двойной клик — движение».
+            _lastClickTime = 0f;
+        }
+    }
+
+    /// <summary>
+    /// Гекс под прицелом для Ctrl+выстрела: луч по всем слоям; если раньше попали в удалённого/локального юнита — берём его клетку на сетке.
+    /// </summary>
+    private bool TryGetHexCellForCtrlAim(out HexCell cell)
+    {
+        cell = null;
+        if (_camera == null || Mouse.current == null || _grid == null)
+            return false;
+
+        Vector2 pos = Mouse.current.position.ReadValue();
+        Ray ray = _camera.ScreenPointToRay(new Vector3(pos.x, pos.y, 0f));
+        int n = Physics.RaycastNonAlloc(ray, _doubleClickRaycastHits, 1000f, Physics.DefaultRaycastLayers, QueryTriggerInteraction.Collide);
+        if (n <= 0)
+            return false;
+
+        for (int a = 0; a < n - 1; a++)
+        {
+            for (int b = a + 1; b < n; b++)
+            {
+                if (_doubleClickRaycastHits[a].distance > _doubleClickRaycastHits[b].distance)
+                {
+                    RaycastHit tmp = _doubleClickRaycastHits[a];
+                    _doubleClickRaycastHits[a] = _doubleClickRaycastHits[b];
+                    _doubleClickRaycastHits[b] = tmp;
+                }
+            }
+        }
+
+        for (int i = 0; i < n; i++)
+        {
+            Collider c = _doubleClickRaycastHits[i].collider;
+            if (c == null)
+                continue;
+
+            RemoteBattleUnitView remote = c.GetComponentInParent<RemoteBattleUnitView>();
+            if (remote != null)
+            {
+                cell = _grid.GetCell(remote.CurrentCol, remote.CurrentRow);
+                return cell != null;
+            }
+
+            if (_player != null)
+            {
+                Player pl = c.GetComponentInParent<Player>();
+                if (pl != null && pl == _player)
+                {
+                    cell = _grid.GetCell(pl.CurrentCol, pl.CurrentRow);
+                    return cell != null;
+                }
+            }
+
+            HexCell hex = c.GetComponentInParent<HexCell>();
+            if (hex != null)
+            {
+                cell = hex;
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private void UpdateHover()

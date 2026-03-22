@@ -559,6 +559,30 @@ public class Player : MonoBehaviour
         return true;
     }
 
+    /// <summary>Выстрел по гексу прицела (Ctrl+клик): без targetUnitId, с <see cref="BattleQueuedAction.targetPosition"/> — урон по стене на ЛС, см. сервер.</summary>
+    public bool QueueHexAttackAction(int col, int row, int cost = 1)
+    {
+        int safeCost = Mathf.Max(1, cost);
+        if (_currentAp < safeCost)
+            return false;
+
+        if (_turnActions == null)
+            _turnActions = new List<BattleQueuedAction>();
+
+        _turnActions.Add(new BattleQueuedAction
+        {
+            actionType = "Attack",
+            targetUnitId = "",
+            targetPosition = new HexPosition(col, row),
+            bodyPart = "",
+            posture = MovementPostureUtility.ToId(_currentPosture),
+            cost = safeCost
+        });
+        _apSpentThisTurn += safeCost;
+        _currentAp -= safeCost;
+        return true;
+    }
+
     /// <summary>Смена оружия в очереди хода (<see cref="WeaponCatalog.EquipWeaponSwapApCost"/> ОД); сервер применяет EquipWeapon при закрытии раунда.</summary>
     /// <param name="costOverride">Если задано — переопределяет стоимость смены (по умолчанию 2 ОД).</param>
     /// <param name="weaponAttackApCost">Стоимость атаки новым оружием из БД (weapons.attack_ap_cost).</param>

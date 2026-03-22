@@ -33,6 +33,7 @@ public static class BattleWeaponsDashboardPage
       <a href="/db">Battles</a>
       <a href="/users">Users</a>
       <a href="/weapons">Weapons</a>
+      <a href="/obstacle-balance">Obstacle balance</a>
     </div>
     <div class="panel">
       <h3>Create / Update Weapon</h3>
