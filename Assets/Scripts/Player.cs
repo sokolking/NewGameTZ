@@ -20,6 +20,10 @@ public class Player : MonoBehaviour
     [Header("Движение")]
     [SerializeField] private float _moveDurationPerHex = 0.2f;
     private PlayerCharacterAnimator _characterAnimator;
+    private Animator _animator;
+    private HexGridCamera _hexGridCamera;
+    private Renderer[] _cachedRenderers;
+    private Collider[] _cachedColliders;
 
     [Header("Дальний бой (VFX)")]
     [Tooltip("Необязательно: точка выстрела вместо кости Humanoid RightHand.")]
@@ -135,7 +139,7 @@ public class Player : MonoBehaviour
             return true;
         }
 
-        Animator anim = GetComponentInChildren<Animator>();
+        Animator anim = _animator;
         if (anim != null && anim.isHuman && anim.isActiveAndEnabled)
         {
             Transform hand = anim.GetBoneTransform(HumanBodyBones.RightHand);
@@ -197,6 +201,8 @@ public class Player : MonoBehaviour
         _turnPath = new List<(int col, int row)>();
         _turnActions = new List<BattleQueuedAction>();
         _characterAnimator = GetComponentInChildren<PlayerCharacterAnimator>();
+        _animator = GetComponentInChildren<Animator>();
+        _hexGridCamera = FindFirstObjectByType<HexGridCamera>();
     }
 
     private void Start()
@@ -506,7 +512,7 @@ public class Player : MonoBehaviour
     /// <summary>Копия пути за текущий ход (для отправки на сервер). Вызывать до EndTurn().</summary>
     public List<(int col, int row)> GetTurnPathCopy()
     {
-        if (_turnPath == null) return new List<(int col, int row)>();
+        if (_turnPath == null) return new List<(int col, int row)>(0);
         return new List<(int col, int row)>(_turnPath);
     }
 
@@ -880,7 +886,7 @@ public class Player : MonoBehaviour
         Vector3? firstStepDir = null;
         if (driveCamera)
         {
-            hexCam = FindFirstObjectByType<HexGridCamera>();
+            hexCam = _hexGridCamera;
             Vector3 a = _grid.GetCellWorldPosition(path[0].col, path[0].row);
             Vector3 b = _grid.GetCellWorldPosition(path[1].col, path[1].row);
             Vector3 d = b - a;
@@ -894,8 +900,6 @@ public class Player : MonoBehaviour
         transform.position = _grid.GetCellWorldPosition(path[0].col, path[0].row);
         if (resetHexWalkPhase)
         {
-            if (_characterAnimator == null)
-                _characterAnimator = GetComponentInChildren<PlayerCharacterAnimator>();
             _characterAnimator?.ResetHexWalkPhaseForNewPath();
         }
         bool enteredThirdPerson = false;
@@ -917,8 +921,6 @@ public class Player : MonoBehaviour
                 }
 
                 var step = path[i];
-                if (_characterAnimator == null)
-                    _characterAnimator = GetComponentInChildren<PlayerCharacterAnimator>();
                 _characterAnimator?.NotifyHexStepStarted(_moveDurationPerHex);
 
                 Vector3 target = _grid.GetCellWorldPosition(step.col, step.row);
@@ -974,8 +976,6 @@ public class Player : MonoBehaviour
         // Стартуем с исходной клетки хода.
         Vector3 startPos = _grid.GetCellWorldPosition(_turnPath[0].col, _turnPath[0].row);
         transform.position = startPos;
-        if (_characterAnimator == null)
-            _characterAnimator = GetComponentInChildren<PlayerCharacterAnimator>();
         _characterAnimator?.ResetHexWalkPhaseForNewPath();
 
         try
@@ -983,8 +983,6 @@ public class Player : MonoBehaviour
             for (int i = 1; i < _turnPath.Count; i++)
             {
                 var step = _turnPath[i];
-                if (_characterAnimator == null)
-                    _characterAnimator = GetComponentInChildren<PlayerCharacterAnimator>();
                 _characterAnimator?.NotifyHexStepStarted(_moveDurationPerHex);
 
                 Vector3 target = _grid.GetCellWorldPosition(step.col, step.row);
@@ -1021,7 +1019,7 @@ public class Player : MonoBehaviour
         StopAllCoroutines();
         if (exitThirdPersonCamera)
         {
-            FindFirstObjectByType<HexGridCamera>()?.EndThirdPersonFollowImmediate();
+            _hexGridCamera?.EndThirdPersonFollowImmediate();
             GamePhaseViewController.StopModeButtonPulseIfAny();
         }
         if (_grid != null)
@@ -1036,10 +1034,12 @@ public class Player : MonoBehaviour
 
         _isHidden = hidden;
 
-        foreach (var renderer in GetComponentsInChildren<Renderer>(true))
+        _cachedRenderers ??= GetComponentsInChildren<Renderer>(true);
+        foreach (var renderer in _cachedRenderers)
             renderer.enabled = !hidden;
 
-        foreach (var collider in GetComponentsInChildren<Collider>(true))
+        _cachedColliders ??= GetComponentsInChildren<Collider>(true);
+        foreach (var collider in _cachedColliders)
             collider.enabled = !hidden;
     }
 

@@ -27,6 +27,7 @@ public class DamagePopupStack : MonoBehaviour
     private readonly List<Entry> _entries = new();
     private Transform _anchor;
     private Camera _cam;
+    private Transform _camTransform;
 
     public void ShowDamage(int damage)
     {
@@ -95,10 +96,13 @@ public class DamagePopupStack : MonoBehaviour
             return;
 
         if (_cam == null)
+        {
             _cam = Camera.main;
+            if (_cam != null) _camTransform = _cam.transform;
+        }
 
-        if (_anchor != null && _cam != null)
-            _anchor.rotation = Quaternion.LookRotation(-_cam.transform.forward, _cam.transform.up);
+        if (_anchor != null && _camTransform != null)
+            _anchor.rotation = Quaternion.LookRotation(-_camTransform.forward, _camTransform.up);
 
         float now = Time.unscaledTime;
         bool removedAny = false;

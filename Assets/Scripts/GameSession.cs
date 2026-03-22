@@ -114,6 +114,8 @@ public class GameSession : MonoBehaviour
     private LiveTurnDraftSnapshot _liveTurnDraftSnapshot;
     private bool _debugMobSpawned;
     private bool _battleFinished;
+    private HexGridCamera _hexGridCamera;
+    private HexGrid _hexGrid;
     /// <summary>Блокировка ввода: ожидание результата раунда или анимация.</summary>
     public bool BlockPlayerInput => _waitingForServerRoundResolve || IsBattleAnimationPlaying || IsTurnHistoryReplayPlaying || IsViewingHistoricalTurn;
 
@@ -131,7 +133,38 @@ public class GameSession : MonoBehaviour
 
     public bool IsInBattleWithServer() => _serverConnection != null && _serverConnection.IsInBattle;
     public bool IsObstacleCell(int col, int row) => _obstacleCells.Contains((col, row));
-    public Player LocalPlayer => _localPlayer != null ? _localPlayer : FindFirstObjectByType<Player>();
+    public Player LocalPlayer
+    {
+        get
+        {
+            if (_localPlayer == null)
+                _localPlayer = FindFirstObjectByType<Player>();
+            return _localPlayer;
+        }
+    }
+
+    private HexGridCamera CachedHexGridCamera
+    {
+        get
+        {
+            if (_hexGridCamera == null)
+                _hexGridCamera = FindFirstObjectByType<HexGridCamera>();
+            return _hexGridCamera;
+        }
+    }
+
+    private HexGrid CachedHexGrid
+    {
+        get
+        {
+            var local = LocalPlayer;
+            if (local != null && local.Grid != null)
+                return local.Grid;
+            if (_hexGrid == null)
+                _hexGrid = FindFirstObjectByType<HexGrid>();
+            return _hexGrid;
+        }
+    }
 
     /// <summary>
     /// Заполняет переданный список текущими удалёнными юнитами без аллокации нового List (для миникарты и т.п.).
@@ -300,7 +333,7 @@ public class GameSession : MonoBehaviour
     {
         get
         {
-            var local = _localPlayer != null ? _localPlayer : FindFirstObjectByType<Player>();
+            var local = LocalPlayer;
             if (local != null && local.IsMoving) return true;
             foreach (var r in _remoteUnits.Values)
                 if (r != null && r.IsMoving) return true;
@@ -339,7 +372,7 @@ public class GameSession : MonoBehaviour
     public bool TryPerformSilhouetteAttack(RemoteBattleUnitView target, string bodyPartLabel, bool shiftRepeat = false)
     {
         if (_battleFinished || target == null) return false;
-        var local = _localPlayer != null ? _localPlayer : FindFirstObjectByType<Player>();
+        var local = LocalPlayer;
         if (local == null) return false;
 
         int attackCost = Mathf.Max(1, local.WeaponAttackApCost);
@@ -376,7 +409,7 @@ public class GameSession : MonoBehaviour
     public bool TryPerformHexAimAttack(int col, int row, bool shiftRepeat = false)
     {
         if (_battleFinished) return false;
-        var local = _localPlayer != null ? _localPlayer : FindFirstObjectByType<Player>();
+        var local = LocalPlayer;
         if (local == null) return false;
 
         int pc = local.CurrentCol;
@@ -450,7 +483,7 @@ public class GameSession : MonoBehaviour
     {
         if (_battleFinished)
             return;
-        Player pl = _localPlayer != null ? _localPlayer : FindFirstObjectByType<Player>();
+        Player pl = LocalPlayer;
         if (pl == null || pl.Grid == null)
             return;
         if (pl.WeaponRangeHexes <= 1)
@@ -504,10 +537,10 @@ public class GameSession : MonoBehaviour
     {
         if (_debugMobSpawned) return true;
 
-        Player local = _localPlayer != null ? _localPlayer : FindFirstObjectByType<Player>();
+        Player local = LocalPlayer;
         if (local == null) return false;
 
-        HexGrid grid = local.Grid != null ? local.Grid : FindFirstObjectByType<HexGrid>();
+        HexGrid grid = CachedHexGrid;
         if (grid == null) return false;
 
         string id = string.IsNullOrEmpty(_debugMobId) ? "MOB_DEBUG" : _debugMobId;
@@ -547,7 +580,7 @@ public class GameSession : MonoBehaviour
     {
         _waitingForServerRoundResolve = true;
         _animateResolvedRoundForPendingSubmit = animateResolvedRound;
-        var p = _localPlayer != null ? _localPlayer : FindFirstObjectByType<Player>();
+        var p = LocalPlayer;
         p?.SetTurnTimerPaused(true);
     }
 
@@ -560,11 +593,11 @@ public class GameSession : MonoBehaviour
         if (HexGridCamera.ThirdPersonFollowActive)
             yield break;
 
-        Player local = _localPlayer != null ? _localPlayer : FindFirstObjectByType<Player>();
+        Player local = LocalPlayer;
         if (local == null || local.IsDead || local.IsHidden || local.Grid == null)
             yield break;
 
-        HexGridCamera cam = FindFirstObjectByType<HexGridCamera>();
+        HexGridCamera cam = CachedHexGridCamera;
         if (cam == null)
             yield break;
 
@@ -583,7 +616,7 @@ public class GameSession : MonoBehaviour
         bool was = _waitingForServerRoundResolve;
         _waitingForServerRoundResolve = false;
         _animateResolvedRoundForPendingSubmit = true;
-        var p = _localPlayer != null ? _localPlayer : FindFirstObjectByType<Player>();
+        var p = LocalPlayer;
         p?.SetTurnTimerPaused(false);
         if (was) OnServerRoundWaitCancelled?.Invoke();
     }
@@ -666,7 +699,7 @@ public class GameSession : MonoBehaviour
     private List<(object unit, bool isLocal, HexPosition[] path)> BuildTurnResultAnimationJobs(TurnResultPayload result, bool prepareForAnimation)
     {
         var animJobs = new List<(object unit, bool isLocal, HexPosition[] path)>();
-        Player local = _localPlayer != null ? _localPlayer : FindFirstObjectByType<Player>();
+        Player local = LocalPlayer;
 
         foreach (var r in result.results)
         {
@@ -706,7 +739,7 @@ public class GameSession : MonoBehaviour
             if (!_remoteUnits.TryGetValue(id, out var remote) || remote == null)
             {
                 // Юнит ещё не создан (например, серверный моб) — создаём RemoteBattleUnitView по первой точке пути.
-                HexGrid grid = local != null && local.Grid != null ? local.Grid : FindFirstObjectByType<HexGrid>();
+                HexGrid grid = CachedHexGrid;
                 if (grid != null && r.actualPath != null && r.actualPath.Length > 0)
                 {
                     var first = r.actualPath[0];
@@ -753,7 +786,7 @@ public class GameSession : MonoBehaviour
         if (result == null || !result.battleFinished)
         {
             ApplyRoundState(nextRoundIndex, roundDeadlineUtcMs);
-            var p = _localPlayer != null ? _localPlayer : FindFirstObjectByType<Player>();
+            var p = LocalPlayer;
             p?.SetTurnTimerPaused(false);
             _waitingForServerRoundResolve = false;
             if (p != null && !BlockPlayerInput)
@@ -820,7 +853,7 @@ public class GameSession : MonoBehaviour
         yield return CoEnterServerRoundThirdPersonCamera();
 
         {
-            Player localForPhase = _localPlayer != null ? _localPlayer : FindFirstObjectByType<Player>();
+            Player localForPhase = LocalPlayer;
             if (localForPhase != null)
             {
                 var anim = localForPhase.GetComponentInChildren<PlayerCharacterAnimator>();
@@ -878,7 +911,7 @@ public class GameSession : MonoBehaviour
         }
 
         {
-            Player p = _localPlayer != null ? _localPlayer : FindFirstObjectByType<Player>();
+            Player p = LocalPlayer;
             p?.ClearMovementPlaybackState();
         }
 
@@ -1059,7 +1092,7 @@ public class GameSession : MonoBehaviour
     private bool TryGetRangedFacingHorizontalForSubmitActions(BattleQueuedAction[] actions, out Vector3 horizontalDir)
     {
         horizontalDir = default;
-        Player pl = _localPlayer != null ? _localPlayer : FindFirstObjectByType<Player>();
+        Player pl = LocalPlayer;
         if (pl == null || pl.Grid == null)
             return false;
         if (pl.WeaponRangeHexes <= 1)
@@ -1192,7 +1225,7 @@ public class GameSession : MonoBehaviour
         PlayerCharacterAnimator faceA = null;
         try
         {
-            Player pl = _localPlayer != null ? _localPlayer : FindFirstObjectByType<Player>();
+            Player pl = LocalPlayer;
             faceA = pl != null ? pl.GetComponentInChildren<PlayerCharacterAnimator>() : null;
             if (faceA != null)
             {
@@ -1219,9 +1252,7 @@ public class GameSession : MonoBehaviour
         if (!TryGetWeaponRangeForUnit(result, action.unitId, out int weaponRange) || weaponRange <= 1)
             yield break;
 
-        HexGrid grid = _localPlayer != null && _localPlayer.Grid != null
-            ? _localPlayer.Grid
-            : FindFirstObjectByType<HexGrid>();
+        HexGrid grid = CachedHexGrid;
         if (grid == null)
             yield break;
 
@@ -1510,7 +1541,7 @@ public class GameSession : MonoBehaviour
     {
         _serverRoundIndex = roundIndex;
         _liveRoundDeadlineUtcMs = roundDeadlineUtcMs;
-        Player local = _localPlayer != null ? _localPlayer : FindFirstObjectByType<Player>();
+        Player local = LocalPlayer;
         local?.SetRoundState(roundIndex, roundDeadlineUtcMs);
     }
 
@@ -1549,8 +1580,8 @@ public class GameSession : MonoBehaviour
         }
         ApplyRoundState(0, deadlineUtcMs);
 
-        Player local = _localPlayer != null ? _localPlayer : FindFirstObjectByType<Player>();
-        HexGrid grid = local != null && local.Grid != null ? local.Grid : FindFirstObjectByType<HexGrid>();
+        Player local = LocalPlayer;
+        HexGrid grid = CachedHexGrid;
         float moveDur = local != null ? local.MoveDurationPerHex : 0.2f;
         ApplyObstacleMap(payload, grid);
 
@@ -1614,7 +1645,7 @@ public class GameSession : MonoBehaviour
             };
         }
 
-        FindFirstObjectByType<HexGridCamera>()?.RefocusOnLocalPlayer();
+        CachedHexGridCamera?.RefocusOnLocalPlayer();
 
         local?.ClearMovementFlag();
     }
@@ -1815,7 +1846,7 @@ public class GameSession : MonoBehaviour
         }
         _activeReplayAnimationCoroutines.Clear();
 
-        Player local = _localPlayer != null ? _localPlayer : FindFirstObjectByType<Player>();
+        Player local = LocalPlayer;
         local?.ForceStopMovement(exitThirdPersonCamera: false);
         foreach (var remote in _remoteUnits.Values)
             remote?.ForceStopMovement();
@@ -1826,7 +1857,7 @@ public class GameSession : MonoBehaviour
 
     private void CaptureLiveTurnDraft()
     {
-        Player local = _localPlayer != null ? _localPlayer : FindFirstObjectByType<Player>();
+        Player local = LocalPlayer;
         if (local == null)
         {
             _liveTurnDraftSnapshot = null;
@@ -1845,7 +1876,7 @@ public class GameSession : MonoBehaviour
         if (_liveTurnDraftSnapshot == null || _liveTurnDraftSnapshot.RoundIndex != _serverRoundIndex)
             return;
 
-        Player local = _localPlayer != null ? _localPlayer : FindFirstObjectByType<Player>();
+        Player local = LocalPlayer;
         if (local == null)
             return;
 
@@ -1923,8 +1954,8 @@ public class GameSession : MonoBehaviour
 
     private void ResetToInitialReplayState()
     {
-        Player local = _localPlayer != null ? _localPlayer : FindFirstObjectByType<Player>();
-        HexGrid grid = local != null && local.Grid != null ? local.Grid : FindFirstObjectByType<HexGrid>();
+        Player local = LocalPlayer;
+        HexGrid grid = CachedHexGrid;
         float moveDur = local != null ? local.MoveDurationPerHex : 0.2f;
         if (grid == null)
             return;
@@ -1999,9 +2030,7 @@ public class GameSession : MonoBehaviour
         if (result?.mapUpdates == null || result.mapUpdates.Length == 0)
             return;
 
-        HexGrid grid = _localPlayer != null && _localPlayer.Grid != null
-            ? _localPlayer.Grid
-            : FindFirstObjectByType<HexGrid>();
+        HexGrid grid = CachedHexGrid;
         if (grid == null)
             return;
 
@@ -2117,7 +2146,7 @@ public class GameSession : MonoBehaviour
         OnNetworkMessage?.Invoke("Бой проигран");
         OnBattleFinished?.Invoke(false);
         _waitingForServerRoundResolve = false;
-        var p = _localPlayer != null ? _localPlayer : FindFirstObjectByType<Player>();
+        var p = LocalPlayer;
         p?.SetTurnTimerPaused(true);
         // Stop timeline immediately to prevent further animations/moves after fatal tick.
         ApplyLocalHiddenDeadState(silent: true);
@@ -2126,7 +2155,7 @@ public class GameSession : MonoBehaviour
 
     private void ApplyLocalHiddenDeadState(bool silent)
     {
-        var local = _localPlayer != null ? _localPlayer : FindFirstObjectByType<Player>();
+        var local = LocalPlayer;
         if (local == null)
             return;
 
@@ -2184,7 +2213,7 @@ public class GameSession : MonoBehaviour
         {
             _battleFinished = true;
             _waitingForServerRoundResolve = false;
-            var p = _localPlayer != null ? _localPlayer : FindFirstObjectByType<Player>();
+            var p = LocalPlayer;
             p?.SetTurnTimerPaused(true);
             OnBattleFinished?.Invoke(true);
             OnNetworkMessage?.Invoke("Бой выигран");
@@ -2267,7 +2296,7 @@ public class GameSession : MonoBehaviour
 
     private void ClearAllDamagePopups()
     {
-        Player local = _localPlayer != null ? _localPlayer : FindFirstObjectByType<Player>();
+        Player local = LocalPlayer;
         if (local != null)
         {
             DamagePopupStack localStack = local.GetComponent<DamagePopupStack>();
@@ -2297,7 +2326,7 @@ public class GameSession : MonoBehaviour
 
             if (item.playerId == _playerId)
             {
-                Player local = _localPlayer != null ? _localPlayer : FindFirstObjectByType<Player>();
+                Player local = LocalPlayer;
                 if (local == null)
                     return false;
                 unit = local;

@@ -8,17 +8,26 @@ public class DirectionalLightFollowCamera : MonoBehaviour
 {
     [SerializeField] private Camera _targetCamera;
 
+    private Transform _cachedCamTransform;
+    private Transform _selfTransform;
+
     private void Awake()
     {
         if (_targetCamera == null)
             _targetCamera = Camera.main;
+        if (_targetCamera != null)
+            _cachedCamTransform = _targetCamera.transform;
+        _selfTransform = transform;
     }
 
     private void LateUpdate()
     {
-        if (_targetCamera == null) return;
+        if (_cachedCamTransform == null)
+        {
+            if (_targetCamera == null) return;
+            _cachedCamTransform = _targetCamera.transform;
+        }
 
-        // Свет направлен туда же, куда смотрит камера.
-        transform.rotation = Quaternion.LookRotation(_targetCamera.transform.forward, Vector3.up);
+        _selfTransform.rotation = Quaternion.LookRotation(_cachedCamTransform.forward, Vector3.up);
     }
 }

@@ -16,6 +16,7 @@ public class RemoteBattleUnitView : MonoBehaviour
     private Vector3? _horizontalFacingOverride;
     private int _maxHp = 10;
     private int _currentHp = 10;
+    private Animator _cachedAnimator;
 
     public string NetworkPlayerId { get; private set; }
     public bool IsMoving => _isMoving;
@@ -28,7 +29,8 @@ public class RemoteBattleUnitView : MonoBehaviour
     /// <summary>Точка выстрела для VFX: кость Humanoid RightHand, иначе над корнем юнита.</summary>
     public bool TryGetRangedFireWorldPosition(out Vector3 worldPos)
     {
-        Animator anim = GetComponentInChildren<Animator>();
+        if (_cachedAnimator == null) _cachedAnimator = GetComponentInChildren<Animator>();
+        Animator anim = _cachedAnimator;
         if (anim != null && anim.isHuman && anim.isActiveAndEnabled)
         {
             Transform hand = anim.GetBoneTransform(HumanBodyBones.RightHand);
@@ -92,7 +94,12 @@ public class RemoteBattleUnitView : MonoBehaviour
         cap.transform.localPosition = Vector3.zero;
         cap.transform.localScale = new Vector3(0.8f, 0.5f, 0.8f);
         var r = cap.GetComponent<Renderer>();
-        if (r != null) r.material.color = new Color(0.85f, 0.35f, 0.25f, 1f);
+        if (r != null)
+        {
+            var mpb = new MaterialPropertyBlock();
+            mpb.SetColor("_Color", new Color(0.85f, 0.35f, 0.25f, 1f));
+            r.SetPropertyBlock(mpb);
+        }
         // Оставляем коллайдер для raycast (удержание ПКМ по юниту).
         Collider capCollider = cap.GetComponent<Collider>();
         if (capCollider != null)

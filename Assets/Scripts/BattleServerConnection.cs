@@ -116,11 +116,12 @@ public class BattleServerConnection : MonoBehaviour
         _joining = false;
     }
 
+    private static readonly WaitForSeconds _pollWait = new WaitForSeconds(0.5f);
     private IEnumerator PollUntilBattleStartedCoroutine()
     {
         while (!_inBattle && !string.IsNullOrEmpty(_battleId))
         {
-            yield return new WaitForSeconds(0.5f);
+            yield return _pollWait;
             var url = $"{_serverUrl.TrimEnd('/')}/api/battle/{HttpSimple.Escape(_battleId)}/poll?playerId={HttpSimple.Escape(_playerId)}";
             int status = 0;
             string body = null;

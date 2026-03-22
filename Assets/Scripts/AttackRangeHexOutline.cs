@@ -89,18 +89,22 @@ public sealed class AttackRangeHexOutline : MonoBehaviour
         _lastCenterRow = centerRow;
         _lastRangeHexes = r;
 
+        // Обход по кубическим координатам в радиусе r вместо перебора всей сетки (O(r²) vs O(W×H)).
         _insideScratch.Clear();
         _insideListScratch.Clear();
-        for (int col = 0; col < _grid.Width; col++)
+        HexCube center = HexCubeOffset.FromOffset(centerCol, centerRow);
+        for (int dq = -r; dq <= r; dq++)
         {
-            for (int row = 0; row < _grid.Length; row++)
+            int rMin = Mathf.Max(-r, -dq - r);
+            int rMax = Mathf.Min(r, -dq + r);
+            for (int dr = rMin; dr <= rMax; dr++)
             {
-                if (HexGrid.GetDistance(centerCol, centerRow, col, row) <= r)
-                {
-                    var key = (col, row);
-                    _insideScratch.Add(key);
-                    _insideListScratch.Add(key);
-                }
+                HexCube cube = new HexCube(center.x + dq, center.y + dr, center.z - dq - dr);
+                HexCubeOffset.ToOffset(cube, out int c, out int ro);
+                if (!_grid.IsInBounds(c, ro)) continue;
+                var key = (c, ro);
+                _insideScratch.Add(key);
+                _insideListScratch.Add(key);
             }
         }
 

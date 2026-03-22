@@ -150,11 +150,12 @@ public class MainMenuMatchmaking : MonoBehaviour
         _searching = false;
     }
 
+    private static readonly WaitForSeconds _pollWait = new WaitForSeconds(0.5f);
     private IEnumerator PollUntilBattleStartedCoroutine(string battleId, string playerId)
     {
         while (_searching && !string.IsNullOrEmpty(battleId))
         {
-            yield return new WaitForSeconds(0.5f);
+            yield return _pollWait;
             var url = _serverUrl.TrimEnd('/') + "/api/battle/" + HttpSimple.Escape(battleId) + "/poll?playerId=" + HttpSimple.Escape(playerId);
             int status = 0;
             string body = null;
