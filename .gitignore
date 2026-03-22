@@ -52,3 +52,6 @@ Assets/AddressableAssetsData/*/*.bin*
 # .NET server build output
 Server/bin/
 Server/obj/
+
+# FBX персонажа ~110MB каждый — лимит GitHub 100MB; держите локально или используйте Git LFS
+Assets/Art/Player/*.fbx

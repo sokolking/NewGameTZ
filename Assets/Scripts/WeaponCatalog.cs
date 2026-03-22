@@ -21,6 +21,13 @@ public static class WeaponCatalog
         return code.Trim().ToLowerInvariant();
     }
 
+    /// <summary>Пистолет и револьвер — отдельный набор анимаций (idle/walk/run/sit с оружием в руках).</summary>
+    public static bool IsPistolStyleWeapon(string code)
+    {
+        string n = NormalizeWeaponCode(code);
+        return n == "gun" || n == "revolver";
+    }
+
     /// <summary>Загрузка спрайта из Resources/WeaponIcons/{iconKeyOrCode}. Ключ — code или icon_key из БД.</summary>
     public static Sprite LoadSpriteFromWeaponIconsFolder(string iconKeyOrCode)
     {

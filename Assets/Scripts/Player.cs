@@ -107,6 +107,8 @@ public class Player : MonoBehaviour
 
     /// <summary>Смена отображаемого оружия (после смены из инвентаря / результата раунда).</summary>
     public event System.Action OnEquippedWeaponChanged;
+    /// <summary>Текущее и макс. HP после синхронизации с сервером (для анимации смерти / респавна).</summary>
+    public event System.Action<int, int> OnHealthChanged;
 
     /// <summary>Синхронизация с сервером или локальная смена (кулак / камень и т.д.).</summary>
     /// <param name="attackApCost">Стоимость атаки из БД / сервера; по умолчанию 1.</param>
@@ -141,9 +143,6 @@ public class Player : MonoBehaviour
 
     private void Start()
     {
-        if (GetComponentInChildren<MeshFilter>() == null && GetComponentInChildren<MeshRenderer>() == null)
-            CreateDefaultVisual();
-
         // В онлайн-бою позицию задаёт сервер (ApplyBattleStarted); иначе Player.Start перезапишет спавн в (0,0).
         if (GameSession.Active != null && GameSession.Active.IsInBattleWithServer())
             return;
@@ -167,16 +166,6 @@ public class Player : MonoBehaviour
                 _turnTimeExpired = true;
             }
         }
-    }
-
-    private void CreateDefaultVisual()
-    {
-        GameObject cap = GameObject.CreatePrimitive(PrimitiveType.Capsule);
-        cap.name = "Visual";
-        cap.transform.SetParent(transform);
-        cap.transform.localPosition = Vector3.zero;
-        cap.transform.localScale = new Vector3(0.8f, 0.5f, 0.8f);
-        UnityEngine.Object.Destroy(cap.GetComponent<Collider>());
     }
 
     /// <summary>Запускает движение по пути (список (col, row)), ограничивая длину по ОД. animate=false – телепорт.
@@ -978,6 +967,7 @@ public class Player : MonoBehaviour
     {
         _maxHp = Mathf.Max(1, maxHp);
         _currentHp = Mathf.Clamp(currentHp, 0, _maxHp);
+        OnHealthChanged?.Invoke(_currentHp, _maxHp);
     }
 
     private void SetMovementPostureInternal(MovementPosture posture, bool notify)
