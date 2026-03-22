@@ -7,6 +7,7 @@ using System.Collections;
 /// Камера: при старте кадрирует весь HexGrid (ортографика, вид сверху). Колёсико — зум, перетаскивание — сдвиг (удобно после приближения).
 /// </summary>
 [RequireComponent(typeof(Camera))]
+[DefaultExecutionOrder(-100)]
 public class HexGridCamera : MonoBehaviour
 {
     /// <summary>Синхронно с режимом слежения 3-го лица (для HexCell: не красить hover серым при движении перспективной камеры).</summary>
@@ -77,6 +78,14 @@ public class HexGridCamera : MonoBehaviour
     private bool _followThirdPersonActive;
     private float _thirdPersonOrbitYawDeg;
     private float _thirdPersonOrbitPitchDeg;
+    /// <summary>За текущее удержание ЛКМ орбиты уже было движение мыши — не показывать прицел атаки по юниту.</summary>
+    private bool _thirdPersonOrbitLmbDragThisPress;
+
+    /// <summary>Режим 3-го лица: после движения мыши с зажатой ЛКМ орбиты — скрыть индикатор/контур атаки (см. <see cref="HexInputManager"/>).</summary>
+    public bool ThirdPersonOrbitSuppressAttackHold =>
+        ThirdPersonFollowActive
+        && _thirdPersonOrbitMouseButton == 0
+        && _thirdPersonOrbitLmbDragThisPress;
 
     public float LastZoomInputTime => _lastZoomInputTime;
     public int ZoomChangeCount => _zoomChangeCount;
@@ -234,9 +243,16 @@ public class HexGridCamera : MonoBehaviour
                 ? Mouse.current.rightButton.isPressed
                 : Mouse.current.middleButton.isPressed;
 
-        if (!orbitPressed) return;
+        if (!orbitPressed)
+        {
+            _thirdPersonOrbitLmbDragThisPress = false;
+            return;
+        }
 
         Vector2 mouseDelta = Mouse.current.delta.ReadValue();
+        if (_thirdPersonOrbitMouseButton == 0 && mouseDelta.sqrMagnitude >= 0.0001f)
+            _thirdPersonOrbitLmbDragThisPress = true;
+
         if (mouseDelta.sqrMagnitude < 0.0001f) return;
 
         if (_thirdPersonOrbitMouseButton == 0 && HexInputManager.IsHoldingRemoteTargetWithLeftMouse)
@@ -418,6 +434,7 @@ public class HexGridCamera : MonoBehaviour
         _followTarget = target;
         _thirdPersonOrbitYawDeg = 0f;
         _thirdPersonOrbitPitchDeg = 0f;
+        _thirdPersonOrbitLmbDragThisPress = false;
 
         ComputeThirdPersonEndPose(out Vector3 endPos, out Quaternion endRot, out float endFov);
 
@@ -472,6 +489,7 @@ public class HexGridCamera : MonoBehaviour
         _followThirdPersonActive = false;
         _thirdPersonOrbitYawDeg = 0f;
         _thirdPersonOrbitPitchDeg = 0f;
+        _thirdPersonOrbitLmbDragThisPress = false;
 
         Vector3 endPos = _savedPosition;
         Quaternion endRot = _savedRotation;
@@ -516,6 +534,7 @@ public class HexGridCamera : MonoBehaviour
         ThirdPersonFollowActive = false;
         _thirdPersonOrbitYawDeg = 0f;
         _thirdPersonOrbitPitchDeg = 0f;
+        _thirdPersonOrbitLmbDragThisPress = false;
         HexCell.RefreshHoverAfterThirdPersonCamera();
 
         if (_cam == null) _cam = GetComponent<Camera>();

@@ -9,6 +9,7 @@ using UnityEngine.InputSystem;
 /// Наведение на гекс (подсветка) и двойной клик — путь и движение игрока.
 /// Использует Input System package.
 /// </summary>
+[DefaultExecutionOrder(50)]
 public class HexInputManager : MonoBehaviour
 {
     private enum BodyPart
@@ -62,6 +63,13 @@ public class HexInputManager : MonoBehaviour
     private float _holdCompositeHalfHeight = 0.5f;
     [SerializeField] private AttackRangeHexOutline _attackRangeOutline;
     public static bool IsHoldingRemoteTargetWithLeftMouse { get; private set; }
+
+    private HexGridCamera _hexGridCamera;
+
+    private void Awake()
+    {
+        _hexGridCamera = FindFirstObjectByType<HexGridCamera>();
+    }
 
     private void Update()
     {
@@ -121,6 +129,13 @@ public class HexInputManager : MonoBehaviour
             return;
         if (Keyboard.current == null)
             return;
+        if (_hexGridCamera == null)
+            _hexGridCamera = FindFirstObjectByType<HexGridCamera>();
+        if (_hexGridCamera != null && _hexGridCamera.ThirdPersonOrbitSuppressAttackHold)
+        {
+            HideAttackRangeOutline();
+            return;
+        }
 
         bool ctrl = Keyboard.current.leftCtrlKey.isPressed || Keyboard.current.rightCtrlKey.isPressed;
         if (ctrl)
@@ -377,6 +392,19 @@ public class HexInputManager : MonoBehaviour
     private void UpdateLeftHoldIndicator()
     {
         if (Mouse.current == null) return;
+        if (_hexGridCamera == null)
+            _hexGridCamera = FindFirstObjectByType<HexGridCamera>();
+
+        // 3-е лицо: после движения мыши с зажатой ЛКМ орбиты — не показывать силуэт/контур атаки (поворот камеры).
+        if (_hexGridCamera != null && _hexGridCamera.ThirdPersonOrbitSuppressAttackHold)
+        {
+            _heldRemoteTarget = null;
+            _hasHoldIndicatorAnchor = false;
+            _hoveredBodyPart = BodyPart.None;
+            SetHoldIndicatorVisible(false);
+            IsHoldingRemoteTargetWithLeftMouse = false;
+            return;
+        }
 
         // ПКМ никогда не должна выполнять ЛКМ-логику.
         if (Mouse.current.rightButton.isPressed)
