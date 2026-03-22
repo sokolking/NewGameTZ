@@ -789,7 +789,7 @@ public class Player : MonoBehaviour
     }
 
     /// <summary>Проиграть анимацию движения по пути с сервера (actualPath). Запускать после ApplyServerTurnResult. Не меняет состояние.</summary>
-    /// <param name="driveCamera">Если false — только движение юнита; Begin/End камеры делает GameSession (например, один цикл на весь таймлайн MoveStep с сервера).</param>
+    /// <param name="driveCamera">Если true — при старте включается слежение 3-го лица (только по явному вызову; <see cref="GameSession"/> для серверных анимаций передаёт false).</param>
     public IEnumerator PlayPathAnimation(HexPosition[] path, bool driveCamera = true)
     {
         if (_grid == null || path == null || path.Length < 2)
@@ -878,28 +878,16 @@ public class Player : MonoBehaviour
     }
 
     /// <summary>Проиграть анимацию всего пути за ход (без изменения ОД и штрафов), используется при завершении хода с анимацией.</summary>
+    /// <remarks>Камера и режим не переключаются автоматически — только по кнопке режима в UI.</remarks>
     public IEnumerator PlayLastMoveAnimation()
     {
         if (_grid == null || _turnPath == null || _turnPath.Count < 2) yield break;
-
-        HexGridCamera hexCam = FindFirstObjectByType<HexGridCamera>();
-        Vector3? firstStepDir = null;
-        {
-            Vector3 a = _grid.GetCellWorldPosition(_turnPath[0].col, _turnPath[0].row);
-            Vector3 b = _grid.GetCellWorldPosition(_turnPath[1].col, _turnPath[1].row);
-            Vector3 d = b - a;
-            d.y = 0f;
-            if (d.sqrMagnitude > 0.0001f)
-                firstStepDir = d.normalized;
-        }
 
         _isMoving = true;
 
         // Стартуем с исходной клетки хода.
         Vector3 startPos = _grid.GetCellWorldPosition(_turnPath[0].col, _turnPath[0].row);
         transform.position = startPos;
-        if (hexCam != null)
-            yield return hexCam.EnterThirdPersonFollowRoutine(transform, firstStepDir);
 
         try
         {
@@ -927,9 +915,6 @@ public class Player : MonoBehaviour
         {
             _isMoving = false;
         }
-
-        if (hexCam != null)
-            GamePhaseViewController.NotifyViewAnimationEndedKeepThirdPerson();
     }
 
     /// <summary>
