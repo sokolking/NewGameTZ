@@ -3,7 +3,7 @@ using UnityEngine.UI;
 
 /// <summary>
 /// Показывает <see cref="UiHierarchyNames.BlockOverlay"/> при открытии любой из панелей:
-/// PauseMenuPanel, RoundWaitPanel, SkipDialogPanel (логика совпадает с <see cref="GameplayMapInputBlock"/>).
+/// RoundWaitPanel, SkipDialogPanel (логика совпадает с <see cref="GameplayMapInputBlock"/>).
 /// Скрывает оверлей, когда все они закрыты.
 /// Повесь на корневой Canvas (тот же, где ActionPointsUI) — или компонент добавится из <see cref="ActionPointsUI"/> автоматически.
 /// Если объекта BlockOverlay нет в сцене, он будет создан при старте.
@@ -89,7 +89,7 @@ public sealed class UiBlockOverlaySync : MonoBehaviour
         if (_blockOverlay.activeSelf != need)
             _blockOverlay.SetActive(need);
 
-        // Если BlockOverlay последний в Canvas — он рисуется поверх PauseMenu / диалогов и съедает raycast.
+        // Если BlockOverlay последний в Canvas — он рисуется поверх модальных окон и съедает raycast.
         if (_blockOverlay.activeSelf)
             EnsureOverlayBehindModalPanels();
     }

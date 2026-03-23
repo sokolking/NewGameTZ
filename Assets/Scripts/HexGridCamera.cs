@@ -341,6 +341,9 @@ public class HexGridCamera : MonoBehaviour
     /// </summary>
     private void ApplyThirdPersonFollowPose(bool instantRotation = false)
     {
+        // При паузе (Time.timeScale = 0) Time.deltaTime == 0 — SmoothDamp/Slerp дают сбой или рывок камеры.
+        float dt = CameraEffectiveDeltaTime();
+
         Vector3 p = _followTarget.position;
         Vector3 flat = GetFollowBehindHorizontalForward();
 
@@ -354,7 +357,7 @@ public class HexGridCamera : MonoBehaviour
                 ref _followCamPosVelocity,
                 _followPositionSmoothTime,
                 Mathf.Infinity,
-                Time.deltaTime);
+                dt);
         }
         else
         {
@@ -370,10 +373,16 @@ public class HexGridCamera : MonoBehaviour
                 transform.rotation = targetRot;
             else
             {
-                float k = 1f - Mathf.Exp(-_followRotationLerp * Time.deltaTime);
+                float k = 1f - Mathf.Exp(-_followRotationLerp * dt);
                 transform.rotation = Quaternion.Slerp(transform.rotation, targetRot, k);
             }
         }
+    }
+
+    /// <summary>При timeScale = 0 scaled delta = 0; для камеры используем unscaled, чтобы пауза не ломала сглаживание.</summary>
+    private static float CameraEffectiveDeltaTime()
+    {
+        return Time.deltaTime > 1e-7f ? Time.deltaTime : Time.unscaledDeltaTime;
     }
 
     /// <summary>

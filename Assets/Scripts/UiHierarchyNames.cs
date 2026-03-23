@@ -1,6 +1,6 @@
 /// <summary>
 /// Имена объектов UI по <c>Assets/Scenes/MainScene.unity</c>.
-/// Прямые дочерние объекты корневого Canvas (fileID 1216319917): Front Content Maker, RoundWaitPanel, PauseMenuPanel, SkipDialogPanel (+ BlockOverlay при добавлении).
+/// Прямые дочерние объекты корневого Canvas (fileID 1216319917): Front Content Maker, RoundWaitPanel, SkipDialogPanel (+ BlockOverlay при добавлении).
 /// При переименовании в редакторе обновляй здесь — автопоиск в <see cref="ActionPointsUI"/> опирается на эти строки.
 /// </summary>
 public static class UiHierarchyNames
@@ -64,9 +64,6 @@ public static class UiHierarchyNames
     public const string SkipGlobalNameBtn = "BtnSkip";
 
     public const string RoundWaitPanel = "RoundWaitPanel";
-    public const string PauseMenuPanel = "PauseMenuPanel";
-    public const string PauseButtonResume = "Button_Resume";
-    public const string PauseButtonMainMenu = "Button_MainMenu";
 
     /// <summary>
     /// Полноэкранный слой под модальными панелями (raycast), синхронизируется с <see cref="UiBlockOverlaySync"/>.

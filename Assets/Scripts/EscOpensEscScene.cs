@@ -151,12 +151,34 @@ public sealed class EscOpensEscScene : MonoBehaviour
                 yield break;
             }
 
-            SceneManager.SetActiveScene(esc);
+            // Не вызывать SetActiveScene(esc): иначе Camera.main часто становится камерой EscScene
+            // (позиция по умолчанию — вид на «0,0»), а не боевой HexGridCamera.
+            // UI в Esc — Screen Space Overlay, отдельная камера для меню не нужна.
+            DisableWorldCamerasInEscOverlay(esc);
             EnsureEscMenuPanelWired(esc);
         }
         finally
         {
             _opening = false;
+        }
+    }
+
+    /// <summary>
+    /// Сцена Esc грузится additively: отключаем все <see cref="Camera"/> в ней,
+    /// чтобы не было второго MainCamera и подмены <see cref="Camera.main"/> боевой камерой.
+    /// </summary>
+    private static void DisableWorldCamerasInEscOverlay(Scene escScene)
+    {
+        if (!escScene.IsValid() || !escScene.isLoaded)
+            return;
+
+        foreach (GameObject root in escScene.GetRootGameObjects())
+        {
+            foreach (Camera cam in root.GetComponentsInChildren<Camera>(true))
+            {
+                if (cam != null)
+                    cam.enabled = false;
+            }
         }
     }
 
