@@ -641,8 +641,8 @@ public class GameSession : MonoBehaviour
     {
         if (result == null || result.results == null) return;
         AppendServerTurnLogs(result, showDamagePopupsImmediately: false);
-        var animJobs = BuildTurnResultAnimationJobs(result, prepareForAnimation: true);
         var playback = BuildExecutedActionPlayback(result);
+        var animJobs = BuildTurnResultAnimationJobs(result, prepareForAnimation: true, deferLocomotionPosture: playback.Count > 0);
         if (playback.Count > 0)
             StartCoroutine(PlayExecutedActionTimeline(result, playback));
         else
@@ -664,12 +664,12 @@ public class GameSession : MonoBehaviour
         if (!animateResolvedRound)
             ApplyMapUpdatesFromTurnResult(result);
         AppendServerTurnLogs(result, showDamagePopupsImmediately: !animateResolvedRound);
-        var animJobs = BuildTurnResultAnimationJobs(result, animateResolvedRound);
         var playback = animateResolvedRound ? BuildExecutedActionPlayback(result) : null;
+        var animJobs = BuildTurnResultAnimationJobs(result, animateResolvedRound, deferLocomotionPosture: playback != null && playback.Count > 0);
         StartCoroutine(DeferredRoundAfterAnimations(animJobs, playback, nextRoundIndex, roundDeadlineUtcMs, result));
     }
 
-    private List<(object unit, bool isLocal, HexPosition[] path)> BuildTurnResultAnimationJobs(TurnResultPayload result, bool prepareForAnimation)
+    private List<(object unit, bool isLocal, HexPosition[] path)> BuildTurnResultAnimationJobs(TurnResultPayload result, bool prepareForAnimation, bool deferLocomotionPosture = false)
     {
         var animJobs = new List<(object unit, bool isLocal, HexPosition[] path)>();
         Player local = LocalPlayer;
@@ -690,7 +690,7 @@ public class GameSession : MonoBehaviour
                 else if (!r.accepted)
                     OnNetworkMessage?.Invoke("Клетка занята");
 
-                local.ApplyServerTurnResult(r.finalPosition, r.actualPath, r.currentAp, r.penaltyFraction, r.currentPosture, prepareForAnimation);
+                local.ApplyServerTurnResult(r.finalPosition, r.actualPath, r.currentAp, r.penaltyFraction, r.currentPosture, prepareForAnimation, applyLocomotionPosture: !deferLocomotionPosture);
                 local.SetHealth(r.currentHp, r.maxHp > 0 ? r.maxHp : local.MaxHp);
                 if (!string.IsNullOrEmpty(r.weaponCode))
                 {
@@ -883,11 +883,45 @@ public class GameSession : MonoBehaviour
 
         {
             Player p = LocalPlayer;
-            p?.ClearMovementPlaybackState();
+            if (p != null)
+            {
+                ApplyLocalFinalLocomotionPostureFromTurnResult(result, p);
+                p.ClearMovementPlaybackState();
+            }
         }
 
         if (abortTimeline)
             yield break;
+    }
+
+    /// <summary>Поза походки для этого действия в журнале (до анимации шага/атаки и т.д.).</summary>
+    private void ApplyLocomotionPostureForExecutedActionIfLocal(TurnResultPayload result, BattleExecutedAction action)
+    {
+        if (action == null || string.IsNullOrEmpty(action.posture))
+            return;
+        if (!TryResolveAnimatedUnit(result, action.unitId, out var unit, out bool isLocal))
+            return;
+        if (!isLocal || unit is not Player pl)
+            return;
+        pl.SetMovementPostureFromServer(action.posture);
+    }
+
+    private void ApplyLocalFinalLocomotionPostureFromTurnResult(TurnResultPayload result, Player local)
+    {
+        if (local == null || result?.results == null)
+            return;
+        foreach (var r in result.results)
+        {
+            if (r == null)
+                continue;
+            bool isMob = r.unitType == 1;
+            if (!isMob && r.playerId == _playerId)
+            {
+                if (!string.IsNullOrEmpty(r.currentPosture))
+                    local.SetMovementPostureFromServer(r.currentPosture);
+                return;
+            }
+        }
     }
 
     private IEnumerator PlayExecutedAction(
@@ -898,6 +932,8 @@ public class GameSession : MonoBehaviour
     {
         if (action == null)
             yield break;
+
+        ApplyLocomotionPostureForExecutedActionIfLocal(result, action);
 
         if (action.actionType == "MoveStep")
         {
@@ -1747,8 +1783,8 @@ public class GameSession : MonoBehaviour
         if (_liveRoundDeadlineUtcMs > 0)
             ApplyRoundState(_serverRoundIndex, _liveRoundDeadlineUtcMs);
 
-        var jobs = BuildTurnResultAnimationJobs(targetTurn, prepareForAnimation: true);
         var playback = BuildExecutedActionPlayback(targetTurn);
+        var jobs = BuildTurnResultAnimationJobs(targetTurn, prepareForAnimation: true, deferLocomotionPosture: playback.Count > 0);
         if (playback.Count > 0)
             yield return PlayReplayAnimationsParallel(playback, targetTurn);
         else if (jobs.Count > 0)

@@ -893,7 +893,8 @@ public class Player : MonoBehaviour
     }
 
     /// <summary>Применить результат хода с сервера: ОД, штраф, финальная позиция; визуал ставится в начало пути для последующей анимации.</summary>
-    public void ApplyServerTurnResult(HexPosition finalPosition, HexPosition[] actualPath, int currentAp, float penaltyFraction, string currentPosture, bool prepareForAnimation = true)
+    /// <param name="applyLocomotionPosture">Если false — не выставлять позу походки (ожидается проигрывание журнала executedActions по шагам).</param>
+    public void ApplyServerTurnResult(HexPosition finalPosition, HexPosition[] actualPath, int currentAp, float penaltyFraction, string currentPosture, bool prepareForAnimation = true, bool applyLocomotionPosture = true)
     {
         _currentAp = currentAp;
         _currentCol = finalPosition != null ? finalPosition.col : _currentCol;
@@ -901,7 +902,8 @@ public class Player : MonoBehaviour
         _apSpentThisTurn = 0;
         _stepsTakenThisTurn = 0;
         _runMovementApSpentThisTurn = 0;
-        SetMovementPostureInternal(MovementPostureUtility.FromId(currentPosture), notify: true);
+        if (applyLocomotionPosture)
+            SetMovementPostureInternal(MovementPostureUtility.FromId(currentPosture), notify: true);
         if (_turnPath != null) _turnPath.Clear();
         if (_turnActions != null) _turnActions.Clear();
 
