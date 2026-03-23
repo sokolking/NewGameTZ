@@ -51,6 +51,7 @@ public class MainMenuUI : MonoBehaviour
         // Найти кнопки по именам в иерархии под этим объектом.
         CacheButtons();
         WireDebugServerToggle();
+        ApplySoloToggleFromSavedState();
         WireButtonEvents();
 
         InitResolutions();
@@ -109,6 +110,25 @@ public class MainMenuUI : MonoBehaviour
     private static void OnDebugLocalhostToggleChanged(bool useLocalhost)
     {
         BattleServerRuntime.UseDebugLocalhost = useLocalhost;
+    }
+
+    /// <summary>После входа из LoginScene состояние соло хранится в <see cref="GameModeState"/>.</summary>
+    private void ApplySoloToggleFromSavedState()
+    {
+        if (_soloVsMonsterToggle != null)
+            _soloVsMonsterToggle.SetIsOnWithoutNotify(GameModeState.IsSinglePlayer);
+    }
+
+    /// <summary>
+    /// Сохраняет Toggle_SoloVsMonster и Toggle_Debug (PlayerPrefs) и применяет перед поиском матча.
+    /// Вызывается при нажатии Find Game. Если галка не задана в сцене — ранее сохранённое значение не затираем.
+    /// </summary>
+    private void PersistGameplayTogglesForFindGame()
+    {
+        if (_soloVsMonsterToggle != null)
+            GameModeState.SetSinglePlayer(_soloVsMonsterToggle.isOn);
+        if (_debugLocalhostToggle != null)
+            BattleServerRuntime.UseDebugLocalhost = _debugLocalhostToggle.isOn;
     }
 
     private void WireButtonEvents()
@@ -215,11 +235,10 @@ public class MainMenuUI : MonoBehaviour
     /// <summary>Find Game: встать в очередь на сервере; при старте боя загружается игровая сцена.</summary>
     public void OnFindGameClicked()
     {
-        bool singlePlayer = _soloVsMonsterToggle != null && _soloVsMonsterToggle.isOn;
+        PersistGameplayTogglesForFindGame();
+        bool singlePlayer = GameModeState.IsSinglePlayer;
         string username = GetLoginValue();
         string password = GetPasswordValue();
-        
-        GameModeState.SetSinglePlayer(singlePlayer);
 
         if (singlePlayer)
         {

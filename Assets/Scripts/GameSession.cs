@@ -1414,6 +1414,12 @@ public class GameSession : MonoBehaviour
         float t = 0f;
         while (t < duration)
         {
+            if (line == null)
+            {
+                ClearFacingForRangedShot(faceA, faceR);
+                yield break;
+            }
+
             t += Time.unscaledDeltaTime;
             float u = Mathf.Clamp01(t / duration);
             Vector3 head = start + fireDir * (u * pathLen);
@@ -1425,6 +1431,7 @@ public class GameSession : MonoBehaviour
             yield return null;
         }
 
+        if (line != null)
         {
             Vector3 head = start + fireDir * pathLen;
             Vector3 tail = head - fireDir * segmentLen;
@@ -1432,10 +1439,11 @@ public class GameSession : MonoBehaviour
                 tail = start;
             line.SetPosition(0, tail);
             line.SetPosition(1, head);
+            ClearFacingForRangedShot(faceA, faceR);
+            UnityEngine.Object.Destroy(bulletGo);
         }
-
-        ClearFacingForRangedShot(faceA, faceR);
-        UnityEngine.Object.Destroy(bulletGo);
+        else
+            ClearFacingForRangedShot(faceA, faceR);
     }
 
     private static bool TryGetWeaponRangeForUnit(TurnResultPayload result, string unitId, out int weaponRange)

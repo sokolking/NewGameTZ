@@ -1,11 +1,10 @@
 using UnityEngine;
-using UnityEngine.InputSystem;
 using UnityEngine.SceneManagement;
 using UnityEngine.UI;
 
 /// <summary>
-/// Обработчик ESC в игровой сцене: показывает/скрывает меню паузы.
-/// Первое нажатие ESC — открыть меню, второе — закрыть.
+/// Раньше: ESC открывал панель паузы. Сейчас ESC глобально открывает сцену Esc (<see cref="EscOpensEscScene"/>).
+/// Компонент можно оставить на Canvas только ради кнопок Resume/Main Menu, если панель вызываете из UI.
 /// </summary>
 public class InGameMenuUI : MonoBehaviour
 {
@@ -107,17 +106,8 @@ public class InGameMenuUI : MonoBehaviour
         }
     }
 
-    private void Update()
-    {
-        if (Keyboard.current == null) return;
-
-        if (Keyboard.current.escapeKey.wasPressedThisFrame)
-        {
-            ToggleMenu();
-        }
-    }
-
-    private void ToggleMenu()
+    /// <summary>Для кнопки «Пауза» в UI. Escape открывает сцену Esc (<see cref="EscOpensEscScene"/>).</summary>
+    public void TogglePauseMenu()
     {
         if (_menuPanel == null) return;
 
@@ -127,7 +117,6 @@ public class InGameMenuUI : MonoBehaviour
         if (_visible)
             SendBackdropToBack();
 
-        // При открытом меню — пауза, при закрытии — продолжить.
         Time.timeScale = _visible ? 0f : 1f;
     }
 
