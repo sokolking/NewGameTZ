@@ -16,6 +16,8 @@ public class BattleSignalRConnection : MonoBehaviour
 {
     private const string TypeSubmitTurn = "submitTurn";
     private const string TypeSubmitAck = "submitAck";
+    /// <summary>Макс. действий из очереди за один кадр — распределяем тяжёлый JSON-парсинг по кадрам, не спайкуя FPS.</summary>
+    private const int MaxActionsPerFrame = 3;
 
     [Header("Сервер")]
     [SerializeField] private string _serverUrl = "http://localhost:5000";
@@ -95,7 +97,10 @@ public class BattleSignalRConnection : MonoBehaviour
 
     private void Update()
     {
-        while (_mainThread.TryDequeue(out var action))
+        // Ограничиваем число действий за кадр: DispatchIncomingJson содержит JsonConvert.DeserializeObject,
+        // который при пачке сообщений давал спайк 10–40 ms. Остаток обработается в следующих кадрах.
+        int processed = 0;
+        while (processed < MaxActionsPerFrame && _mainThread.TryDequeue(out var action))
         {
             try
             {
@@ -105,6 +110,7 @@ public class BattleSignalRConnection : MonoBehaviour
             {
                 Debug.LogWarning("[BattleWS] mainThread: " + e.Message);
             }
+            processed++;
         }
     }
 

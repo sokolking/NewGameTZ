@@ -56,15 +56,48 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
     /// <summary>Чередование старта walk/run: true — время 0, false — середина цикла (другая нога впереди).</summary>
     private bool _hexWalkPhaseFlip;
 
-    private AnimationClip ClipIdle => _idle as AnimationClip;
-    private AnimationClip ClipWalk => _walk as AnimationClip;
-    private AnimationClip ClipRun => _run as AnimationClip;
-    private AnimationClip ClipSit => _sit as AnimationClip;
-    private AnimationClip ClipIdlePistol => _idlePistol as AnimationClip;
-    private AnimationClip ClipWalkPistol => _walkPistol as AnimationClip;
-    private AnimationClip ClipRunPistol => _runPistol as AnimationClip;
-    private AnimationClip ClipSitPistol => _sitPistol as AnimationClip;
-    private AnimationClip ClipDead => _dead as AnimationClip;
+    // Кэшированные касты — вместо `as AnimationClip` (9 virtual-call + type-check) каждый кадр в ResolveLocomotionClip.
+    private AnimationClip _cachedClipIdle;
+    private AnimationClip _cachedClipWalk;
+    private AnimationClip _cachedClipRun;
+    private AnimationClip _cachedClipSit;
+    private AnimationClip _cachedClipIdlePistol;
+    private AnimationClip _cachedClipWalkPistol;
+    private AnimationClip _cachedClipRunPistol;
+    private AnimationClip _cachedClipSitPistol;
+    private AnimationClip _cachedClipDead;
+    private bool _clipsCached;
+
+    // Кэш состояния для ResolveLocomotionClip — пересчитываем только при изменении.
+    private AnimationClip _resolvedClipCache;
+    private bool _resolvedClipDirty = true;
+    private bool _lastArmed;
+    private MovementPosture _lastPosture;
+    private bool _lastMoving;
+
+    private AnimationClip ClipIdle { get { if (!_clipsCached) CacheClipReferences(); return _cachedClipIdle; } }
+    private AnimationClip ClipWalk { get { if (!_clipsCached) CacheClipReferences(); return _cachedClipWalk; } }
+    private AnimationClip ClipRun { get { if (!_clipsCached) CacheClipReferences(); return _cachedClipRun; } }
+    private AnimationClip ClipSit { get { if (!_clipsCached) CacheClipReferences(); return _cachedClipSit; } }
+    private AnimationClip ClipIdlePistol { get { if (!_clipsCached) CacheClipReferences(); return _cachedClipIdlePistol; } }
+    private AnimationClip ClipWalkPistol { get { if (!_clipsCached) CacheClipReferences(); return _cachedClipWalkPistol; } }
+    private AnimationClip ClipRunPistol { get { if (!_clipsCached) CacheClipReferences(); return _cachedClipRunPistol; } }
+    private AnimationClip ClipSitPistol { get { if (!_clipsCached) CacheClipReferences(); return _cachedClipSitPistol; } }
+    private AnimationClip ClipDead { get { if (!_clipsCached) CacheClipReferences(); return _cachedClipDead; } }
+
+    private void CacheClipReferences()
+    {
+        _cachedClipIdle = _idle as AnimationClip;
+        _cachedClipWalk = _walk as AnimationClip;
+        _cachedClipRun = _run as AnimationClip;
+        _cachedClipSit = _sit as AnimationClip;
+        _cachedClipIdlePistol = _idlePistol as AnimationClip;
+        _cachedClipWalkPistol = _walkPistol as AnimationClip;
+        _cachedClipRunPistol = _runPistol as AnimationClip;
+        _cachedClipSitPistol = _sitPistol as AnimationClip;
+        _cachedClipDead = _dead as AnimationClip;
+        _clipsCached = true;
+    }
 
     /// <summary>Тот же pivot, что и в <see cref="LateUpdate"/> (корень Player или этот объект).</summary>
     public Transform FacingPivot => _rotatePlayerRoot && _player != null ? _player.transform : transform;
@@ -273,10 +306,16 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
         if (_player == null)
             _player = GetComponentInParent<Player>();
         if (_player != null)
+        {
             _player.OnHealthChanged += HandleHealthChanged;
+            _player.OnEquippedWeaponChanged += HandleWeaponChanged;
+            _player.OnMovementPostureChanged += HandlePostureChanged;
+        }
 
         _lastWorldPos = _rotatePlayerRoot && _player != null ? _player.transform.position : transform.position;
         _deathPlayed = false;
+        _resolvedClipDirty = true;
+        CacheClipReferences();
 
         if (ClipIdle != null)
             PlayClip(ClipIdle);
@@ -285,9 +324,16 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
     private void OnDisable()
     {
         if (_player != null)
+        {
             _player.OnHealthChanged -= HandleHealthChanged;
+            _player.OnEquippedWeaponChanged -= HandleWeaponChanged;
+            _player.OnMovementPostureChanged -= HandlePostureChanged;
+        }
         DestroyGraph();
     }
+
+    private void HandleWeaponChanged() => _resolvedClipDirty = true;
+    private void HandlePostureChanged(MovementPosture _) => _resolvedClipDirty = true;
 
     private void HandleHealthChanged(int hp, int maxHp)
     {
@@ -368,40 +414,54 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
     {
         bool armed = WeaponCatalog.IsPistolStyleWeapon(_player.WeaponCode);
         MovementPosture posture = _player.CurrentMovementPosture;
+        bool moving = _player.IsMoving;
+
+        // Кэш: если ничего не изменилось с прошлого кадра, возвращаем тот же клип.
+        if (!_resolvedClipDirty && armed == _lastArmed && posture == _lastPosture && moving == _lastMoving
+            && _resolvedClipCache != null)
+            return _resolvedClipCache;
+
+        _lastArmed = armed;
+        _lastPosture = posture;
+        _lastMoving = moving;
+        _resolvedClipDirty = false;
+
         MovementPosture locomotion = MovementPostureUtility.GetPreviewMovementPosture(posture);
         bool crouch = posture == MovementPosture.Sit || posture == MovementPosture.Hide;
-        bool moving = _player.IsMoving;
         bool run = locomotion == MovementPosture.Run;
 
+        AnimationClip result = null;
         if (crouch)
         {
             if (armed && ClipSitPistol != null)
-                return ClipSitPistol;
-            if (ClipSit != null)
-                return ClipSit;
+                result = ClipSitPistol;
+            else if (ClipSit != null)
+                result = ClipSit;
         }
 
-        if (moving)
+        if (result == null && moving)
         {
             if (run)
             {
                 if (armed && ClipRunPistol != null)
-                    return ClipRunPistol;
-                if (ClipRun != null)
-                    return ClipRun;
+                    result = ClipRunPistol;
+                else if (ClipRun != null)
+                    result = ClipRun;
             }
             else
             {
                 if (armed && ClipWalkPistol != null)
-                    return ClipWalkPistol;
-                if (ClipWalk != null)
-                    return ClipWalk;
+                    result = ClipWalkPistol;
+                else if (ClipWalk != null)
+                    result = ClipWalk;
             }
         }
 
-        if (armed && ClipIdlePistol != null)
-            return ClipIdlePistol;
-        return ClipIdle;
+        if (result == null)
+            result = (armed && ClipIdlePistol != null) ? ClipIdlePistol : ClipIdle;
+
+        _resolvedClipCache = result;
+        return result;
     }
 
     /// <summary>
