@@ -1,3 +1,4 @@
+using System.Text;
 using BattleServer.Models;
 using Npgsql;
 
@@ -145,5 +146,70 @@ ORDER BY s.slot_index;
         }
 
         return true;
+    }
+
+    public bool TryUpdateUser(UserUpdateRequest req, out string? error)
+    {
+        error = null;
+        if (string.IsNullOrWhiteSpace(req.Username))
+        {
+            error = "username required";
+            return false;
+        }
+
+        if (req.MaxHp < 1 || req.MaxAp < 1)
+        {
+            error = "maxHp and maxAp must be >= 1";
+            return false;
+        }
+
+        string username = req.Username.Trim();
+        string weaponCode = string.IsNullOrWhiteSpace(req.WeaponCode) ? "fist" : req.WeaponCode.Trim();
+        if (req.Password != null && string.IsNullOrWhiteSpace(req.Password))
+        {
+            error = "password cannot be empty when provided";
+            return false;
+        }
+
+        var sb = new StringBuilder();
+        sb.Append("""
+UPDATE users SET
+  username = @username,
+  max_hp = @max_hp,
+  max_ap = @max_ap,
+  weapon_code = @weapon_code
+""");
+        if (req.Password != null)
+            sb.Append(",\n  password = @password");
+
+        sb.Append("\nWHERE id = @id;");
+
+        try
+        {
+            using var connection = _database.DataSource.OpenConnection();
+            using var command = connection.CreateCommand();
+            command.CommandText = sb.ToString();
+            command.Parameters.AddWithValue("id", req.Id);
+            command.Parameters.AddWithValue("username", username);
+            command.Parameters.AddWithValue("max_hp", req.MaxHp);
+            command.Parameters.AddWithValue("max_ap", req.MaxAp);
+            command.Parameters.AddWithValue("weapon_code", weaponCode);
+            if (req.Password != null)
+                command.Parameters.AddWithValue("password", req.Password);
+
+            int n = command.ExecuteNonQuery();
+            if (n == 0)
+            {
+                error = "user not found";
+                return false;
+            }
+
+            return true;
+        }
+        catch (PostgresException ex) when (ex.SqlState == "23505")
+        {
+            error = "username already taken";
+            return false;
+        }
     }
 }

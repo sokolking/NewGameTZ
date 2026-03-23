@@ -323,6 +323,21 @@ app.MapGet("/api/db/users", (BattleUserDatabase db, int? take) =>
     return Results.Json(db.ListUsers(requested), jsonOpt);
 });
 
+app.MapPut("/api/db/users", (BattleUserDatabase users, BattleWeaponDatabase weapons, UserUpdateRequest? body) =>
+{
+    if (body == null)
+        return Results.Json(new { error = "body required" }, jsonOpt, statusCode: 400);
+    if (body.Id <= 0)
+        return Results.Json(new { error = "invalid id" }, jsonOpt, statusCode: 400);
+    string weaponCode = string.IsNullOrWhiteSpace(body.WeaponCode) ? "fist" : body.WeaponCode.Trim();
+    body.WeaponCode = weaponCode;
+    if (!weapons.TryGetWeaponByCode(weaponCode, out _))
+        return Results.Json(new { error = "unknown weapon code" }, jsonOpt, statusCode: 400);
+    if (!users.TryUpdateUser(body, out var err))
+        return Results.Json(new { error = err ?? "update failed" }, jsonOpt, statusCode: 400);
+    return Results.Ok(new { ok = true });
+});
+
 app.MapPost("/api/db/user/inventory", (BattleUserDatabase users, UserInventoryAuthRequest? body) =>
 {
     if (body == null || string.IsNullOrWhiteSpace(body.username))

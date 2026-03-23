@@ -274,6 +274,17 @@ public class BattleUserBrowseRowDto
     public string WeaponCode { get; set; } = "fist";
 }
 
+/// <summary>Обновление пользователя из админки /users. Пароль: null — не менять.</summary>
+public class UserUpdateRequest
+{
+    public long Id { get; set; }
+    public string Username { get; set; } = "";
+    public string? Password { get; set; }
+    public int MaxHp { get; set; }
+    public int MaxAp { get; set; }
+    public string WeaponCode { get; set; } = "fist";
+}
+
 public class BattleWeaponBrowseRowDto
 {
     public long Id { get; set; }
