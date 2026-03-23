@@ -20,6 +20,7 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
     private const string DefaultStubResourcePath = "Animator/PlayablesStub";
 
     [SerializeField] private Player _player;
+    [SerializeField] private RemoteBattleUnitView _remoteBattleUnit;
     [SerializeField] private Animator _animator;
     [Tooltip("Если true — сбросить назначенный контроллер в Awake (затем подставится заглушка из Resources или Playable Controller Override).")]
     [SerializeField] private bool _clearAnimatorController = true;
@@ -99,8 +100,13 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
         _clipsCached = true;
     }
 
-    /// <summary>Тот же pivot, что и в <see cref="LateUpdate"/> (корень Player или этот объект).</summary>
-    public Transform FacingPivot => _rotatePlayerRoot && _player != null ? _player.transform : transform;
+    /// <summary>Тот же pivot, что и в <see cref="LateUpdate"/> (корень Player / RemoteBattleUnitView или этот объект).</summary>
+    public Transform FacingPivot =>
+        _rotatePlayerRoot && _player != null
+            ? _player.transform
+            : _rotatePlayerRoot && _remoteBattleUnit != null
+                ? _remoteBattleUnit.transform
+                : transform;
 
     /// <summary>Горизонтальное направление «вперёд» для выстрела; сбросить через <see cref="ClearHorizontalFacingOverride"/>.</summary>
     public void SetHorizontalFacingOverride(Vector3 worldHorizontalDir)
@@ -132,11 +138,14 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
     /// </summary>
     public void NotifyHexStepStarted(float stepDurationSeconds)
     {
-        if (_animator == null || _player == null)
+        if (_animator == null)
+            return;
+        if (_player == null && _remoteBattleUnit == null)
             return;
         if (stepDurationSeconds <= 1e-5f)
             return;
-        if (!_player.IsMoving)
+        bool moving = _player != null ? _player.IsMoving : _remoteBattleUnit.IsMoving;
+        if (!moving)
             return;
 
         AnimationClip clip = ResolveLocomotionClip();
@@ -303,8 +312,23 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
 
     private void OnEnable()
     {
-        if (_player == null)
-            _player = GetComponentInParent<Player>();
+        // Клон модели с локального игрока сохраняет сериализованный _player на сценовый Player — без сброса
+        // удалённый юнит читает IsMoving/оружие локального и «зеркалит» анимацию планирования.
+        Player playerInParent = GetComponentInParent<Player>();
+        RemoteBattleUnitView remoteInParent = GetComponentInParent<RemoteBattleUnitView>();
+
+        if (playerInParent != null)
+        {
+            _player = playerInParent;
+            _remoteBattleUnit = null;
+        }
+        else
+        {
+            _player = null;
+            if (_remoteBattleUnit == null)
+                _remoteBattleUnit = remoteInParent;
+        }
+
         if (_player != null)
         {
             _player.OnHealthChanged += HandleHealthChanged;
@@ -312,7 +336,11 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
             _player.OnMovementPostureChanged += HandlePostureChanged;
         }
 
-        _lastWorldPos = _rotatePlayerRoot && _player != null ? _player.transform.position : transform.position;
+        _lastWorldPos = _rotatePlayerRoot && _player != null
+            ? _player.transform.position
+            : _rotatePlayerRoot && _remoteBattleUnit != null
+                ? _remoteBattleUnit.transform.position
+                : transform.position;
         _deathPlayed = false;
         _resolvedClipDirty = true;
         CacheClipReferences();
@@ -329,6 +357,7 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
             _player.OnEquippedWeaponChanged -= HandleWeaponChanged;
             _player.OnMovementPostureChanged -= HandlePostureChanged;
         }
+
         DestroyGraph();
     }
 
@@ -348,35 +377,61 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
 
     private void Update()
     {
-        if (_animator == null || _player == null)
+        if (_animator == null)
+            return;
+        if (_player == null && _remoteBattleUnit == null)
             return;
 
-        if (_player.IsHidden)
-            return;
-
-        if (_player.IsDead && ClipDead != null)
+        if (_player != null)
         {
-            if (!_deathPlayed)
-            {
-                PlayClip(ClipDead);
-                _deathPlayed = true;
-            }
+            if (_player.IsHidden)
+                return;
 
-            if (_graph.IsValid() && _clipPlayable.IsValid() && ClipDead.length > 0.05f)
+            if (_player.IsDead && ClipDead != null)
             {
-                double t = _clipPlayable.GetTime();
-                if (t >= ClipDead.length - 0.03f)
-                    _clipPlayable.SetSpeed(0f);
+                PlayDeathClipIfNeeded();
+                return;
             }
-
+        }
+        else if (_remoteBattleUnit != null && _remoteBattleUnit.CurrentHp <= 0 && ClipDead != null)
+        {
+            PlayDeathClipIfNeeded();
             return;
+        }
+    }
+
+    private void PlayDeathClipIfNeeded()
+    {
+        if (!_deathPlayed)
+        {
+            PlayClip(ClipDead);
+            _deathPlayed = true;
+        }
+
+        if (_graph.IsValid() && _clipPlayable.IsValid() && ClipDead.length > 0.05f)
+        {
+            double t = _clipPlayable.GetTime();
+            if (t >= ClipDead.length - 0.03f)
+                _clipPlayable.SetSpeed(0f);
         }
     }
 
     private void LateUpdate()
     {
-        if (_player == null || _player.IsDead || _player.IsHidden)
+        if (_player != null)
+        {
+            if (_player.IsDead || _player.IsHidden)
+                return;
+        }
+        else if (_remoteBattleUnit != null)
+        {
+            if (_remoteBattleUnit.CurrentHp <= 0)
+                return;
+        }
+        else
+        {
             return;
+        }
 
         // Локомоцию применяем здесь, а не в Update: корутины движения (PlayPathAnimation и т.д.)
         // выполняются после Update, но до LateUpdate — иначе один кадр IsMoving ещё false,
@@ -384,7 +439,9 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
         if (_animator != null)
             ApplyResolvedLocomotionClip();
 
-        Transform pivot = _rotatePlayerRoot ? _player.transform : transform;
+        Transform pivot = _rotatePlayerRoot
+            ? (_player != null ? _player.transform : _remoteBattleUnit != null ? _remoteBattleUnit.transform : transform)
+            : transform;
         Vector3 worldPos = pivot.position;
 
         if (_horizontalFacingOverride.HasValue)
@@ -412,9 +469,9 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
 
     private AnimationClip ResolveLocomotionClip()
     {
-        bool armed = WeaponCatalog.IsPistolStyleWeapon(_player.WeaponCode);
-        MovementPosture posture = _player.CurrentMovementPosture;
-        bool moving = _player.IsMoving;
+        bool armed = _player != null && WeaponCatalog.IsPistolStyleWeapon(_player.WeaponCode);
+        MovementPosture posture = _player != null ? _player.CurrentMovementPosture : MovementPosture.Walk;
+        bool moving = _player != null ? _player.IsMoving : _remoteBattleUnit != null && _remoteBattleUnit.IsMoving;
 
         // Кэш: если ничего не изменилось с прошлого кадра, возвращаем тот же клип.
         if (!_resolvedClipDirty && armed == _lastArmed && posture == _lastPosture && moving == _lastMoving
@@ -476,7 +533,8 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
         if (resolved == null)
             return;
 
-        if (_player.IsMoving && IsWalkOrRunLocomotionClip(resolved))
+        bool isMoving = _player != null ? _player.IsMoving : _remoteBattleUnit != null && _remoteBattleUnit.IsMoving;
+        if (isMoving && IsWalkOrRunLocomotionClip(resolved))
         {
             if (_graph.IsValid() && _currentClip != null && IsWalkOrRunLocomotionClip(_currentClip))
                 return;

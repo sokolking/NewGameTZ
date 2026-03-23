@@ -3,8 +3,8 @@ using UnityEngine;
 using System;
 
 /// <summary>
-/// Визуал удалённого игрока на сетке (Этап 4): позиция и анимация по actualPath с сервера.
-/// Не обрабатывает ввод и локальные ОД.
+/// Визуал удалённого игрока на сетке: позиция и анимация по actualPath с сервера.
+/// Для живого соперника (не моб) клонируется та же модель, что у локального игрока, с красным оттенком.
 /// </summary>
 public class RemoteBattleUnitView : MonoBehaviour
 {
@@ -12,11 +12,15 @@ public class RemoteBattleUnitView : MonoBehaviour
     [SerializeField] private float _moveDurationPerHex = 0.2f;
     [SerializeField] private float _rangedFaceRotationSpeed = 14f;
 
+    [Header("Визуал PvP")]
+    [SerializeField] private Color _enemyModelTint = new Color(0.95f, 0.28f, 0.22f, 1f);
+
     private bool _isMoving;
     private Vector3? _horizontalFacingOverride;
     private int _maxHp = 10;
     private int _currentHp = 10;
     private Animator _cachedAnimator;
+    private PlayerCharacterAnimator _characterAnimator;
 
     public string NetworkPlayerId { get; private set; }
     public bool IsMoving => _isMoving;
@@ -87,6 +91,122 @@ public class RemoteBattleUnitView : MonoBehaviour
 
     private void EnsureVisual()
     {
+        if (GetComponentInChildren<SkinnedMeshRenderer>(true) != null)
+            return;
+
+        if (IsMob)
+        {
+            EnsureCapsuleFallback();
+            return;
+        }
+
+        Player localPlayer = UnityEngine.Object.FindFirstObjectByType<Player>();
+        if (localPlayer == null || localPlayer.transform.childCount == 0)
+        {
+            EnsureCapsuleFallback();
+            return;
+        }
+
+        GameObject template = localPlayer.transform.GetChild(0).gameObject;
+        // Неактивный родитель: на клоне есть Player — иначе OnEnable у PlayerCharacterAnimator успевает
+        // подписаться на клонированный Player до Destroy, и остаётся «висячая» ссылка на локального Player.
+        GameObject holder = new GameObject("_RemoteCloneHolder");
+        holder.hideFlags = HideFlags.HideAndDontSave;
+        holder.SetActive(false);
+
+        GameObject clone = Instantiate(template, holder.transform);
+        clone.name = "RemoteVisual";
+        clone.transform.localPosition = Vector3.zero;
+        clone.transform.localRotation = Quaternion.identity;
+        clone.transform.localScale = Vector3.one;
+
+        ApplyEnemyTint(clone);
+        foreach (Player p in clone.GetComponentsInChildren<Player>(true))
+        {
+            if (p != null)
+                Destroy(p);
+        }
+
+        Collider[] cols = clone.GetComponentsInChildren<Collider>(true);
+        if (cols.Length > 0)
+        {
+            for (int i = 0; i < cols.Length; i++)
+            {
+                if (cols[i] != null)
+                    cols[i].isTrigger = true;
+            }
+        }
+        else
+            AddBoundsTriggerColliderForPicking(clone);
+
+        clone.transform.SetParent(transform, false);
+        clone.transform.localPosition = Vector3.zero;
+        clone.transform.localRotation = Quaternion.identity;
+        clone.transform.localScale = Vector3.one;
+
+        Destroy(holder);
+
+        _characterAnimator = clone.GetComponent<PlayerCharacterAnimator>();
+        _cachedAnimator = clone.GetComponentInChildren<Animator>();
+
+        clone.SetActive(true);
+    }
+
+    /// <summary>При модели без коллайдеров луч не попадает в силуэт/удержание ЛКМ — один общий trigger по bounds.</summary>
+    private static void AddBoundsTriggerColliderForPicking(GameObject cloneRoot)
+    {
+        Renderer[] rends = cloneRoot.GetComponentsInChildren<Renderer>(true);
+        if (rends.Length == 0)
+            return;
+
+        Bounds combined = rends[0].bounds;
+        for (int i = 1; i < rends.Length; i++)
+        {
+            if (rends[i] != null)
+                combined.Encapsulate(rends[i].bounds);
+        }
+
+        var box = cloneRoot.AddComponent<BoxCollider>();
+        box.isTrigger = true;
+        Transform t = cloneRoot.transform;
+        box.center = t.InverseTransformPoint(combined.center);
+        Vector3 ext = combined.size;
+        Vector3 ls = t.lossyScale;
+        float sx = Mathf.Abs(ls.x) > 1e-10f ? Mathf.Abs(ls.x) : 1f;
+        float sy = Mathf.Abs(ls.y) > 1e-10f ? Mathf.Abs(ls.y) : 1f;
+        float sz = Mathf.Abs(ls.z) > 1e-10f ? Mathf.Abs(ls.z) : 1f;
+        box.size = new Vector3(ext.x / sx, ext.y / sy, ext.z / sz);
+    }
+
+    private void ApplyEnemyTint(GameObject root)
+    {
+        Renderer[] renderers = root.GetComponentsInChildren<Renderer>(true);
+        for (int i = 0; i < renderers.Length; i++)
+        {
+            Renderer r = renderers[i];
+            if (r == null) continue;
+            var mpb = new MaterialPropertyBlock();
+            r.GetPropertyBlock(mpb);
+            if (r.sharedMaterial != null)
+            {
+                if (r.sharedMaterial.HasProperty("_BaseColor"))
+                    mpb.SetColor("_BaseColor", _enemyModelTint);
+                else if (r.sharedMaterial.HasProperty("_Color"))
+                    mpb.SetColor("_Color", _enemyModelTint);
+                else
+                    mpb.SetColor("_BaseColor", _enemyModelTint);
+            }
+            else
+            {
+                mpb.SetColor("_BaseColor", _enemyModelTint);
+            }
+
+            r.SetPropertyBlock(mpb);
+        }
+    }
+
+    private void EnsureCapsuleFallback()
+    {
         if (GetComponentInChildren<MeshFilter>() != null) return;
         GameObject cap = GameObject.CreatePrimitive(PrimitiveType.Capsule);
         cap.name = "Visual";
@@ -100,7 +220,7 @@ public class RemoteBattleUnitView : MonoBehaviour
             mpb.SetColor("_Color", new Color(0.85f, 0.35f, 0.25f, 1f));
             r.SetPropertyBlock(mpb);
         }
-        // Оставляем коллайдер для raycast (удержание ПКМ по юниту).
+
         Collider capCollider = cap.GetComponent<Collider>();
         if (capCollider != null)
             capCollider.isTrigger = true;
@@ -142,9 +262,15 @@ public class RemoteBattleUnitView : MonoBehaviour
         _isMoving = true;
         transform.position = _grid.GetCellWorldPosition(path[0].col, path[0].row);
 
+        if (_characterAnimator == null)
+            _characterAnimator = GetComponentInChildren<PlayerCharacterAnimator>();
+        _characterAnimator?.ResetHexWalkPhaseForNewPath();
+
         for (int i = 1; i < path.Length; i++)
         {
             var step = path[i];
+            _characterAnimator?.NotifyHexStepStarted(_moveDurationPerHex);
+
             Vector3 target = _grid.GetCellWorldPosition(step.col, step.row);
             Vector3 stepStart = transform.position;
             float elapsed = 0f;
