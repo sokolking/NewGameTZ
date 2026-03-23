@@ -35,6 +35,10 @@ public class ClientUpdateGate : MonoBehaviour
     private void Start()
     {
         CacheRefs();
+        // Тот же режим сервера, что и после последнего входа (PlayerPrefs), чтобы проверка версии совпадала с боевым URL.
+        if (_debugLocalhostToggle != null)
+            _debugLocalhostToggle.isOn = BattleServerRuntime.UseDebugLocalhost;
+
         foreach (var b in _blockedButtons)
         {
             if (b != null)
@@ -57,7 +61,7 @@ public class ClientUpdateGate : MonoBehaviour
 
     private void CacheRefs()
     {
-        Transform root = transform;
+        Transform root = GetUiSearchRoot();
         _blockedButtons.Clear();
         if (_loginButton != null)
             _blockedButtons.Add(_loginButton);
@@ -99,6 +103,143 @@ public class ClientUpdateGate : MonoBehaviour
             _downloadButton.onClick.RemoveListener(OnDownloadClicked);
             _downloadButton.onClick.AddListener(OnDownloadClicked);
         }
+
+        if (_updatePanelRoot == null)
+        {
+            EnsureRuntimeUpdatePanel(root);
+            if (_updatePanelRoot == null)
+            {
+                var t = FindTransform(root, UiHierarchyNames.ClientUpdatePanel);
+                if (t != null)
+                    _updatePanelRoot = t.gameObject;
+            }
+            if (_messageText == null)
+                _messageText = FindComponent<Text>(root, UiHierarchyNames.ClientUpdateMessageText);
+            if (_statusText == null)
+                _statusText = FindComponent<Text>(root, UiHierarchyNames.ClientUpdateStatusText);
+            if (_downloadButton == null)
+            {
+                _downloadButton = FindComponent<Button>(root, UiHierarchyNames.ClientUpdateDownloadButton);
+                if (_downloadButton != null)
+                {
+                    _downloadButton.onClick.RemoveListener(OnDownloadClicked);
+                    _downloadButton.onClick.AddListener(OnDownloadClicked);
+                }
+            }
+            if (_progressSlider == null)
+                _progressSlider = FindComponent<Slider>(root, UiHierarchyNames.ClientUpdateProgressSlider);
+        }
+
+        if (_blockedButtons.Count == 0 && SceneManager.GetActiveScene().name == "LoginScene")
+            Debug.LogWarning("[ClientUpdateGate] Не найдена кнопка входа (Button_Enter или Button (Legacy)) — при устаревшей версии вход не будет заблокирован.");
+    }
+
+    private static void EnsureRuntimeUpdatePanel(Transform canvasRoot)
+    {
+        if (canvasRoot == null || canvasRoot.Find(UiHierarchyNames.ClientUpdatePanel) != null)
+            return;
+
+        Font font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+
+        var panelGo = new GameObject(UiHierarchyNames.ClientUpdatePanel, typeof(RectTransform), typeof(Image));
+        panelGo.transform.SetParent(canvasRoot, false);
+        var panelRt = panelGo.GetComponent<RectTransform>();
+        panelRt.anchorMin = Vector2.zero;
+        panelRt.anchorMax = Vector2.one;
+        panelRt.offsetMin = Vector2.zero;
+        panelRt.offsetMax = Vector2.zero;
+        var panelImg = panelGo.GetComponent<Image>();
+        panelImg.color = new Color(0f, 0f, 0f, 0.55f);
+        panelImg.raycastTarget = true;
+
+        var box = new GameObject("Box", typeof(RectTransform), typeof(Image), typeof(VerticalLayoutGroup));
+        box.transform.SetParent(panelGo.transform, false);
+        var boxRt = box.GetComponent<RectTransform>();
+        boxRt.anchorMin = new Vector2(0.5f, 0.5f);
+        boxRt.anchorMax = new Vector2(0.5f, 0.5f);
+        boxRt.sizeDelta = new Vector2(520f, 360f);
+        box.GetComponent<Image>().color = new Color(0.12f, 0.12f, 0.14f, 0.98f);
+        var vlg = box.GetComponent<VerticalLayoutGroup>();
+        vlg.padding = new RectOffset(24, 24, 24, 24);
+        vlg.spacing = 12f;
+        vlg.childAlignment = TextAnchor.UpperCenter;
+        vlg.childControlHeight = false;
+        vlg.childControlWidth = true;
+        vlg.childForceExpandHeight = false;
+        vlg.childForceExpandWidth = true;
+
+        CreateRtText(box.transform, UiHierarchyNames.ClientUpdateMessageText,
+            "Доступна новая версия игры.\nСкачайте обновление, чтобы продолжить.", 18, TextAnchor.UpperLeft, font);
+        CreateRtText(box.transform, UiHierarchyNames.ClientUpdateStatusText, "", 14, TextAnchor.UpperLeft, font);
+
+        var sliderGo = new GameObject(UiHierarchyNames.ClientUpdateProgressSlider, typeof(RectTransform), typeof(Slider));
+        sliderGo.transform.SetParent(box.transform, false);
+        var slRt = sliderGo.GetComponent<RectTransform>();
+        slRt.sizeDelta = new Vector2(0f, 24f);
+        var slider = sliderGo.GetComponent<Slider>();
+        slider.minValue = 0f;
+        slider.maxValue = 1f;
+        slider.value = 0f;
+        slider.gameObject.SetActive(false);
+
+        var btnGo = new GameObject(UiHierarchyNames.ClientUpdateDownloadButton, typeof(RectTransform), typeof(Image), typeof(Button));
+        btnGo.transform.SetParent(box.transform, false);
+        var btnRt = btnGo.GetComponent<RectTransform>();
+        btnRt.sizeDelta = new Vector2(0f, 44f);
+        var btn = btnGo.GetComponent<Button>();
+        btn.targetGraphic = btnGo.GetComponent<Image>();
+        btnGo.GetComponent<Image>().color = new Color(0.25f, 0.45f, 0.75f, 1f);
+
+        var btnLabel = new GameObject("Text", typeof(RectTransform), typeof(Text));
+        btnLabel.transform.SetParent(btnGo.transform, false);
+        var tl = btnLabel.GetComponent<RectTransform>();
+        tl.anchorMin = Vector2.zero;
+        tl.anchorMax = Vector2.one;
+        tl.offsetMin = Vector2.zero;
+        tl.offsetMax = Vector2.zero;
+        var bt = btnLabel.GetComponent<Text>();
+        bt.font = font;
+        bt.fontSize = 18;
+        bt.color = Color.white;
+        bt.alignment = TextAnchor.MiddleCenter;
+        bt.text = "Скачать";
+
+        panelGo.SetActive(false);
+    }
+
+    private static void CreateRtText(Transform parent, string name, string msg, int fontSize, TextAnchor align, Font font)
+    {
+        var go = new GameObject(name, typeof(RectTransform), typeof(Text));
+        go.transform.SetParent(parent, false);
+        var rt = go.GetComponent<RectTransform>();
+        rt.sizeDelta = new Vector2(0f, 100f);
+        var tx = go.GetComponent<Text>();
+        tx.font = font;
+        tx.fontSize = fontSize;
+        tx.color = Color.white;
+        tx.alignment = align;
+        tx.text = msg;
+        tx.horizontalOverflow = HorizontalWrapMode.Wrap;
+        tx.verticalOverflow = VerticalWrapMode.Overflow;
+    }
+
+    /// <summary>Поиск кнопок/панели по всему Canvas сцены — компонент может висеть не на корне Canvas.</summary>
+    private Transform GetUiSearchRoot()
+    {
+        Canvas canvas = GetComponentInParent<Canvas>();
+        if (canvas != null)
+            return canvas.transform;
+        Scene active = SceneManager.GetActiveScene();
+        if (active.IsValid())
+        {
+            foreach (Canvas c in UnityEngine.Object.FindObjectsByType<Canvas>(FindObjectsInactive.Include, FindObjectsSortMode.None))
+            {
+                if (c != null && c.gameObject.scene == active)
+                    return c.transform;
+            }
+        }
+
+        return transform;
     }
 
     private static Transform FindTransform(Transform root, string objectName)
@@ -143,20 +284,19 @@ public class ClientUpdateGate : MonoBehaviour
             yield break;
         }
 
-        ClientVersionJson v;
-        try
-        {
-            v = JsonUtility.FromJson<ClientVersionJson>(body);
-        }
-        catch
-        {
-            SetLoginInteractable(true);
-            yield break;
-        }
+        var v = new ClientVersionJson();
+        FillClientVersionFromBody(body, v);
 
-        if (v == null)
+        if (string.IsNullOrEmpty(v.latestVersion))
         {
-            SetLoginInteractable(true);
+            if (_allowLoginIfVersionCheckFails)
+                SetLoginInteractable(true);
+            else
+            {
+                ShowPanel();
+                if (_messageText != null)
+                    _messageText.text = "Не удалось разобрать ответ версии с сервера.";
+            }
             yield break;
         }
 
@@ -164,9 +304,16 @@ public class ClientUpdateGate : MonoBehaviour
         if (!ClientVersionComparer.TryCompare(clientVer, v.latestVersion, out int cmpToLatest))
             cmpToLatest = 0;
 
+        int cmpToMinimum = 0;
+        if (!string.IsNullOrEmpty(v.minimumVersion) &&
+            ClientVersionComparer.TryCompare(clientVer, v.minimumVersion, out int cmpMin))
+            cmpToMinimum = cmpMin;
+
         _dmgPrefix = string.IsNullOrEmpty(v.dmgFileNamePrefix) ? "Hope" : v.dmgFileNamePrefix.Trim();
 
-        if (cmpToLatest < 0)
+        bool mustUpdate = cmpToLatest < 0 || cmpToMinimum < 0;
+
+        if (mustUpdate)
         {
             _downloadUrl = BuildAbsoluteDownloadUrl(v.downloadDmgRelativePath);
             string dmgName = "Hope.dmg";
@@ -284,6 +431,53 @@ public class ClientUpdateGate : MonoBehaviour
             if (b != null)
                 b.interactable = on;
         }
+    }
+
+    private static void FillClientVersionFromBody(string body, ClientVersionJson v)
+    {
+        if (v == null || string.IsNullOrEmpty(body))
+            return;
+
+        body = body.Trim();
+        try
+        {
+            var parsed = JsonUtility.FromJson<ClientVersionJson>(body);
+            if (parsed != null)
+            {
+                v.latestVersion = parsed.latestVersion;
+                v.minimumVersion = parsed.minimumVersion;
+                v.downloadDmgRelativePath = parsed.downloadDmgRelativePath;
+                v.dmgFileNamePrefix = parsed.dmgFileNamePrefix;
+            }
+        }
+        catch
+        {
+            // JsonUtility мог не разобрать ответ — добираем поля вручную.
+        }
+
+        if (string.IsNullOrEmpty(v.latestVersion))
+            v.latestVersion = ExtractJsonString(body, "latestVersion");
+        if (string.IsNullOrEmpty(v.minimumVersion))
+            v.minimumVersion = ExtractJsonString(body, "minimumVersion");
+        if (string.IsNullOrEmpty(v.downloadDmgRelativePath))
+            v.downloadDmgRelativePath = ExtractJsonString(body, "downloadDmgRelativePath");
+        if (string.IsNullOrEmpty(v.dmgFileNamePrefix))
+            v.dmgFileNamePrefix = ExtractJsonString(body, "dmgFileNamePrefix");
+    }
+
+    private static string ExtractJsonString(string json, string key)
+    {
+        if (string.IsNullOrEmpty(json) || string.IsNullOrEmpty(key))
+            return null;
+        string needle = "\"" + key + "\":\"";
+        int i = json.IndexOf(needle, StringComparison.Ordinal);
+        if (i < 0)
+            return null;
+        i += needle.Length;
+        int end = json.IndexOf('"', i);
+        if (end < 0)
+            return null;
+        return json.Substring(i, end - i);
     }
 
     [Serializable]

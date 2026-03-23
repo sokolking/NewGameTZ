@@ -1,11 +1,105 @@
 using BattleServer;
 using BattleServer.Models;
+using System.IO;
+using Microsoft.AspNetCore.StaticFiles;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// ContentRoot часто /opt/battle/Server, а DMG в /opt/battle/wwwroot/downloads. Пустая Server/wwwroot/downloads не должна перехватывать запрос.
+static bool DownloadsHasDmg(string downloadsPath)
+{
+    if (!Directory.Exists(downloadsPath))
+        return false;
+    try
+    {
+        foreach (string p in Directory.EnumerateFiles(downloadsPath))
+        {
+            if (p.EndsWith(".dmg", StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+    }
+    catch
+    {
+        // ignore
+    }
+
+    return false;
+}
+
+static bool DownloadsHasAnyFile(string downloadsPath)
+{
+    if (!Directory.Exists(downloadsPath))
+        return false;
+    try
+    {
+        return Directory.EnumerateFiles(downloadsPath).Any();
+    }
+    catch
+    {
+        return false;
+    }
+}
+
+{
+    string cr = builder.Environment.ContentRootPath;
+    string? configured = builder.Configuration["StaticFiles:WebRoot"];
+    if (!string.IsNullOrWhiteSpace(configured))
+    {
+        string path = Path.IsPathRooted(configured.Trim())
+            ? Path.GetFullPath(configured.Trim())
+            : Path.GetFullPath(Path.Combine(cr, configured.Trim()));
+        if (Directory.Exists(path))
+        {
+            builder.WebHost.UseWebRoot(path);
+            Console.WriteLine($"[StaticFiles] WebRoot из appsettings StaticFiles:WebRoot = {path}");
+        }
+        else
+            Console.WriteLine($"[StaticFiles] Предупреждение: StaticFiles:WebRoot не существует: {path}");
+    }
+    else
+    {
+        string[] candidates =
+        {
+            Path.Combine(cr, "wwwroot"),
+            Path.Combine(cr, "..", "wwwroot"),
+            Path.Combine(cr, "Server", "wwwroot"),
+        };
+
+        string? picked = null;
+        foreach (string candidate in candidates)
+        {
+            string full = Path.GetFullPath(candidate);
+            if (!DownloadsHasDmg(Path.Combine(full, "downloads")))
+                continue;
+            picked = full;
+            break;
+        }
+
+        if (picked == null)
+        {
+            foreach (string candidate in candidates)
+            {
+                string full = Path.GetFullPath(candidate);
+                if (!DownloadsHasAnyFile(Path.Combine(full, "downloads")))
+                    continue;
+                picked = full;
+                break;
+            }
+        }
+
+        if (picked != null)
+        {
+            builder.WebHost.UseWebRoot(picked);
+            Console.WriteLine($"[StaticFiles] WebRoot авто = {picked} (ContentRoot = {cr})");
+        }
+        else
+            Console.WriteLine($"[StaticFiles] WebRoot не найден; ContentRoot = {cr}");
+    }
+}
 var logStore = new BattleLogStore();
 builder.Services.AddSingleton(logStore);
 builder.Services.AddSingleton<BattlePostgresDatabase>();
@@ -28,7 +122,12 @@ Console.SetError(new BattleLogConsoleWriter(Console.Error, logStore, isError: tr
 
 var app = builder.Build();
 app.UseCors();
-app.UseStaticFiles();
+// .dmg не в списке MIME по умолчанию — без этого ответ 404 даже при верном WebRoot.
+app.UseStaticFiles(new StaticFileOptions
+{
+    ServeUnknownFileTypes = true,
+    DefaultContentType = "application/octet-stream"
+});
 app.UseWebSockets();
 
 // Простейшее логирование всех запросов: метод, путь, статус и длительность.

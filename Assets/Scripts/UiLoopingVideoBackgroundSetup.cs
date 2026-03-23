@@ -73,6 +73,8 @@ public static class UiLoopingVideoBackgroundSetup
         vp.renderMode = VideoRenderMode.RenderTexture;
         vp.audioOutputMode = VideoAudioOutputMode.None;
         vp.sendFrameReadyEvents = true;
+        // Иначе при соотношении сторон экрана ≠ ролика (например 16:10 vs 16:9) Unity «заполняет» RT с обрезкой краёв.
+        vp.aspectRatio = VideoAspectRatio.Stretch;
 
         int w = Mathf.Max(256, Screen.width);
         int h = Mathf.Max(256, Screen.height);

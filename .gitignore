@@ -53,5 +53,9 @@ Assets/AddressableAssetsData/*/*.bin*
 Server/bin/
 Server/obj/
 
+# Сервер: отдаваемые клиенту бинарники (dmg и т.д.) — не в git
+Server/wwwroot/downloads/*
+!Server/wwwroot/downloads/README.txt
+
 # FBX персонажа ~110MB каждый — лимит GitHub 100MB; держите локально или используйте Git LFS
 Assets/Art/Player/*.fbx
