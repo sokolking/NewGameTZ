@@ -79,7 +79,24 @@ public class MovementRangeHighlighter : MonoBehaviour
         if (_grid == null)
             return;
         if (_cachedAllCells == null || _cachedAllCells.Length == 0)
-            _cachedAllCells = _grid.GetComponentsInChildren<HexCell>(true);
+        {
+            // Используем кэш HexGrid вместо дорогого GetComponentsInChildren (O(n) поиск по иерархии).
+            var cache = _grid.GetCellCache();
+            if (cache != null)
+            {
+                int w = _grid.Width;
+                int l = _grid.Length;
+                _cachedAllCells = new HexCell[w * l];
+                int idx = 0;
+                for (int c = 0; c < w; c++)
+                    for (int r = 0; r < l; r++)
+                        _cachedAllCells[idx++] = cache[c, r];
+            }
+            else
+            {
+                _cachedAllCells = _grid.GetComponentsInChildren<HexCell>(true);
+            }
+        }
     }
 
     private void ClearMask()

@@ -1,7 +1,9 @@
+using System.Collections.Generic;
 using UnityEngine;
 
 /// <summary>
 /// Строит меш плоского гекса (flat-top) в плоскости XZ, 6 граней.
+/// Все гексы одного радиуса делят один Mesh — экономит ~1000 Mesh-объектов и ускоряет Static Batching.
 /// </summary>
 [RequireComponent(typeof(MeshFilter), typeof(MeshRenderer))]
 public class Hexagon : MonoBehaviour
@@ -9,12 +11,23 @@ public class Hexagon : MonoBehaviour
     private const float Sqrt3 = 1.732050808f;
     private const int VertexCount = 7;
 
-    /// <summary>Строит меш с заданным радиусом (центр → вершина).</summary>
+    // Кэш мешей по радиусу — все 1000 гексов используют один и тот же Mesh.
+    private static readonly Dictionary<float, Mesh> _sharedMeshCache = new();
+
+    /// <summary>Строит (или переиспользует) меш с заданным радиусом (центр → вершина).</summary>
     public void BuildMesh(float radius)
     {
         MeshFilter meshFilter = GetComponent<MeshFilter>();
         if (meshFilter == null)
             meshFilter = gameObject.AddComponent<MeshFilter>();
+
+        // Округляем до 4 знаков для стабильности ключа.
+        float key = Mathf.Round(radius * 10000f) / 10000f;
+        if (_sharedMeshCache.TryGetValue(key, out Mesh cached) && cached != null)
+        {
+            meshFilter.sharedMesh = cached;
+            return;
+        }
 
         float halfWidth = radius * Sqrt3 * 0.5f;
 
@@ -53,6 +66,7 @@ public class Hexagon : MonoBehaviour
         mesh.SetUVs(0, uv);
         mesh.RecalculateBounds();
 
+        _sharedMeshCache[key] = mesh;
         meshFilter.sharedMesh = mesh;
     }
 }

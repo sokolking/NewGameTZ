@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 
 /// <summary>
@@ -9,6 +10,13 @@ public class HexGrid : MonoBehaviour
     private const float MinHexSize = 0.01f;
     private const float MinVisualRadius = 0.001f;
     private const float EdgeInsetToRadiusFactor = 2f / 1.732050808f; // 2/sqrt(3)
+
+    // ─── Кэши для O(1) доступа вместо transform.Find O(n) ───
+    private HexCell[,] _cellCache;
+    private Vector3[,] _worldPosCache;
+    private bool _worldPosCacheDirty = true;
+    private bool _boundsCacheDirty = true;
+    private float _cachedMinX, _cachedMaxX, _cachedMinZ, _cachedMaxZ;
 
     [Header("Размер поля (25×40 = 1000 гексов)")]
     [SerializeField] private int _width = 25;
@@ -48,9 +56,16 @@ public class HexGrid : MonoBehaviour
         ClearGrid();
 
         Material mat = _hexMaterial != null ? _hexMaterial : CreateDefaultMaterial();
+        // Включаем GPU Instancing на материале — все гексы с одним мешом рисуются за 1-2 draw call.
+        if (mat != null)
+            mat.enableInstancing = true;
+
         float size = Mathf.Max(MinHexSize, _hexSize);
         float inset = Mathf.Max(0f, _edgeInset);
         float visualRadius = Mathf.Max(MinVisualRadius, size - inset * EdgeInsetToRadiusFactor);
+
+        _cellCache = new HexCell[_width, _length];
+        _worldPosCache = new Vector3[_width, _length];
 
         for (int col = 0; col < _width; col++)
         {
@@ -59,12 +74,21 @@ public class HexGrid : MonoBehaviour
                 CreateHexCell(col, row, size, visualRadius, mat);
             }
         }
+
+        _worldPosCacheDirty = false;
+        _boundsCacheDirty = true;
+
+        // Static Batching: объединяет все статичные меши в один VBO — драматически снижает draw calls.
+        if (Application.isPlaying)
+            StaticBatchingUtility.Combine(gameObject);
     }
 
     private void CreateHexCell(int col, int row, float size, float visualRadius, Material mat)
     {
         GameObject go = new GameObject($"Hex_{col}_{row}");
         go.transform.SetParent(transform);
+        // Static Batching работает только с isStatic = true.
+        go.isStatic = true;
 
         HexCube cube = HexCubeOffset.FromOffset(col, row);
         HexCubeOffset.CubeToWorldFlatTop(cube, size, out float wx, out float wz);
@@ -84,10 +108,20 @@ public class HexGrid : MonoBehaviour
 
         MeshRenderer renderer = go.GetComponent<MeshRenderer>();
         if (renderer != null)
+        {
             renderer.sharedMaterial = mat;
+            // Тени гексов стоят ~8 ms; пол не отбрасывает значимых теней.
+            renderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+        }
 
         MeshCollider collider = go.AddComponent<MeshCollider>();
         collider.sharedMesh = go.GetComponent<MeshFilter>().sharedMesh;
+
+        // Заполняем кэши.
+        if (_cellCache != null)
+            _cellCache[col, row] = cell;
+        if (_worldPosCache != null)
+            _worldPosCache[col, row] = transform.TransformPoint(new Vector3(wx, 0f, wz));
     }
 
     private Material CreateDefaultMaterial()
@@ -111,6 +145,10 @@ public class HexGrid : MonoBehaviour
     [ContextMenu("Очистить сетку")]
     public void ClearGrid()
     {
+        _cellCache = null;
+        _worldPosCache = null;
+        _worldPosCacheDirty = true;
+        _boundsCacheDirty = true;
         while (transform.childCount > 0)
         {
             Transform child = transform.GetChild(0);
@@ -121,16 +159,49 @@ public class HexGrid : MonoBehaviour
         }
     }
 
+    /// <summary>O(1) доступ к ячейке вместо transform.Find (O(n) при 1000 объектах).</summary>
     public HexCell GetCell(int col, int row)
     {
         if (!IsInBounds(col, row)) return null;
+        // Быстрый путь: кэш заполнен при GenerateGrid.
+        if (_cellCache != null)
+            return _cellCache[col, row];
+        // Fallback для сеток, созданных в редакторе (без GenerateGrid в рантайме).
+        BuildCellCacheIfNeeded();
+        if (_cellCache != null)
+            return _cellCache[col, row];
+        // Последний fallback.
         Transform t = transform.Find($"Hex_{col}_{row}");
         return t != null ? t.GetComponent<HexCell>() : null;
     }
 
-    /// <summary>Мировая позиция центра ячейки (col, row).</summary>
+    private void BuildCellCacheIfNeeded()
+    {
+        if (_cellCache != null || _width <= 0 || _length <= 0) return;
+        _cellCache = new HexCell[_width, _length];
+        _worldPosCache = new Vector3[_width, _length];
+        float size = Mathf.Max(MinHexSize, _hexSize);
+        for (int col = 0; col < _width; col++)
+        {
+            for (int row = 0; row < _length; row++)
+            {
+                Transform t = transform.Find($"Hex_{col}_{row}");
+                if (t != null)
+                    _cellCache[col, row] = t.GetComponent<HexCell>();
+                HexCube cube = HexCubeOffset.FromOffset(col, row);
+                HexCubeOffset.CubeToWorldFlatTop(cube, size, out float x, out float z);
+                _worldPosCache[col, row] = transform.TransformPoint(new Vector3(x, 0f, z));
+            }
+        }
+        _worldPosCacheDirty = false;
+    }
+
+    /// <summary>Мировая позиция центра ячейки (col, row). Использует кэш — без пересчёта каждый вызов.</summary>
     public Vector3 GetCellWorldPosition(int col, int row)
     {
+        if (_worldPosCache != null && !_worldPosCacheDirty
+            && col >= 0 && col < _width && row >= 0 && row < _length)
+            return _worldPosCache[col, row];
         HexCube cube = HexCubeOffset.FromOffset(col, row);
         float size = Mathf.Max(MinHexSize, _hexSize);
         HexCubeOffset.CubeToWorldFlatTop(cube, size, out float x, out float z);
@@ -154,7 +225,7 @@ public class HexGrid : MonoBehaviour
         return Mathf.Max(w, h);
     }
 
-    /// <summary>Границы карты: левый край первого гекса слева, правый — последнего справа, нижний — последнего снизу, верхний — первого сверху (flat-top).</summary>
+    /// <summary>Границы карты (кэшируются после первого вычисления).</summary>
     public void GetGridBoundsWorld(out float minX, out float maxX, out float minZ, out float maxZ)
     {
         if (_width == 0 || _length == 0)
@@ -162,10 +233,18 @@ public class HexGrid : MonoBehaviour
             minX = maxX = minZ = maxZ = 0f;
             return;
         }
+        if (!_boundsCacheDirty)
+        {
+            minX = _cachedMinX;
+            maxX = _cachedMaxX;
+            minZ = _cachedMinZ;
+            maxZ = _cachedMaxZ;
+            return;
+        }
         float size = Mathf.Max(MinHexSize, _hexSize);
         float inset = Mathf.Max(0f, _edgeInset);
         float visualRadius = Mathf.Max(MinVisualRadius, size - inset * EdgeInsetToRadiusFactor);
-        float marginX = visualRadius * 0.8660254f; // sqrt(3)/2 — половина ширины flat-top гекса
+        float marginX = visualRadius * 0.8660254f;
         float marginZ = visualRadius;
 
         float mnX = float.MaxValue, mxX = float.MinValue, mnZ = float.MaxValue, mxZ = float.MinValue;
@@ -180,10 +259,18 @@ public class HexGrid : MonoBehaviour
                 if (p.z > mxZ) mxZ = p.z;
             }
         }
-        minX = mnX - marginX;  // левая граница первого гекса слева
-        maxX = mxX + marginX; // правая граница последнего гекса справа
-        minZ = mnZ - marginZ; // нижняя граница последнего гекса снизу
-        maxZ = mxZ + marginZ; // верхняя граница первого гекса сверху
+        _cachedMinX = minX = mnX - marginX;
+        _cachedMaxX = maxX = mxX + marginX;
+        _cachedMinZ = minZ = mnZ - marginZ;
+        _cachedMaxZ = maxZ = mxZ + marginZ;
+        _boundsCacheDirty = false;
+    }
+
+    /// <summary>Возвращает кэш ячеек (Width × Length). Не модифицировать!</summary>
+    public HexCell[,] GetCellCache()
+    {
+        BuildCellCacheIfNeeded();
+        return _cellCache;
     }
 
     #region Координаты и расстояние (cube: q+r+s=0, H = Max(|Δq|,|Δr|,|Δs|))
