@@ -7,6 +7,7 @@ using UnityEngine.UI;
 /// Два режима: планирование (вид сверху) и просмотр (3-е лицо).
 /// <see cref="UiHierarchyNames.ModeButton"/> — подпись текущего режима и переключение режима/камеры.
 /// После анимации просмотра камера не уходит автоматически; <see cref="UiHierarchyNames.ModeButton"/> плавно «мигает» (альфа).
+/// Переключение планирование/просмотр — без анимации камеры.
 /// </summary>
 public class GamePhaseViewController : MonoBehaviour
 {
@@ -166,13 +167,9 @@ public class GamePhaseViewController : MonoBehaviour
     private IEnumerator EnterPlanningPhaseRoutine()
     {
         HexGridCamera cam = FindFirstObjectByType<HexGridCamera>();
-        if (cam == null)
-            yield break;
-
-        if (cam.IsFollowThirdPersonFullyActive)
-            yield return cam.ExitThirdPersonFollowRoutine();
-        else if (HexGridCamera.ThirdPersonFollowActive)
+        if (cam != null && HexGridCamera.ThirdPersonFollowActive)
             cam.EndThirdPersonFollowImmediate();
+        yield break;
     }
 
     private IEnumerator EnterViewPhaseRoutine()
@@ -192,6 +189,7 @@ public class GamePhaseViewController : MonoBehaviour
         else
             fh.Normalize();
 
-        yield return cam.EnterThirdPersonFollowRoutine(local.transform, fh);
+        cam.EnterThirdPersonFollowImmediate(local.transform, fh);
+        yield break;
     }
 }

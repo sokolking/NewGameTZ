@@ -584,33 +584,6 @@ public class GameSession : MonoBehaviour
         p?.SetTurnTimerPaused(true);
     }
 
-    /// <summary>
-    /// При приходе результата раунда с сервера: если игрок в режиме планирования (вид сверху), плавно перейти в 3-е лицо перед анимацией.
-    /// Уже в режиме просмотра — без повторного перехода.
-    /// </summary>
-    private IEnumerator CoEnterServerRoundThirdPersonCamera()
-    {
-        if (HexGridCamera.ThirdPersonFollowActive)
-            yield break;
-
-        Player local = LocalPlayer;
-        if (local == null || local.IsDead || local.IsHidden || local.Grid == null)
-            yield break;
-
-        HexGridCamera cam = CachedHexGridCamera;
-        if (cam == null)
-            yield break;
-
-        Vector3 fh = local.transform.forward;
-        fh.y = 0f;
-        if (fh.sqrMagnitude < 1e-6f)
-            fh = Vector3.forward;
-        else
-            fh.Normalize();
-
-        yield return cam.EnterThirdPersonFollowRoutine(local.transform, fh);
-    }
-
     public void CancelWaitingForServerRoundResolve()
     {
         bool was = _waitingForServerRoundResolve;
@@ -849,8 +822,6 @@ public class GameSession : MonoBehaviour
     {
         if (playback == null || playback.Count == 0)
             yield break;
-
-        yield return CoEnterServerRoundThirdPersonCamera();
 
         {
             Player localForPhase = LocalPlayer;
@@ -1530,8 +1501,6 @@ public class GameSession : MonoBehaviour
         if (jobs == null || jobs.Count == 0)
             yield break;
 
-        yield return CoEnterServerRoundThirdPersonCamera();
-
         var running = new List<Coroutine>();
         foreach (var j in jobs)
         {
@@ -1956,8 +1925,6 @@ public class GameSession : MonoBehaviour
 
         _activeReplayAnimationCoroutines.Clear();
         var jobs = fallbackJobs ?? new List<(object unit, bool isLocal, HexPosition[] path)>();
-        if (jobs.Count > 0)
-            yield return CoEnterServerRoundThirdPersonCamera();
         foreach (var j in jobs)
         {
             if (j.isLocal && j.unit is Player pl)

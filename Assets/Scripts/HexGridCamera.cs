@@ -471,6 +471,44 @@ public class HexGridCamera : MonoBehaviour
         ApplyThirdPersonFollowPose(instantRotation: true);
     }
 
+    /// <summary>Мгновенный переход в 3-е лицо (без анимации). Для кнопки режима планирование/просмотр.</summary>
+    public void EnterThirdPersonFollowImmediate(Transform target, Vector3? initialHorizontalDir = null)
+    {
+        if (target == null) return;
+        if (_cam == null) _cam = GetComponent<Camera>();
+        if (_cam == null) return;
+        if (_followThirdPersonActive)
+            EndThirdPersonFollowImmediate();
+
+        StopAllCoroutines();
+
+        _savedPosition = transform.position;
+        _savedRotation = transform.rotation;
+        _savedOrthographic = _cam.orthographic;
+        _savedOrthoSize = _cam.orthographicSize;
+        _savedFieldOfView = _cam.fieldOfView;
+
+        _followTarget = target;
+        _thirdPersonOrbitYawDeg = 0f;
+        _thirdPersonOrbitPitchDeg = 0f;
+        _thirdPersonOrbitLmbDragThisPress = false;
+
+        ComputeThirdPersonEndPose(out Vector3 endPos, out Quaternion endRot, out float endFov);
+
+        ThirdPersonFollowActive = true;
+        HexCell.RefreshHoverAfterThirdPersonCamera();
+
+        _cam.orthographic = false;
+        _cam.fieldOfView = endFov;
+
+        transform.SetPositionAndRotation(endPos, endRot);
+
+        _followThirdPersonActive = true;
+        HexCell.RefreshHoverAfterThirdPersonCamera();
+        _followCamPosVelocity = Vector3.zero;
+        ApplyThirdPersonFollowPose(instantRotation: true);
+    }
+
     /// <summary>Плавный возврат к сохранённому орто-виду после анимации.</summary>
     public IEnumerator ExitThirdPersonFollowRoutine()
     {
