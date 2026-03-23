@@ -36,6 +36,12 @@ public class Player : MonoBehaviour
     [Header("Жизни")]
     [SerializeField] private int _maxHp = 10;
 
+    [Header("UI над головой")]
+    [Tooltip("Отдельный префаб с CharacterNameplateView; иначе Resources/CharacterNameplate.")]
+    [SerializeField] private GameObject _characterNameplatePrefab;
+    [Tooltip("Точка над головой; иначе корень Player.")]
+    [SerializeField] private Transform _nameplateFollowAnchor;
+
     [Header("Таймер хода, сек")]
     [SerializeField] private float _turnDurationSeconds = 100f;
 
@@ -45,6 +51,9 @@ public class Player : MonoBehaviour
     private int _currentAp;
     private int _turnCount;
     private int _currentHp;
+    private string _displayName = "";
+    private int _characterLevel = 1;
+    private CharacterNameplateView _nameplateInstance;
     private int _runMovementApSpentThisTurn;
     private MovementPosture _currentPosture = MovementPosture.Walk;
 
@@ -107,6 +116,10 @@ public class Player : MonoBehaviour
     public int MaxAp => _maxAp;
     public int MaxHp => _maxHp;
     public int CurrentHp => _currentHp;
+    /// <summary>Имя для планки (сервер / BattleStarted).</summary>
+    public string DisplayName => string.IsNullOrEmpty(_displayName) ? "Player" : _displayName;
+    /// <summary>Уровень персонажа для планки.</summary>
+    public int CharacterLevel => Mathf.Max(1, _characterLevel);
     public bool IsDead => _currentHp <= 0;
     public MovementPosture CurrentMovementPosture => _currentPosture;
     public MovementPosture PreviewMovementPosture => MovementPostureUtility.GetPreviewMovementPosture(_currentPosture);
@@ -170,6 +183,8 @@ public class Player : MonoBehaviour
     public event System.Action OnEquippedWeaponChanged;
     /// <summary>Текущее и макс. HP после синхронизации с сервером (для анимации смерти / респавна).</summary>
     public event System.Action<int, int> OnHealthChanged;
+    /// <summary>Ник или уровень сменились (планка над головой).</summary>
+    public event System.Action OnDisplayProfileChanged;
 
     /// <summary>Синхронизация с сервером или локальная смена (кулак / камень и т.д.).</summary>
     /// <param name="attackApCost">Стоимость атаки из БД / сервера; по умолчанию 1.</param>
@@ -209,13 +224,43 @@ public class Player : MonoBehaviour
     {
         // В онлайн-бою позицию задаёт сервер (ApplyBattleStarted); иначе Player.Start перезапишет спавн в (0,0).
         if (GameSession.Active != null && GameSession.Active.IsInBattleWithServer())
+        {
+            EnsureNameplate();
             return;
+        }
         if (_grid != null && _grid.GetCell(0, 0) != null)
         {
             _currentCol = 0;
             _currentRow = 0;
             transform.position = _grid.GetCellWorldPosition(0, 0);
         }
+        EnsureNameplate();
+    }
+
+    /// <summary>Ник и уровень для планки (BattleStarted / локальная настройка).</summary>
+    public void SetDisplayProfile(string displayName, int level)
+    {
+        _displayName = displayName ?? "";
+        _characterLevel = Mathf.Max(1, level);
+        EnsureNameplate();
+        OnDisplayProfileChanged?.Invoke();
+    }
+
+    private void EnsureNameplate()
+    {
+        if (_nameplateInstance != null)
+            return;
+        GameObject prefab = _characterNameplatePrefab;
+        if (prefab == null)
+            prefab = Resources.Load<GameObject>("CharacterNameplate");
+        if (prefab == null)
+            return;
+        GameObject go = Instantiate(prefab, transform);
+        _nameplateInstance = go.GetComponent<CharacterNameplateView>();
+        if (_nameplateInstance == null)
+            _nameplateInstance = go.AddComponent<CharacterNameplateView>();
+        Transform follow = _nameplateFollowAnchor != null ? _nameplateFollowAnchor : transform;
+        _nameplateInstance.Bind(this, follow);
     }
 
     private void Update()

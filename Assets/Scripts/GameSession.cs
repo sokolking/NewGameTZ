@@ -1620,6 +1620,11 @@ public class GameSession : MonoBehaviour
                     int wRng = GetSpawnInt(payload.spawnWeaponRanges, spawnIndex, 1);
                     int wAtk = GetSpawnInt(payload.spawnWeaponAttackApCosts, spawnIndex, 1);
                     local.SetEquippedWeapon(wCode, wDmg, wRng, wAtk);
+                    int dispLevel = GetSpawnInt(payload.spawnLevels, spawnIndex, 1);
+                    string dispName = GetSpawnString(payload.spawnDisplayNames, spawnIndex, "");
+                    if (string.IsNullOrEmpty(dispName))
+                        dispName = !string.IsNullOrEmpty(BattleSessionState.LastUsername) ? BattleSessionState.LastUsername : pid;
+                    local.SetDisplayProfile(dispName, dispLevel);
                 }
                 _initialReplayState[pid] = new ReplayUnitSnapshot
                 {
@@ -1639,6 +1644,11 @@ public class GameSession : MonoBehaviour
             var rv = go.AddComponent<RemoteBattleUnitView>();
             rv.Initialize(pid, grid, col, row, moveDur);
             rv.SetHealth(currentHp, maxHp);
+            int dispLevelR = GetSpawnInt(payload.spawnLevels, spawnIndex, 1);
+            string dispNameR = GetSpawnString(payload.spawnDisplayNames, spawnIndex, "");
+            if (string.IsNullOrEmpty(dispNameR))
+                dispNameR = pid;
+            rv.SetDisplayProfile(dispNameR, dispLevelR);
             _remoteUnits[pid] = rv;
             _initialReplayState[pid] = new ReplayUnitSnapshot
             {

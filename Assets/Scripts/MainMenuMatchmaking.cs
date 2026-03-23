@@ -58,7 +58,7 @@ public class MainMenuMatchmaking : MonoBehaviour
 
     private IEnumerator JoinAndWaitForBattleCoroutine()
     {
-        var body = new JoinRequest { startCol = 0, startRow = 0, solo = false, username = _username, password = _password };
+        var body = new JoinRequest { startCol = 0, startRow = 0, solo = false, username = _username, password = _password, characterLevel = 1 };
         var json = JsonUtility.ToJson(body);
         string url = _serverUrl.TrimEnd('/') + "/api/battle/join";
         string responseText = null;
@@ -112,7 +112,7 @@ public class MainMenuMatchmaking : MonoBehaviour
     /// <summary>Запрос одиночного боя: сервер сразу создаёт бой и возвращает battleStarted без ожидания второго игрока.</summary>
     private IEnumerator JoinSoloAndStartBattleCoroutine()
     {
-        var body = new JoinRequest { startCol = 0, startRow = 0, solo = true, username = _username, password = _password };
+        var body = new JoinRequest { startCol = 0, startRow = 0, solo = true, username = _username, password = _password, characterLevel = 1 };
         var json = JsonUtility.ToJson(body);
         string url = _serverUrl.TrimEnd('/') + "/api/battle/join";
         string responseText = null;
@@ -197,6 +197,7 @@ public class MainMenuMatchmaking : MonoBehaviour
         public bool solo;
         public string username;
         public string password;
+        public int characterLevel;
     }
 
     [System.Serializable]

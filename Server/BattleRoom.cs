@@ -89,6 +89,12 @@ public class BattleRoom
     /// <summary>Стабильный список участников боя (порядок присоединения).</summary>
     public List<string> ParticipantIds { get; } = new();
 
+    /// <summary>Отображаемое имя для планки над головой (playerId → ник).</summary>
+    public Dictionary<string, string> PlayerDisplayNames { get; } = new();
+
+    /// <summary>Уровень персонажа (playerId → level).</summary>
+    public Dictionary<string, int> PlayerLevels { get; } = new();
+
     /// <summary>Кто в этом раунде завершил ход досрочно (пока таймер не истёк).</summary>
     public Dictionary<string, bool> EndedTurnEarlyThisRound { get; } = new();
     /// <summary>Тег препятствия на клетке: wall | damaged_wall | tree | rock.</summary>
@@ -976,6 +982,14 @@ public class BattleRoom
             ParticipantIds.Add(playerId);
     }
 
+    public void SetPlayerDisplayInfo(string playerId, string displayName, int level)
+    {
+        if (string.IsNullOrWhiteSpace(playerId) || !Players.ContainsKey(playerId))
+            return;
+        PlayerDisplayNames[playerId] = string.IsNullOrWhiteSpace(displayName) ? playerId : displayName.Trim();
+        PlayerLevels[playerId] = Math.Max(1, level);
+    }
+
     public void SetPlayerCombatProfile(string playerId, int maxHp, int maxAp, string weaponCode, int weaponDamage, int weaponRange, int weaponAttackApCost)
     {
         PlayerCombatProfiles[playerId] = (
@@ -1031,14 +1045,16 @@ public class BattleRoom
         return true;
     }
 
-    public void FillSpawnArrays(out string[] ids, out int[] cols, out int[] rows, out int[] currentAps, out int[] maxHps, out int[] currentHps, out string[] currentPostures, out string[] weaponCodes, out int[] weaponDamages, out int[] weaponRanges, out int[] weaponAttackApCosts)
+    public void FillSpawnArrays(out string[] ids, out int[] cols, out int[] rows, out int[] currentAps, out int[] maxHps, out int[] currentHps, out string[] currentPostures, out string[] weaponCodes, out int[] weaponDamages, out int[] weaponRanges, out int[] weaponAttackApCosts, out string[] spawnDisplayNames, out int[] spawnLevels)
     {
         EnsureUnitsInitialized();
 
-        var items = new List<(string id, int col, int row, int currentAp, int maxHp, int currentHp, string posture, string wc, int wd, int wr, int wac)>();
+        var items = new List<(string id, int col, int row, int currentAp, int maxHp, int currentHp, string posture, string wc, int wd, int wr, int wac, string displayName, int level)>();
 
         foreach (var playerId in ParticipantIds.Where(Players.ContainsKey))
         {
+            string dn = PlayerDisplayNames.GetValueOrDefault(playerId, playerId);
+            int lv = PlayerLevels.GetValueOrDefault(playerId, 1);
             if (PlayerToUnitId.TryGetValue(playerId, out var unitId) && Units.TryGetValue(unitId, out var unit))
             {
                 items.Add((
@@ -1052,7 +1068,9 @@ public class BattleRoom
                     unit.WeaponCode ?? DefaultWeaponCode,
                     unit.WeaponDamage,
                     unit.WeaponRange,
-                    Math.Max(1, unit.WeaponAttackApCost)));
+                    Math.Max(1, unit.WeaponAttackApCost),
+                    dn,
+                    lv));
             }
             else
             {
@@ -1068,7 +1086,7 @@ public class BattleRoom
                     wac = prof.Item6;
                 }
 
-                items.Add((playerId, Players[playerId].col, Players[playerId].row, MaxAp, DefaultPlayerMaxHp, DefaultPlayerMaxHp, PostureWalk, wc, wd, wr, wac));
+                items.Add((playerId, Players[playerId].col, Players[playerId].row, MaxAp, DefaultPlayerMaxHp, DefaultPlayerMaxHp, PostureWalk, wc, wd, wr, wac, dn, lv));
             }
         }
 
@@ -1085,7 +1103,9 @@ public class BattleRoom
                 unit.WeaponCode ?? DefaultWeaponCode,
                 unit.WeaponDamage,
                 unit.WeaponRange,
-                Math.Max(1, unit.WeaponAttackApCost)));
+                Math.Max(1, unit.WeaponAttackApCost),
+                unit.UnitId,
+                1));
         }
 
         ids = items.Select(x => x.id).ToArray();
@@ -1099,6 +1119,8 @@ public class BattleRoom
         weaponDamages = items.Select(x => x.wd).ToArray();
         weaponRanges = items.Select(x => x.wr).ToArray();
         weaponAttackApCosts = items.Select(x => x.wac).ToArray();
+        spawnDisplayNames = items.Select(x => x.displayName).ToArray();
+        spawnLevels = items.Select(x => x.level).ToArray();
     }
 
     public BattleStartedPayloadDto BuildBattleStartedFor(string playerId)
@@ -1110,7 +1132,7 @@ public class BattleRoom
             Col = p.Value.col,
             Row = p.Value.row
         }).ToArray();
-        FillSpawnArrays(out var sid, out var sc, out var sr, out var sap, out var smh, out var sch, out var spos, out var swc, out var swd, out var swr, out var swac);
+        FillSpawnArrays(out var sid, out var sc, out var sr, out var sap, out var smh, out var sch, out var spos, out var swc, out var swd, out var swr, out var swac, out var sdn, out var slv);
         var sortedKeys = _obstacleTags.Keys.OrderBy(k => k.col).ThenBy(k => k.row).ToArray();
         var obstacleCols = sortedKeys.Select(k => k.col).ToArray();
         var obstacleRows = sortedKeys.Select(k => k.row).ToArray();
@@ -1149,6 +1171,8 @@ public class BattleRoom
             SpawnWeaponDamages = swd,
             SpawnWeaponRanges = swr,
             SpawnWeaponAttackApCosts = swac,
+            SpawnDisplayNames = sdn,
+            SpawnLevels = slv,
             ObstacleCols = obstacleCols,
             ObstacleRows = obstacleRows,
             ObstacleTags = obstacleTags,

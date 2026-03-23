@@ -112,6 +112,10 @@ app.MapPost("/api/battle/join", (BattleRoomStore s, JoinRequest? body) =>
         battleWeaponDb.TryGetWeaponByCode(weaponCode, out weapon);
     }
 
+    int characterLevel = 1;
+    if (body != null && body.characterLevel > 0)
+        characterLevel = Math.Min(body.characterLevel, 9999);
+
     var resp = s.JoinOrCreate(
         startCol,
         startRow,
@@ -121,7 +125,9 @@ app.MapPost("/api/battle/join", (BattleRoomStore s, JoinRequest? body) =>
         weaponCode,
         weapon.Damage,
         weapon.Range,
-        weapon.AttackApCost);
+        weapon.AttackApCost,
+        username,
+        characterLevel);
     return Results.Json(resp, jsonOpt);
 });
 
@@ -246,7 +252,7 @@ app.MapGet("/api/battle/{battleId}", (string battleId, BattleRoomStore s) =>
     if (room == null) return Results.Json(new { error = "Battle not found" }, statusCode: 404);
     var battleRecord = battleHistoryDb.GetBattle(battleId);
 
-    room.FillSpawnArrays(out var spawnIds, out var spawnCols, out var spawnRows, out var spawnCurrentAps, out var spawnMaxHps, out var spawnCurrentHps, out var spawnCurrentPostures, out var spawnWeaponCodes, out var spawnWeaponDamages, out var spawnWeaponRanges, out var spawnWeaponAttackApCosts);
+    room.FillSpawnArrays(out var spawnIds, out var spawnCols, out var spawnRows, out var spawnCurrentAps, out var spawnMaxHps, out var spawnCurrentHps, out var spawnCurrentPostures, out var spawnWeaponCodes, out var spawnWeaponDamages, out var spawnWeaponRanges, out var spawnWeaponAttackApCosts, out var spawnDisplayNames, out var spawnLevels);
     var response = new BattleStateResponse
     {
         RoundIndex = room.RoundIndex,
@@ -268,7 +274,9 @@ app.MapGet("/api/battle/{battleId}", (string battleId, BattleRoomStore s) =>
         SpawnWeaponCodes = spawnWeaponCodes,
         SpawnWeaponDamages = spawnWeaponDamages,
         SpawnWeaponRanges = spawnWeaponRanges,
-        SpawnWeaponAttackApCosts = spawnWeaponAttackApCosts
+        SpawnWeaponAttackApCosts = spawnWeaponAttackApCosts,
+        SpawnDisplayNames = spawnDisplayNames,
+        SpawnLevels = spawnLevels
     };
     return Results.Json(response, jsonOpt);
 });
@@ -454,6 +462,8 @@ public class JoinRequest
     public bool solo { get; set; }
     public string username { get; set; } = "";
     public string password { get; set; } = "";
+    /// <summary>Уровень персонажа (1–9999); 0 — не задан, используется 1.</summary>
+    public int characterLevel { get; set; }
 }
 
 public class BattleStateResponse
@@ -478,6 +488,8 @@ public class BattleStateResponse
     public int[]? SpawnWeaponDamages { get; set; }
     public int[]? SpawnWeaponRanges { get; set; }
     public int[]? SpawnWeaponAttackApCosts { get; set; }
+    public string[]? SpawnDisplayNames { get; set; }
+    public int[]? SpawnLevels { get; set; }
 }
 
 public class PollResponse

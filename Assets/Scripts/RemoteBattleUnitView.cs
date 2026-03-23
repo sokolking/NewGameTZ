@@ -15,12 +15,20 @@ public class RemoteBattleUnitView : MonoBehaviour
     [Header("Визуал PvP")]
     [SerializeField] private Color _enemyModelTint = new Color(0.95f, 0.28f, 0.22f, 1f);
 
+    [Header("UI над головой")]
+    [Tooltip("Префаб с CharacterNameplateView; иначе Resources/CharacterNameplate.")]
+    [SerializeField] private GameObject _characterNameplatePrefab;
+    [SerializeField] private Transform _nameplateFollowAnchor;
+
     private bool _isMoving;
     private Vector3? _horizontalFacingOverride;
     private int _maxHp = 10;
     private int _currentHp = 10;
     private Animator _cachedAnimator;
     private PlayerCharacterAnimator _characterAnimator;
+    private string _displayName = "";
+    private int _characterLevel = 1;
+    private CharacterNameplateView _nameplateInstance;
 
     public string NetworkPlayerId { get; private set; }
     public bool IsMoving => _isMoving;
@@ -29,6 +37,11 @@ public class RemoteBattleUnitView : MonoBehaviour
     public int CurrentRow { get; private set; }
     public int CurrentHp => _currentHp;
     public int MaxHp => _maxHp;
+    public string DisplayName => string.IsNullOrEmpty(_displayName) ? (NetworkPlayerId ?? "?") : _displayName;
+    public int CharacterLevel => Mathf.Max(1, _characterLevel);
+
+    public event Action<int, int> OnHealthChanged;
+    public event Action OnDisplayProfileChanged;
 
     /// <summary>Точка выстрела для VFX: кость Humanoid RightHand, иначе над корнем юнита.</summary>
     public bool TryGetRangedFireWorldPosition(out Vector3 worldPos)
@@ -87,6 +100,31 @@ public class RemoteBattleUnitView : MonoBehaviour
             CurrentRow = startRow;
         }
         EnsureVisual();
+    }
+
+    public void SetDisplayProfile(string displayName, int level)
+    {
+        _displayName = displayName ?? "";
+        _characterLevel = Mathf.Max(1, level);
+        EnsureNameplate();
+        OnDisplayProfileChanged?.Invoke();
+    }
+
+    private void EnsureNameplate()
+    {
+        if (_nameplateInstance != null)
+            return;
+        GameObject prefab = _characterNameplatePrefab;
+        if (prefab == null)
+            prefab = Resources.Load<GameObject>("CharacterNameplate");
+        if (prefab == null)
+            return;
+        GameObject go = Instantiate(prefab, transform);
+        _nameplateInstance = go.GetComponent<CharacterNameplateView>();
+        if (_nameplateInstance == null)
+            _nameplateInstance = go.AddComponent<CharacterNameplateView>();
+        Transform follow = _nameplateFollowAnchor != null ? _nameplateFollowAnchor : transform;
+        _nameplateInstance.Bind(this, follow);
     }
 
     private void EnsureVisual()
@@ -248,6 +286,7 @@ public class RemoteBattleUnitView : MonoBehaviour
     {
         _maxHp = Mathf.Max(1, maxHp);
         _currentHp = Mathf.Clamp(currentHp, 0, _maxHp);
+        OnHealthChanged?.Invoke(_currentHp, _maxHp);
     }
 
     public IEnumerator PlayPathAnimation(HexPosition[] path)

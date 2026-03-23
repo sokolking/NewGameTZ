@@ -205,6 +205,8 @@ public class BattleStartedPayloadDto
     public int[]? SpawnWeaponDamages { get; set; }
     public int[]? SpawnWeaponRanges { get; set; }
     public int[]? SpawnWeaponAttackApCosts { get; set; }
+    public string[]? SpawnDisplayNames { get; set; }
+    public int[]? SpawnLevels { get; set; }
     public int[]? ObstacleCols { get; set; }
     public int[]? ObstacleRows { get; set; }
     /// <summary>Теги: wall | tree | rock — параллельно obstacleCols/Rows.</summary>

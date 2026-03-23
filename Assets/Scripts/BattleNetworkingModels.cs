@@ -214,6 +214,10 @@ public class BattleStartedPayload
     public int[] spawnWeaponDamages;
     public int[] spawnWeaponRanges;
     public int[] spawnWeaponAttackApCosts;
+    /// <summary>Ник для планки над головой (параллельно spawnPlayerIds).</summary>
+    public string[] spawnDisplayNames;
+    /// <summary>Уровень персонажа (параллельно spawnPlayerIds).</summary>
+    public int[] spawnLevels;
     public int[] obstacleCols;
     public int[] obstacleRows;
     /// <summary>wall | tree | rock — параллельно obstacleCols/Rows.</summary>
