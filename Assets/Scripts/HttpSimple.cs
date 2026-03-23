@@ -1,5 +1,6 @@
 using System;
 using System.Collections;
+using System.IO;
 using System.Net.Http;
 using System.Text;
 using System.Threading.Tasks;
@@ -130,5 +131,63 @@ public static class HttpSimple
 
         string body = read.Result;
         onDone?.Invoke((int)resp.StatusCode, body);
+    }
+
+    /// <summary>Прогресс 0–1 из фонового потока; читайте в Update/из главного потока для UI.</summary>
+    public sealed class DownloadProgressHolder
+    {
+        public volatile float Value;
+    }
+
+    /// <summary>Скачивание в файл (HttpClient). Прогресс обновляет holder из потока.</summary>
+    public static IEnumerator DownloadFile(
+        string url,
+        string destinationPath,
+        DownloadProgressHolder progressHolder,
+        Action onComplete,
+        Action<string> onError)
+    {
+        Task task = null;
+        Exception caught = null;
+        task = Task.Run(async () =>
+        {
+            try
+            {
+                if (progressHolder != null)
+                    progressHolder.Value = 0f;
+                using var resp = await Client.GetAsync(url, HttpCompletionOption.ResponseHeadersRead);
+                resp.EnsureSuccessStatusCode();
+                long? total = resp.Content.Headers.ContentLength;
+                await using var stream = await resp.Content.ReadAsStreamAsync();
+                await using var fs = new FileStream(destinationPath, FileMode.Create, FileAccess.Write, FileShare.None);
+                var buffer = new byte[65536];
+                long read = 0;
+                int n;
+                while ((n = await stream.ReadAsync(buffer, 0, buffer.Length)) > 0)
+                {
+                    await fs.WriteAsync(buffer, 0, n);
+                    read += n;
+                    if (progressHolder != null && total.HasValue && total.Value > 0)
+                        progressHolder.Value = read / (float)total.Value;
+                }
+                if (progressHolder != null)
+                    progressHolder.Value = 1f;
+            }
+            catch (Exception ex)
+            {
+                caught = ex;
+            }
+        });
+
+        while (!task.IsCompleted)
+            yield return null;
+
+        if (caught != null)
+        {
+            onError?.Invoke(caught.Message);
+            yield break;
+        }
+
+        onComplete?.Invoke();
     }
 }

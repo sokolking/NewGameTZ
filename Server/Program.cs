@@ -28,6 +28,7 @@ Console.SetError(new BattleLogConsoleWriter(Console.Error, logStore, isError: tr
 
 var app = builder.Build();
 app.UseCors();
+app.UseStaticFiles();
 app.UseWebSockets();
 
 // Простейшее логирование всех запросов: метод, путь, статус и длительность.
@@ -44,6 +45,23 @@ app.Use(async (ctx, next) =>
 
 var jsonOpt = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 jsonOpt.Converters.Add(new JsonStringEnumConverter());
+
+// Клиент Unity: версия и ссылка на dmg в wwwroot/downloads (см. appsettings Client).
+app.MapGet("/api/client/version", (IConfiguration cfg) =>
+{
+    var section = cfg.GetSection("Client");
+    string latest = section["LatestVersion"] ?? "1.0.0";
+    string minimum = section["MinimumVersion"] ?? "1.0.0";
+    string downloadPath = section["DownloadDmgRelativePath"] ?? "/downloads/Hope.dmg";
+    string prefix = section["DmgFileNamePrefix"] ?? "Hope";
+    return Results.Json(new
+    {
+        latestVersion = latest,
+        minimumVersion = minimum,
+        downloadDmgRelativePath = downloadPath,
+        dmgFileNamePrefix = prefix
+    }, jsonOpt);
+});
 
 var postgresDb = app.Services.GetRequiredService<BattlePostgresDatabase>();
 postgresDb.EnsureCreated();

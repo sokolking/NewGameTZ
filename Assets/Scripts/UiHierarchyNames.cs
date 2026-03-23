@@ -65,6 +65,13 @@ public static class UiHierarchyNames
 
     public const string RoundWaitPanel = "RoundWaitPanel";
 
+    /// <summary>Панель «доступна новая версия» на LoginScene / MainMenu (<see cref="ClientUpdateGate"/>).</summary>
+    public const string ClientUpdatePanel = "ClientUpdatePanel";
+    public const string ClientUpdateMessageText = "ClientUpdateMessageText";
+    public const string ClientUpdateStatusText = "ClientUpdateStatusText";
+    public const string ClientUpdateDownloadButton = "ClientUpdateDownloadButton";
+    public const string ClientUpdateProgressSlider = "ClientUpdateProgressSlider";
+
     /// <summary>
     /// Полноэкранный слой под модальными панелями (raycast), синхронизируется с <see cref="UiBlockOverlaySync"/>.
     /// Добавь дочерний объект с таким именем к корневому Canvas боя.

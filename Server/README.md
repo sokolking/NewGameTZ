@@ -13,7 +13,7 @@
 Поднять локальную БД:
 
 ```bash
-cd "/Users/ВАШ_ЛОГИН/My project (1)"
+cd "/Users/ВАШ_ЛОГИН/Hope"
 docker compose up -d
 ```
 
@@ -27,10 +27,10 @@ docker compose up -d
 
 Строка подключения лежит в `Server/appsettings.json` и может быть переопределена через переменную окружения `BATTLE_DB_CONNECTION_STRING`.
 
-Путь к проекту с **пробелами** (например `My project (1)`) — обязательно в **кавычках**:
+Корень Unity-проекта в примерах — папка `Hope` (подставьте свой путь; при пробелах в пути используйте кавычки):
 
 ```bash
-cd "/Users/ВАШ_ЛОГИН/My project (1)/Server"
+cd "/Users/ВАШ_ЛОГИН/Hope/Server"
 TMPDIR=~/tmp dotnet run
 ```
 
@@ -38,7 +38,7 @@ TMPDIR=~/tmp dotnet run
 
 ```bash
 mkdir -p ~/tmp
-TMPDIR=~/tmp dotnet run --project "/Users/ВАШ_ЛОГИН/My project (1)/Server/BattleServer.csproj"
+TMPDIR=~/tmp dotnet run --project "/Users/ВАШ_ЛОГИН/Hope/Server/BattleServer.csproj"
 ```
 
 Сервер слушает **http://localhost:5000**.
