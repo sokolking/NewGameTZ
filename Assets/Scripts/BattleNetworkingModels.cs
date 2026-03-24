@@ -222,6 +222,8 @@ public class BattleStartedPayload
     public int[] obstacleRows;
     /// <summary>wall | tree | rock — параллельно obstacleCols/Rows.</summary>
     public string[] obstacleTags;
+    /// <summary>Yaw стен (градусы вокруг Y), параллельно obstacleCols/Rows.</summary>
+    public float[] obstacleWallYaws;
 }
 
 /// <summary>POST /api/battle/.../equip-weapon (клиент).</summary>

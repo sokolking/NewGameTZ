@@ -33,11 +33,13 @@ public partial class BattleRoom
         }
 
         var used = new HashSet<(int col, int row)>(reserved);
+        const float hexSize = 1f;
 
         bool TryPlace(int col, int row) =>
             col >= 0 && row >= 0 && col < HexSpawn.DefaultGridWidth && row < HexSpawn.DefaultGridLength
             && !used.Contains((col, row));
 
+        _wallYawDegrees.Clear();
         int attempts = 0;
         int placedWalls = 0;
         while (placedWalls < wallSegments && attempts < 800)
@@ -72,6 +74,24 @@ public partial class BattleRoom
                 used.Add(cell);
                 _obstacleTags[cell] = "wall";
                 _wallHpRemaining[cell] = wallHp;
+            }
+
+            for (int i = 0; i < chain.Count; i++)
+            {
+                int col = chain[i].col;
+                int row = chain[i].row;
+                if (i < chain.Count - 1)
+                {
+                    int nc = chain[i + 1].col;
+                    int nr = chain[i + 1].row;
+                    _wallYawDegrees[(col, row)] = HexSpawn.ComputeYawAlongEdgeDegrees(col, row, nc, nr, hexSize);
+                }
+                else
+                {
+                    int pc = chain[i - 1].col;
+                    int pr = chain[i - 1].row;
+                    _wallYawDegrees[(col, row)] = HexSpawn.ComputeYawAlongEdgeDegrees(pc, pr, col, row, hexSize);
+                }
             }
 
             placedWalls++;

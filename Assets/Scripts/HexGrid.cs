@@ -124,7 +124,9 @@ public class HexGrid : MonoBehaviour
     private void CreateHexCell(int col, int row, float size, float visualRadius, Material mat)
     {
         GameObject go = new GameObject($"Hex_{col}_{row}");
-        go.transform.SetParent(transform);
+        go.transform.SetParent(transform, false);
+        go.transform.localRotation = Quaternion.Euler(0f, 60f, 0f);
+        go.transform.localScale = Vector3.one;
         // PropertyBlock + прозрачность: гексы не в static batch (иначе цвета/альфа ломаются).
         go.isStatic = false;
 

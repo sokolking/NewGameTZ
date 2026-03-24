@@ -88,6 +88,7 @@ public class GameSession : MonoBehaviour
     // Ключ: идентификатор сущности в сети (для игроков — playerId, для мобов — unitId сервера).
     private readonly Dictionary<string, RemoteBattleUnitView> _remoteUnits = new();
     private readonly HashSet<(int col, int row)> _obstacleCells = new();
+    private readonly Dictionary<(int col, int row), float> _obstacleWallYawByCell = new();
     private readonly Dictionary<string, ReplayUnitSnapshot> _initialReplayState = new();
     private readonly List<string> _turnHistoryIds = new();
     private readonly Dictionary<string, TurnResultPayload> _turnHistoryCache = new();
@@ -2011,6 +2012,7 @@ public class GameSession : MonoBehaviour
     private void ApplyObstacleMap(BattleStartedPayload payload, HexGrid grid)
     {
         _obstacleCells.Clear();
+        _obstacleWallYawByCell.Clear();
         if (grid == null) return;
 
         foreach (HexCell cell in grid.GetComponentsInChildren<HexCell>())
@@ -2034,7 +2036,10 @@ public class GameSession : MonoBehaviour
                 string tag = payload.obstacleTags != null && i < payload.obstacleTags.Length && !string.IsNullOrEmpty(payload.obstacleTags[i])
                     ? payload.obstacleTags[i]
                     : "wall";
-                cell.SetObstacleVisual(tag);
+                float yaw = payload.obstacleWallYaws != null && i < payload.obstacleWallYaws.Length ? payload.obstacleWallYaws[i] : 0f;
+                cell.SetObstacleVisual(tag, yaw);
+                if (tag == "wall" || tag == "damaged_wall")
+                    _obstacleWallYawByCell[(col, row)] = yaw;
             }
         }
     }
@@ -2067,8 +2072,9 @@ public class GameSession : MonoBehaviour
                     HexCell fullCell = grid.GetCell(col, row);
                     if (fullCell != null)
                     {
+                        float yaw = _obstacleWallYawByCell.TryGetValue((col, row), out float y) ? y : 0f;
                         fullCell.SetObstacle(true);
-                        fullCell.SetObstacleVisual("wall");
+                        fullCell.SetObstacleVisual("wall", yaw);
                     }
                     break;
                 case CellObjectState.Damaged:
@@ -2076,8 +2082,9 @@ public class GameSession : MonoBehaviour
                     HexCell damagedCell = grid.GetCell(col, row);
                     if (damagedCell != null)
                     {
+                        float yaw = _obstacleWallYawByCell.TryGetValue((col, row), out float yd) ? yd : 0f;
                         damagedCell.SetObstacle(true);
-                        damagedCell.SetObstacleVisual("damaged_wall");
+                        damagedCell.SetObstacleVisual("damaged_wall", yaw);
                     }
                     break;
             }
@@ -2087,6 +2094,7 @@ public class GameSession : MonoBehaviour
     private void RemoveObstacleAtCell(HexGrid grid, int col, int row)
     {
         _obstacleCells.Remove((col, row));
+        _obstacleWallYawByCell.Remove((col, row));
         HexCell cell = grid.GetCell(col, row);
         if (cell != null)
         {

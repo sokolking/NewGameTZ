@@ -119,7 +119,7 @@ public class HexCell : MonoBehaviour
     public bool IsObstacle => _isObstacle;
 
     /// <summary>Модель препятствия с сервера (Resources/Obstacles/{wall|damaged_wall|tree|rock}_visual).</summary>
-    public void SetObstacleVisual(string tag)
+    public void SetObstacleVisual(string tag, float yawDegrees = 0f)
     {
         ClearObstacleVisual();
         if (string.IsNullOrWhiteSpace(tag))
@@ -141,6 +141,14 @@ public class HexCell : MonoBehaviour
             r.enabled = true;
 
         go.transform.localPosition = new Vector3(0f, 0.02f, 0f);
+
+        if (t == "wall" || t == "damaged_wall")
+        {
+            Quaternion bakedRot = go.transform.localRotation;
+            float gridYaw = transform.parent != null ? transform.parent.eulerAngles.y : 0f;
+            float localYaw = yawDegrees - gridYaw;
+            go.transform.localRotation = Quaternion.AngleAxis(localYaw, Vector3.up) * bakedRot;
+        }
 
         _obstacleModelInstance = go;
     }

@@ -98,6 +98,7 @@ public partial class BattleRoom
         var obstacleCols = sortedKeys.Select(k => k.col).ToArray();
         var obstacleRows = sortedKeys.Select(k => k.row).ToArray();
         var obstacleTags = sortedKeys.Select(k => _obstacleTags[k]).ToArray();
+        var obstacleWallYaws = sortedKeys.Select(k => _wallYawDegrees.TryGetValue(k, out var y) ? y : 0f).ToArray();
         var mapStateStart = new List<CellObject>();
         foreach (var kv in _obstacleTags.OrderBy(k => k.Key.col).ThenBy(k => k.Key.row))
         {
@@ -134,6 +135,7 @@ public partial class BattleRoom
             ObstacleCols = obstacleCols,
             ObstacleRows = obstacleRows,
             ObstacleTags = obstacleTags,
+            ObstacleWallYaws = obstacleWallYaws,
             MapState = mapStateStart.Count > 0 ? mapStateStart.ToArray() : System.Array.Empty<CellObject>()
         };
     }

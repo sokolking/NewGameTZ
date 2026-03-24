@@ -100,6 +100,7 @@ public partial class BattleRoom
     /// <summary>Тег препятствия на клетке: wall | damaged_wall | tree | rock.</summary>
     private readonly Dictionary<(int col, int row), string> _obstacleTags = new();
     private readonly Dictionary<(int col, int row), int> _wallHpRemaining = new();
+    private readonly Dictionary<(int col, int row), float> _wallYawDegrees = new();
     private readonly List<(int col, int row)> _hexLineBuffer = new();
     /// <summary>Линия к изначально выбранной цели до LOS-редиректа — для дерева/камня на пути (редирекнутый буфер теряет клетки за первым врагом).</summary>
     private readonly List<(int col, int row)> _coverLineBuffer = new();

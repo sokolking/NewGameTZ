@@ -142,6 +142,21 @@ public static class HexSpawn
         worldZ = s * 1.5 * r;
     }
 
+    /// <summary>
+    /// Горизонтальный yaw (градусы, вокруг Y) для стены между соседними гексами:
+    /// ось стены идёт вдоль общего ребра (перпендикуляр к вектору центр→центр).
+    /// </summary>
+    public static float ComputeYawAlongEdgeDegrees(int col0, int row0, int col1, int row1, float hexSize)
+    {
+        OffsetToWorldFlatTop(col0, row0, hexSize, out double ax, out double az);
+        OffsetToWorldFlatTop(col1, row1, hexSize, out double bx, out double bz);
+        double dx = bx - ax;
+        double dz = bz - az;
+        if (Math.Abs(dx) < 1e-9 && Math.Abs(dz) < 1e-9)
+            return 0f;
+        return (float)(Math.Atan2(-dz, dx) * (180.0 / Math.PI));
+    }
+
     private static void CubeRoundFromFloat(double fx, double fy, double fz, out int x, out int y, out int z)
     {
         int qi = (int)Math.Round(fx, MidpointRounding.AwayFromZero);

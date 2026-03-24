@@ -38,6 +38,7 @@ public partial class BattleRoom
         {
             _obstacleTags.Remove(wc);
             _wallHpRemaining.Remove(wc);
+            _wallYawDegrees.Remove(wc);
             mapUpdates.Add(new MapUpdateDto { Tick = tick, Col = wc.col, Row = wc.row, NewState = CellObjectState.None });
             return;
         }
