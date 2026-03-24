@@ -20,9 +20,9 @@ public sealed class CharacterNameplateView : MonoBehaviour
     [SerializeField] private RectTransform _hpFillRect;
     [Tooltip("Смещение от точки следования (мировые координаты). Компонента Z переопределяется режимом камеры (планирование / просмотр).")]
     [SerializeField] private Vector3 _worldOffset = new Vector3(0f, 2.1f, 0f);
-    [Tooltip("World offset Z в режиме планирования (вид сверху).")]
+    [Tooltip("World offset Z в Top-Down View (вид сверху).")]
     [SerializeField] private float _planningWorldOffsetZ = 1f;
-    [Tooltip("World offset Z в режиме просмотра (3-е лицо).")]
+    [Tooltip("World offset Z в Thirf-Person View (3-е лицо).")]
     [SerializeField] private float _viewWorldOffsetZ = 0f;
     [SerializeField] private bool _faceCamera = true;
     [Tooltip("Поворот вокруг локальной Y после выравнивания с плоскостью экрана. 180° убирает зеркальный TMP на world-space canvas.")]

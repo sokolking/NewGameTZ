@@ -147,7 +147,7 @@ public class GamePhaseViewController : MonoBehaviour
     private void SyncModeLabel()
     {
         bool view = HexGridCamera.ThirdPersonFollowActive;
-        string text = view ? "Режим просмотра" : "Режим планирования";
+        string text = view ? "Thirf-Person View" : "Top-Down View";
         if (_modeLabel != null)
             _modeLabel.text = text;
         else if (_legacyModeLabel != null)
