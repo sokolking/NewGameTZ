@@ -4,16 +4,16 @@ using UnityEngine;
 /// <summary>
 /// Подсвечивает достижимые за текущие ОД гексы.
 /// Серые — все клетки в радиусе оставшихся ОД.
-/// Красные — предпоследний и последний шаг при максимальных ОД (если достижимы). Альфа 10%.
+/// Красные — предпоследний и последний шаг при максимальных ОД (если достижимы). Подсветка непрозрачная (только цвет).
 /// </summary>
 public class MovementRangeHighlighter : MonoBehaviour
 {
     [SerializeField] private HexGrid _grid;
     [SerializeField] private Player _player;
-    [Tooltip("Близкие клетки — светло-серый. Альфа 10%.")]
-    [SerializeField] private Color _nearColor = new Color(0.92f, 0.92f, 0.92f, 0.1f);
-    [Tooltip("Дальние клетки — красный. Альфа 10%.")]
-    [SerializeField] private Color _farColor = new Color(1f, 0f, 0f, 0.1f);
+    [Tooltip("Близкие клетки — светло-серый (непрозрачная заливка поверх полупрозрачной сетки).")]
+    [SerializeField] private Color _nearColor = new Color(0.92f, 0.92f, 0.92f, 1f);
+    [Tooltip("Дальние клетки — красный, кольцо штрафа (непрозрачно).")]
+    [SerializeField] private Color _farColor = new Color(1f, 0f, 0f, 1f);
 
     private int _lastCol = int.MinValue;
     private int _lastRow = int.MinValue;
@@ -24,6 +24,26 @@ public class MovementRangeHighlighter : MonoBehaviour
     private HexCell[] _cachedAllCells;
     private readonly HashSet<(int col, int row)> _visitedBfs = new();
     private readonly Queue<(int col, int row, int dist)> _queueBfs = new();
+
+    private void OnValidate()
+    {
+#if UNITY_EDITOR
+        TryRefreshMaskAfterInspectorChange();
+#endif
+    }
+
+#if UNITY_EDITOR
+    /// <summary>В Play Mode сразу перерисовать маску после изменения ползунка/цветов в инспекторе.</summary>
+    private void TryRefreshMaskAfterInspectorChange()
+    {
+        if (!Application.isPlaying || !enabled || _grid == null || _player == null) return;
+        if (_player.IsDead || _player.IsHidden) return;
+        if (GameplayMapInputBlock.IsBlocked
+            || (GameSession.Active != null && GameSession.Active.BlockPlayerInput)) return;
+        if (_player.IsMoving) return;
+        RebuildMask();
+    }
+#endif
 
     private void Update()
     {
@@ -159,7 +179,7 @@ public class MovementRangeHighlighter : MonoBehaviour
                 bool isPenaltyRing = reachableNow && _player.IsPenaltyHexAtDistance(dist);
 
                 Color c = isPenaltyRing ? _farColor : _nearColor;
-                c.a = 0.1f;
+                c.a = 1f;
                 cell.SetApMask(true, c);
             }
 

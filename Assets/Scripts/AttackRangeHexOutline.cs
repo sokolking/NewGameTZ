@@ -13,6 +13,8 @@ public sealed class AttackRangeHexOutline : MonoBehaviour
     [SerializeField] private HexGrid _grid;
     [SerializeField] private float _yOffset = 0.01f;
     [SerializeField] private Color _lineColor = new Color(0.94f, 0.42f, 0.30f, 0.95f);
+    [Tooltip("Полуширина контура в мировых единицах (линия — полоса из двух треугольников). Раньше был 1px; по умолчанию ~в 2 раза толще условных 0.01.")]
+    [SerializeField] private float _lineHalfWidthWorld = 0.02f;
     [SerializeField] private int _defaultWeaponRangeHexes = 1;
 
     private readonly HashSet<(int c, int r)> _insideScratch = new();
@@ -24,13 +26,14 @@ public sealed class AttackRangeHexOutline : MonoBehaviour
     private Mesh _lineMesh;
     private MeshFilter _meshFilter;
     private MeshRenderer _meshRenderer;
-    private readonly List<Vector3> _meshVertices = new List<Vector3>(MaxEdgeSegments * 2);
-    private int[] _lineIndices;
+    private readonly List<Vector3> _meshVertices = new List<Vector3>(MaxEdgeSegments * 4);
+    private readonly List<int> _meshTriangleIndices = new List<int>(MaxEdgeSegments * 6);
 
     private bool _visible;
     private int _lastCenterCol = int.MinValue;
     private int _lastCenterRow = int.MinValue;
     private int _lastRangeHexes = int.MinValue;
+    private float _lastLineHalfWidthWorld = float.NaN;
 
     private void Awake()
     {
@@ -54,11 +57,6 @@ public sealed class AttackRangeHexOutline : MonoBehaviour
         _meshRenderer.reflectionProbeUsage = ReflectionProbeUsage.Off;
         _meshRenderer.motionVectorGenerationMode = MotionVectorGenerationMode.ForceNoMotion;
         _meshRenderer.enabled = false;
-
-        int maxIdx = MaxEdgeSegments * 2;
-        _lineIndices = new int[maxIdx];
-        for (int i = 0; i < maxIdx; i++)
-            _lineIndices[i] = i;
     }
 
     /// <summary>Радиус в шагах гекса (max hex distance от центра включительно).</summary>
@@ -76,7 +74,8 @@ public sealed class AttackRangeHexOutline : MonoBehaviour
 
         if (centerCol == _lastCenterCol
             && centerRow == _lastCenterRow
-            && r == _lastRangeHexes)
+            && r == _lastRangeHexes
+            && Mathf.Approximately(_lastLineHalfWidthWorld, _lineHalfWidthWorld))
         {
             // Кэш валиден — просто включаем renderer если был скрыт.
             if (!_visible && _meshRenderer != null)
@@ -88,6 +87,7 @@ public sealed class AttackRangeHexOutline : MonoBehaviour
         _lastCenterCol = centerCol;
         _lastCenterRow = centerRow;
         _lastRangeHexes = r;
+        _lastLineHalfWidthWorld = _lineHalfWidthWorld;
 
         // Обход по кубическим координатам в радиусе r вместо перебора всей сетки (O(r²) vs O(W×H)).
         _insideScratch.Clear();
@@ -137,20 +137,54 @@ public sealed class AttackRangeHexOutline : MonoBehaviour
             return;
         }
 
-        // Вершины в локальном пространстве mesh-объекта (дочерний к grid).
+        // Полосы в плоскости XZ: каждый отрезок — квад из двух треугольников (толщина = 2 * halfWidth).
         _meshVertices.Clear();
+        _meshTriangleIndices.Clear();
         Transform meshTransform = _meshFilter.transform;
+        float hw = Mathf.Max(0.0001f, _lineHalfWidthWorld);
+
         for (int i = 0; i < segCount; i++)
         {
             var s = _segmentsScratch[i];
-            _meshVertices.Add(meshTransform.InverseTransformPoint(s.a));
-            _meshVertices.Add(meshTransform.InverseTransformPoint(s.b));
+            Vector3 a = s.a;
+            Vector3 b = s.b;
+            Vector3 ab = b - a;
+            ab.y = 0f;
+            float len = ab.magnitude;
+            if (len < 1e-7f)
+                continue;
+            ab /= len;
+            Vector3 perp = new Vector3(-ab.z, 0f, ab.x) * hw;
+            Vector3 a0 = a + perp;
+            Vector3 a1 = a - perp;
+            Vector3 b0 = b + perp;
+            Vector3 b1 = b - perp;
+
+            int baseIdx = _meshVertices.Count;
+            _meshVertices.Add(meshTransform.InverseTransformPoint(a0));
+            _meshVertices.Add(meshTransform.InverseTransformPoint(a1));
+            _meshVertices.Add(meshTransform.InverseTransformPoint(b0));
+            _meshVertices.Add(meshTransform.InverseTransformPoint(b1));
+
+            _meshTriangleIndices.Add(baseIdx);
+            _meshTriangleIndices.Add(baseIdx + 2);
+            _meshTriangleIndices.Add(baseIdx + 1);
+            _meshTriangleIndices.Add(baseIdx + 1);
+            _meshTriangleIndices.Add(baseIdx + 2);
+            _meshTriangleIndices.Add(baseIdx + 3);
         }
 
-        int vc = _meshVertices.Count;
+        if (_meshVertices.Count == 0 || _meshTriangleIndices.Count == 0)
+        {
+            _lineMesh.Clear();
+            _meshRenderer.enabled = false;
+            _visible = false;
+            return;
+        }
+
         _lineMesh.Clear();
         _lineMesh.SetVertices(_meshVertices);
-        _lineMesh.SetIndices(_lineIndices, 0, vc, MeshTopology.Lines, 0, false, 0);
+        _lineMesh.SetTriangles(_meshTriangleIndices, 0, false);
         _lineMesh.RecalculateBounds();
         _meshRenderer.enabled = true;
         _visible = true;
@@ -191,6 +225,7 @@ public sealed class AttackRangeHexOutline : MonoBehaviour
         _lastCenterCol = int.MinValue;
         _lastCenterRow = int.MinValue;
         _lastRangeHexes = int.MinValue;
+        _lastLineHalfWidthWorld = float.NaN;
     }
 
     public bool IsVisible => _visible;

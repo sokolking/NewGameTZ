@@ -94,7 +94,7 @@ public class BattleServerConnection : MonoBehaviour
             yield break;
         }
 
-        var response = JsonUtility.FromJson<JoinResponse>(responseText);
+        var response = ParseJoinResponse(responseText);
         _battleId = response.battleId;
         _playerId = response.playerId;
 
@@ -116,6 +116,34 @@ public class BattleServerConnection : MonoBehaviour
         _joining = false;
     }
 
+    private static JoinResponse ParseJoinResponse(string responseText)
+    {
+        if (string.IsNullOrEmpty(responseText)) return null;
+        try
+        {
+            return JsonConvert.DeserializeObject<JoinResponse>(responseText);
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning("[BattleServerConnection] Join JSON Newtonsoft failed: " + ex.Message + "; JsonUtility fallback");
+            return JsonUtility.FromJson<JoinResponse>(responseText);
+        }
+    }
+
+    private static PollResponse ParsePollResponse(string body)
+    {
+        if (string.IsNullOrEmpty(body)) return null;
+        try
+        {
+            return JsonConvert.DeserializeObject<PollResponse>(body);
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning("[BattleServerConnection] Poll JSON Newtonsoft failed: " + ex.Message + "; JsonUtility fallback");
+            return JsonUtility.FromJson<PollResponse>(body);
+        }
+    }
+
     private static readonly WaitForSeconds _pollWait = new WaitForSeconds(0.5f);
     private IEnumerator PollUntilBattleStartedCoroutine()
     {
@@ -131,7 +159,7 @@ public class BattleServerConnection : MonoBehaviour
                 continue;
             if (status < 200 || status >= 300 || string.IsNullOrEmpty(body))
                 continue;
-            var poll = JsonUtility.FromJson<PollResponse>(body);
+            var poll = ParsePollResponse(body);
             if (poll.status == "battle" && poll.battleStarted != null)
             {
                 _inBattle = true;

@@ -224,6 +224,9 @@ public class BattleStartedPayload
     public string[] obstacleTags;
     /// <summary>Градусы Y для стен.</summary>
     public float[] obstacleWallYaws;
+    /// <summary>Смещение модели стены от центра гекса к ребру (world XZ), параллельно obstacleCols/Rows.</summary>
+    public float[] obstacleWallOffsetX;
+    public float[] obstacleWallOffsetZ;
 }
 
 /// <summary>POST /api/battle/.../equip-weapon (клиент).</summary>

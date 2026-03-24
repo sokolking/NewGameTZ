@@ -1,4 +1,6 @@
+using System;
 using System.Collections;
+using Newtonsoft.Json;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 using UnityEngine.UI;
@@ -80,7 +82,7 @@ public class MainMenuMatchmaking : MonoBehaviour
         }
 
         {
-            var response = JsonUtility.FromJson<JoinResponse>(responseText);
+            var response = ParseJoinResponse(responseText);
             string battleId = response.battleId;
             string playerId = response.playerId;
 
@@ -177,7 +179,7 @@ public class MainMenuMatchmaking : MonoBehaviour
             if (status < 200 || status >= 300 || string.IsNullOrEmpty(body))
                 continue;
 
-            var poll = JsonUtility.FromJson<PollResponse>(body);
+            var poll = ParsePollResponse(body);
             if (poll.status == "battle" && poll.battleStarted != null)
             {
                 BattleSessionState.SetAuthCredentials(_username, _password);
@@ -220,6 +222,34 @@ public class MainMenuMatchmaking : MonoBehaviour
     private class ErrorResponse
     {
         public string error;
+    }
+
+    private static JoinResponse ParseJoinResponse(string responseText)
+    {
+        if (string.IsNullOrEmpty(responseText)) return null;
+        try
+        {
+            return JsonConvert.DeserializeObject<JoinResponse>(responseText);
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning("[MainMenuMatchmaking] Join JSON Newtonsoft failed: " + ex.Message + "; JsonUtility fallback");
+            return JsonUtility.FromJson<JoinResponse>(responseText);
+        }
+    }
+
+    private static PollResponse ParsePollResponse(string body)
+    {
+        if (string.IsNullOrEmpty(body)) return null;
+        try
+        {
+            return JsonConvert.DeserializeObject<PollResponse>(body);
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning("[MainMenuMatchmaking] Poll JSON Newtonsoft failed: " + ex.Message + "; JsonUtility fallback");
+            return JsonUtility.FromJson<PollResponse>(body);
+        }
     }
 
     private static string ExtractRequestErrorFromBody(string responseText, string fallback)

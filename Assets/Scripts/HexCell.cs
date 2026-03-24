@@ -16,7 +16,7 @@ public class HexCell : MonoBehaviour
     [SerializeField] private string _colLabel;
     [SerializeField] private string _rowLabel;
 
-    private Color _defaultColor = new Color(0.4f, 0.6f, 0.9f);
+    private Color _defaultColor = new Color(0.4f, 0.6f, 0.9f, 0.15f);
     private MaterialPropertyBlock _block;
     private MeshRenderer _renderer;
 
@@ -128,7 +128,9 @@ public class HexCell : MonoBehaviour
     public bool IsObstacle => _isObstacle;
 
     /// <summary>Модель препятствия с сервера (Resources/Obstacles/{wall|damaged_wall|tree|rock}_visual).</summary>
-    public void SetObstacleVisual(string tag, float yawDegrees)
+    /// <param name="offsetX">Смещение от центра гекса к ребру (world X = local X, т.к. ячейки без поворота).</param>
+    /// <param name="offsetZ">Смещение от центра гекса к ребру (world Z = local Z).</param>
+    public void SetObstacleVisual(string tag, float yawDegrees, float offsetX = 0f, float offsetZ = 0f)
     {
         ClearObstacleVisual();
         if (string.IsNullOrWhiteSpace(tag))
@@ -146,21 +148,23 @@ public class HexCell : MonoBehaviour
         }
 
         GameObject go = Instantiate(prefab, transform);
-        go.transform.localPosition = new Vector3(0f, 0.02f, 0f);
+        go.transform.localPosition = new Vector3(offsetX, 0.02f, offsetZ);
 
         foreach (Renderer r in go.GetComponentsInChildren<Renderer>(true))
         {
             r.enabled = true;
         }
 
-        // Префабы стен задают ориентацию меша (часто −90° по X); yaw с сервера — вокруг нормали гекса, без затирания корня.
+        // Префабы стен задают локальный поворот меша; yaw с сервера — в мировых градусах вокруг Y (как HexSpawn.ComputeYawAlongEdgeDegrees).
+        // Нужно: world = Ry(yaw) * (parent.rotation * bakedLocal). Иначе AngleAxis в localRotation даёт одинаковый вид при разных yaw.
         switch (t)
         {
             case "wall":
             case "damaged_wall":
                 {
-                    Quaternion bakedRot = go.transform.localRotation;
-                    go.transform.localRotation = Quaternion.AngleAxis(yawDegrees, transform.up) * bakedRot;
+                    Quaternion bakedLocal = go.transform.localRotation;
+                    Quaternion worldBaked = transform.rotation * bakedLocal;
+                    go.transform.rotation = Quaternion.AngleAxis(yawDegrees, Vector3.up) * worldBaked;
                     break;
                 }
         }
@@ -232,13 +236,32 @@ public class HexCell : MonoBehaviour
 
     private void ApplyCurrentColor()
     {
-        Color color = _isObstacle ? ObstacleColor : _defaultColor;
-        if (_movementFlag && !_isObstacle)
-            color = Color.Lerp(color, MovementFlagTint, 0.5f);
-        if (_apMaskActive) color = _apMaskColor;
+        float gridAlpha = _defaultColor.a;
+
+        Color color;
+        if (_isObstacle)
+        {
+            // Как у обычной клетки «вне движения»: та же альфа сетки (HexGrid), тёмно-серый оттенок препятствия.
+            color = new Color(ObstacleColor.r, ObstacleColor.g, ObstacleColor.b, gridAlpha);
+        }
+        else
+        {
+            color = _defaultColor;
+            if (_movementFlag)
+                color = Color.Lerp(color, MovementFlagTint, 0.5f);
+            if (_apMaskActive)
+                color = _apMaskColor;
+        }
+
         // В 3-м лице луч из фиксированной точки экрана «бьёт» в один гекс — ложный hover (серый).
         if (_hovered && !HexGridCamera.ThirdPersonFollowActive)
-            color = HoverColor;
+        {
+            if (_isObstacle)
+                color = new Color(HoverColor.r, HoverColor.g, HoverColor.b, gridAlpha);
+            else
+                color = HoverColor;
+        }
+
         ApplyColor(color);
     }
 

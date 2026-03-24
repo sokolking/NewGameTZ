@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.Rendering;
 
 /// <summary>
 /// Карта из гексов: каждый гекс — отдельный дочерний объект. Flat-top, odd-r (Red Blob).
@@ -31,7 +32,11 @@ public class HexGrid : MonoBehaviour
 
     [Header("Внешний вид")]
     [SerializeField] private Material _hexMaterial;
-    [SerializeField] private Color _hexColor = new Color(0.4f, 0.6f, 0.9f);
+    [Tooltip("Цвет заливки (RGB). Непрозрачность задаётся ползунком «Прозрачность».")]
+    [SerializeField] private Color _hexColor = new Color(0.4f, 0.6f, 0.9f, 1f);
+    [SerializeField, Range(0f, 100f)]
+    [Tooltip("Прозрачность заливки гекса, %. 100 — максимум прозрачности (α→0), 0 — непрозрачно. ~85% ≈ α 0.15 у заливки.")]
+    private float _hexTransparencyPercent = 85f;
 
     public int Width => _width;
     public int Length => _length;
@@ -42,6 +47,38 @@ public class HexGrid : MonoBehaviour
     /// <summary>Радиус визуального шестиугольника (как у меша <see cref="Hexagon"/>), для контуров дальности.</summary>
     public float HexVisualRadius =>
         Mathf.Max(MinVisualRadius, HexSize - Mathf.Max(0f, _edgeInset) * EdgeInsetToRadiusFactor);
+
+    private void Awake()
+    {
+        ApplyHexTransparencyToColor();
+        PropagateHexFillColorToCells();
+    }
+
+    private void OnValidate()
+    {
+        ApplyHexTransparencyToColor();
+        PropagateHexFillColorToCells();
+    }
+
+    /// <summary>Связывает ползунок «Прозрачность %» с альфой <see cref="_hexColor"/> (в т.ч. в билде, где OnValidate не вызывается).</summary>
+    private void ApplyHexTransparencyToColor()
+    {
+        _hexTransparencyPercent = Mathf.Clamp(_hexTransparencyPercent, 0f, 100f);
+        float opacity = Mathf.Clamp01(1f - _hexTransparencyPercent * 0.01f);
+        _hexColor = new Color(_hexColor.r, _hexColor.g, _hexColor.b, opacity);
+    }
+
+    /// <summary>Обновляет базовый цвет у уже созданных гексов (иначе меняется только serialized <see cref="_hexColor"/>, а не PropertyBlock на ячейках).</summary>
+    private void PropagateHexFillColorToCells()
+    {
+        HexCell[] cells = GetComponentsInChildren<HexCell>(true);
+        if (cells == null || cells.Length == 0) return;
+        for (int i = 0; i < cells.Length; i++)
+        {
+            if (cells[i] != null)
+                cells[i].SetDefaultColor(_hexColor);
+        }
+    }
 
     private void Start()
     {
@@ -54,11 +91,16 @@ public class HexGrid : MonoBehaviour
     public void GenerateGrid()
     {
         ClearGrid();
+        ApplyHexTransparencyToColor();
 
-        Material mat = _hexMaterial != null ? _hexMaterial : CreateDefaultMaterial();
-        // Включаем GPU Instancing на материале — все гексы с одним мешом рисуются за 1-2 draw call.
+        // Отдельный экземпляр материала: не затираем shared-ассет и не смешиваем альфу с PropertyBlock.
+        Material mat = _hexMaterial != null ? new Material(_hexMaterial) : CreateDefaultMaterial();
         if (mat != null)
+        {
+            ConfigureHexMaterialTransparency(mat);
+            ApplyNeutralHexMaterialBase(mat);
             mat.enableInstancing = true;
+        }
 
         float size = Mathf.Max(MinHexSize, _hexSize);
         float inset = Mathf.Max(0f, _edgeInset);
@@ -77,18 +119,14 @@ public class HexGrid : MonoBehaviour
 
         _worldPosCacheDirty = false;
         _boundsCacheDirty = true;
-
-        // Static Batching: объединяет все статичные меши в один VBO — драматически снижает draw calls.
-        if (Application.isPlaying)
-            StaticBatchingUtility.Combine(gameObject);
     }
 
     private void CreateHexCell(int col, int row, float size, float visualRadius, Material mat)
     {
         GameObject go = new GameObject($"Hex_{col}_{row}");
         go.transform.SetParent(transform);
-        // Static Batching работает только с isStatic = true.
-        go.isStatic = true;
+        // PropertyBlock + прозрачность: гексы не в static batch (иначе цвета/альфа ломаются).
+        go.isStatic = false;
 
         HexCube cube = HexCubeOffset.FromOffset(col, row);
         HexCubeOffset.CubeToWorldFlatTop(cube, size, out float wx, out float wz);
@@ -135,11 +173,49 @@ public class HexGrid : MonoBehaviour
         Material mat = new Material(shader != null ? shader : Shader.Find("VertexLit"));
         if (mat.shader == null)
             return mat;
-        if (mat.HasProperty("_BaseColor"))
-            mat.SetColor("_BaseColor", _hexColor);
-        else if (mat.HasProperty("_Color"))
-            mat.SetColor("_Color", _hexColor);
+        ConfigureHexMaterialTransparency(mat);
+        ApplyNeutralHexMaterialBase(mat);
         return mat;
+    }
+
+    /// <summary>
+    /// URP Lit в режиме Opaque не смешивает альфу с фоном — заливка с α &lt; 1 выглядит как непрозрачная или «ломается».
+    /// Прозрачный surface + alpha blend нужны, пока сетка рисуется с полупрозрачным <see cref="_hexColor"/>.
+    /// Если материал в ассете уже Transparent, вызов лишь закрепляет те же настройки.
+    /// </summary>
+    private static void ConfigureHexMaterialTransparency(Material mat)
+    {
+        if (mat == null) return;
+
+        if (mat.HasProperty("_Surface"))
+        {
+            mat.SetFloat("_Surface", 1f);
+            mat.SetFloat("_Blend", 0f);
+            mat.SetFloat("_AlphaClip", 0f);
+            mat.EnableKeyword("_SURFACE_TYPE_TRANSPARENT");
+            mat.DisableKeyword("_SURFACE_TYPE_OPAQUE");
+        }
+
+        if (mat.HasProperty("_ZWrite"))
+            mat.SetFloat("_ZWrite", 0f);
+        if (mat.HasProperty("_SrcBlend"))
+            mat.SetInt("_SrcBlend", (int)BlendMode.SrcAlpha);
+        if (mat.HasProperty("_DstBlend"))
+            mat.SetInt("_DstBlend", (int)BlendMode.OneMinusSrcAlpha);
+
+        mat.renderQueue = (int)RenderQueue.Transparent;
+        mat.SetOverrideTag("RenderType", "Transparent");
+    }
+
+    /// <summary>Нейтральная база на материале; реальный цвет задаёт <see cref="HexCell"/> через PropertyBlock.</summary>
+    private static void ApplyNeutralHexMaterialBase(Material mat)
+    {
+        if (mat == null) return;
+        Color white = Color.white;
+        if (mat.HasProperty("_BaseColor"))
+            mat.SetColor("_BaseColor", white);
+        if (mat.HasProperty("_Color"))
+            mat.SetColor("_Color", white);
     }
 
     [ContextMenu("Очистить сетку")]
