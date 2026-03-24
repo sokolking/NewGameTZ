@@ -30,15 +30,6 @@ public class HexCell : MonoBehaviour
     private GameObject _obstacleModelInstance;
 
 
-    /// <summary>Капсула игрока по умолчанию: height 2 × localScale.y 0.5 → ~1.0 по вертикали.</summary>
-    private const float PlayerCapsuleReferenceMaxExtent = 1f;
-
-    /// <summary>Камень: характерный размер ≈ половина «игрока» (см. <see cref="PlayerCapsuleReferenceMaxExtent"/>).</summary>
-    private const float RockFractionOfPlayerSize = 0.5f;
-
-    /// <summary>Кэш max(size.x,size.y,size.z) для wall_visual (масштаб как в префабе).</summary>
-    private static float? _cachedWallPrefabMaxExtent;
-
     private static GameObject _cachedPrefabWall;
     private static GameObject _cachedPrefabDamagedWall;
     private static GameObject _cachedPrefabTree;
@@ -128,9 +119,7 @@ public class HexCell : MonoBehaviour
     public bool IsObstacle => _isObstacle;
 
     /// <summary>Модель препятствия с сервера (Resources/Obstacles/{wall|damaged_wall|tree|rock}_visual).</summary>
-    /// <param name="offsetX">Смещение от центра гекса к ребру (world X = local X, т.к. ячейки без поворота).</param>
-    /// <param name="offsetZ">Смещение от центра гекса к ребру (world Z = local Z).</param>
-    public void SetObstacleVisual(string tag, float yawDegrees, float offsetX = 0f, float offsetZ = 0f)
+    public void SetObstacleVisual(string tag)
     {
         ClearObstacleVisual();
         if (string.IsNullOrWhiteSpace(tag))
@@ -148,26 +137,10 @@ public class HexCell : MonoBehaviour
         }
 
         GameObject go = Instantiate(prefab, transform);
-        go.transform.localPosition = new Vector3(offsetX, 0.02f, offsetZ);
-
         foreach (Renderer r in go.GetComponentsInChildren<Renderer>(true))
-        {
             r.enabled = true;
-        }
 
-        // Префабы стен задают локальный поворот меша; yaw с сервера — в мировых градусах вокруг Y (как HexSpawn.ComputeYawAlongEdgeDegrees).
-        // Нужно: world = Ry(yaw) * (parent.rotation * bakedLocal). Иначе AngleAxis в localRotation даёт одинаковый вид при разных yaw.
-        switch (t)
-        {
-            case "wall":
-            case "damaged_wall":
-                {
-                    Quaternion bakedLocal = go.transform.localRotation;
-                    Quaternion worldBaked = transform.rotation * bakedLocal;
-                    go.transform.rotation = Quaternion.AngleAxis(yawDegrees, Vector3.up) * worldBaked;
-                    break;
-                }
-        }
+        go.transform.localPosition = new Vector3(0f, 0.02f, 0f);
 
         _obstacleModelInstance = go;
     }
@@ -188,42 +161,6 @@ public class HexCell : MonoBehaviour
                 return null;
         }
     }
-
-    private static float GetCachedWallPrefabMaxExtent()
-    {
-        if (_cachedWallPrefabMaxExtent.HasValue)
-            return _cachedWallPrefabMaxExtent.Value;
-
-        GameObject prefab = GetCachedObstaclePrefab("wall");
-        if (prefab == null)
-        {
-            _cachedWallPrefabMaxExtent = 1f;
-            return _cachedWallPrefabMaxExtent.Value;
-        }
-
-        GameObject go = Instantiate(prefab);
-        go.transform.SetPositionAndRotation(Vector3.zero, Quaternion.identity);
-        float ext = MaxExtent(ComputeWorldBoundsSize(go));
-        UnityEngine.Object.Destroy(go);
-        _cachedWallPrefabMaxExtent = Mathf.Max(ext, 0.0001f);
-        return _cachedWallPrefabMaxExtent.Value;
-    }
-
-    private static Vector3 ComputeWorldBoundsSize(GameObject root)
-    {
-        Renderer[] renderers = root.GetComponentsInChildren<Renderer>(true);
-        if (renderers.Length == 0)
-            return Vector3.one * 0.01f;
-
-        Bounds b = renderers[0].bounds;
-        for (int i = 1; i < renderers.Length; i++)
-            b.Encapsulate(renderers[i].bounds);
-
-        return b.size;
-    }
-
-    private static float MaxExtent(Vector3 size) =>
-        Mathf.Max(size.x, size.y, size.z, 0.0001f);
 
     public void ClearObstacleVisual()
     {

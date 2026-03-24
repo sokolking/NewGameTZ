@@ -211,11 +211,6 @@ public class BattleStartedPayloadDto
     public int[]? ObstacleRows { get; set; }
     /// <summary>Теги: wall | tree | rock — параллельно obstacleCols/Rows.</summary>
     public string[]? ObstacleTags { get; set; }
-    /// <summary>Градусы поворота вокруг Y для стен; для дерева/камня можно 0.</summary>
-    public float[]? ObstacleWallYaws { get; set; }
-    /// <summary>Смещение половины стены по X в мировых единицах (параллельно obstacleCols/Rows).</summary>
-    public float[]? ObstacleWallOffsetX { get; set; }
-    public float[]? ObstacleWallOffsetZ { get; set; }
     public CellObject[]? MapState { get; set; }
 }
 

@@ -158,20 +158,6 @@ public static class HexCubeOffset
         worldZ = size * 1.5f * r;
     }
 
-    /// <summary>
-    /// Горизонтальный yaw (градусы вокруг Y) для стены вдоль общего ребра с соседним гексом (совпадает с серверным HexSpawn.ComputeYawAlongEdgeDegrees).
-    /// </summary>
-    public static float ComputeYawAlongEdgeDegrees(int col0, int row0, int col1, int row1, float hexSize)
-    {
-        CubeToWorldFlatTop(FromOffset(col0, row0), hexSize, out float ax, out float az);
-        CubeToWorldFlatTop(FromOffset(col1, row1), hexSize, out float bx, out float bz);
-        float dx = bx - ax;
-        float dz = bz - az;
-        if (Mathf.Abs(dx) < 1e-9f && Mathf.Abs(dz) < 1e-9f)
-            return 0f;
-        return Mathf.Atan2(-dz, dx) * Mathf.Rad2Deg;
-    }
-
     /// <summary>Прямая линия гексов от (col0,row0) до (col1,row1), включая концы. Дубликаты подряд убираются.</summary>
     public static void GetHexLine(int col0, int row0, int col1, int row1, List<(int col, int row)> outList)
     {

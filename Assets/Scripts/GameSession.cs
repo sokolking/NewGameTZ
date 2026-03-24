@@ -88,10 +88,6 @@ public class GameSession : MonoBehaviour
     // Ключ: идентификатор сущности в сети (для игроков — playerId, для мобов — unitId сервера).
     private readonly Dictionary<string, RemoteBattleUnitView> _remoteUnits = new();
     private readonly HashSet<(int col, int row)> _obstacleCells = new();
-    /// <summary>Yaw стены с BattleStarted — для смены wall ↔ damaged_wall по mapUpdates.</summary>
-    private readonly Dictionary<(int col, int row), float> _obstacleWallYawByCell = new();
-    /// <summary>Смещение модели стены от центра гекса к ребру — для смены wall ↔ damaged_wall по mapUpdates.</summary>
-    private readonly Dictionary<(int col, int row), (float ox, float oz)> _obstacleWallOffsetByCell = new();
     private readonly Dictionary<string, ReplayUnitSnapshot> _initialReplayState = new();
     private readonly List<string> _turnHistoryIds = new();
     private readonly Dictionary<string, TurnResultPayload> _turnHistoryCache = new();
@@ -2015,8 +2011,6 @@ public class GameSession : MonoBehaviour
     private void ApplyObstacleMap(BattleStartedPayload payload, HexGrid grid)
     {
         _obstacleCells.Clear();
-        _obstacleWallYawByCell.Clear();
-        _obstacleWallOffsetByCell.Clear();
         if (grid == null) return;
 
         foreach (HexCell cell in grid.GetComponentsInChildren<HexCell>())
@@ -2026,28 +2020,6 @@ public class GameSession : MonoBehaviour
             return;
         if (payload.obstacleCols.Length != payload.obstacleRows.Length)
             return;
-
-        bool yawArrayMissing = payload.obstacleWallYaws == null
-            || payload.obstacleWallYaws.Length != payload.obstacleCols.Length;
-        bool offsetArrayMissing = payload.obstacleWallOffsetX == null
-            || payload.obstacleWallOffsetX.Length != payload.obstacleCols.Length
-            || payload.obstacleWallOffsetZ == null
-            || payload.obstacleWallOffsetZ.Length != payload.obstacleCols.Length;
-
-        var wallCells = new HashSet<(int col, int row)>();
-        for (int j = 0; j < payload.obstacleCols.Length; j++)
-        {
-            int c = payload.obstacleCols[j];
-            int r = payload.obstacleRows[j];
-            if (!grid.IsInBounds(c, r)) continue;
-            string t = payload.obstacleTags != null && j < payload.obstacleTags.Length && !string.IsNullOrEmpty(payload.obstacleTags[j])
-                ? payload.obstacleTags[j]
-                : "wall";
-            if (t == "wall" || t == "damaged_wall")
-                wallCells.Add((c, r));
-        }
-
-        float hexSize = grid.HexSize;
 
         for (int i = 0; i < payload.obstacleCols.Length; i++)
         {
@@ -2062,53 +2034,9 @@ public class GameSession : MonoBehaviour
                 string tag = payload.obstacleTags != null && i < payload.obstacleTags.Length && !string.IsNullOrEmpty(payload.obstacleTags[i])
                     ? payload.obstacleTags[i]
                     : "wall";
-                float yaw = yawArrayMissing ? 0f : payload.obstacleWallYaws[i];
-                if (tag == "wall" || tag == "damaged_wall")
-                {
-                    float computed = TryComputeWallYawFromNeighbors(grid, col, row, wallCells, hexSize);
-                    if (yawArrayMissing)
-                        yaw = computed;
-                    else if (Mathf.Abs(yaw) < 1e-3f && Mathf.Abs(computed) > 1e-3f)
-                        yaw = computed;
-                }
-
-                float ox = offsetArrayMissing ? 0f : payload.obstacleWallOffsetX[i];
-                float oz = offsetArrayMissing ? 0f : payload.obstacleWallOffsetZ[i];
-                cell.SetObstacleVisual(tag, yaw, ox, oz);
-                if (tag == "wall" || tag == "damaged_wall")
-                {
-                    _obstacleWallYawByCell[(col, row)] = yaw;
-                    _obstacleWallOffsetByCell[(col, row)] = (ox, oz);
-                }
+                cell.SetObstacleVisual(tag);
             }
         }
-    }
-
-    /// <summary>Если yaw с сервера нет или 0 — ориентация вдоль ребра к соседу-стене (стабильно: лексикографически меньшая клетка-сосед).</summary>
-    private static float TryComputeWallYawFromNeighbors(HexGrid grid, int col, int row, HashSet<(int col, int row)> wallCells, float hexSize)
-    {
-        int bestNc = int.MaxValue, bestNr = int.MaxValue;
-        bool found = false;
-        for (int dir = 0; dir < 6; dir++)
-        {
-            HexGrid.GetNeighbor(col, row, dir, out int nc, out int nr);
-            if (!grid.IsInBounds(nc, nr)) continue;
-            if (!wallCells.Contains((nc, nr))) continue;
-            if (!found || nc < bestNc || (nc == bestNc && nr < bestNr))
-            {
-                found = true;
-                bestNc = nc;
-                bestNr = nr;
-            }
-        }
-
-        if (!found) return 0f;
-        // Нормализуем направление: всегда от лексикографически меньшей ячейки к большей.
-        // Без этого соседние стены вычисляют A→B и B→A (180° разницы) и смотрят в разные стороны.
-        bool neighborIsSmaller = bestNc < col || (bestNc == col && bestNr < row);
-        return neighborIsSmaller
-            ? HexCubeOffset.ComputeYawAlongEdgeDegrees(bestNc, bestNr, col, row, hexSize)
-            : HexCubeOffset.ComputeYawAlongEdgeDegrees(col, row, bestNc, bestNr, hexSize);
     }
 
     /// <summary>Применить смену состояния стен с сервера (Full/Damaged/None). Если <paramref name="onlyTick"/> задан — только события этого тика (синхрон с журналом действий).</summary>
@@ -2139,10 +2067,8 @@ public class GameSession : MonoBehaviour
                     HexCell fullCell = grid.GetCell(col, row);
                     if (fullCell != null)
                     {
-                        float yaw = _obstacleWallYawByCell.TryGetValue((col, row), out float y) ? y : 0f;
-                        var (fox, foz) = _obstacleWallOffsetByCell.TryGetValue((col, row), out var fo) ? fo : (0f, 0f);
                         fullCell.SetObstacle(true);
-                        fullCell.SetObstacleVisual("wall", yaw, fox, foz);
+                        fullCell.SetObstacleVisual("wall");
                     }
                     break;
                 case CellObjectState.Damaged:
@@ -2150,10 +2076,8 @@ public class GameSession : MonoBehaviour
                     HexCell damagedCell = grid.GetCell(col, row);
                     if (damagedCell != null)
                     {
-                        float yaw = _obstacleWallYawByCell.TryGetValue((col, row), out float yd) ? yd : 0f;
-                        var (dox, doz) = _obstacleWallOffsetByCell.TryGetValue((col, row), out var dof) ? dof : (0f, 0f);
                         damagedCell.SetObstacle(true);
-                        damagedCell.SetObstacleVisual("damaged_wall", yaw, dox, doz);
+                        damagedCell.SetObstacleVisual("damaged_wall");
                     }
                     break;
             }
@@ -2163,8 +2087,6 @@ public class GameSession : MonoBehaviour
     private void RemoveObstacleAtCell(HexGrid grid, int col, int row)
     {
         _obstacleCells.Remove((col, row));
-        _obstacleWallYawByCell.Remove((col, row));
-        _obstacleWallOffsetByCell.Remove((col, row));
         HexCell cell = grid.GetCell(col, row);
         if (cell != null)
         {
