@@ -36,6 +36,10 @@ CREATE TABLE IF NOT EXISTS users (
     id BIGSERIAL PRIMARY KEY,
     username TEXT NOT NULL UNIQUE,
     password TEXT NOT NULL,
+    experience INT NOT NULL DEFAULT 0,
+    strength INT NOT NULL DEFAULT 10,
+    endurance INT NOT NULL DEFAULT 10,
+    accuracy INT NOT NULL DEFAULT 10,
     max_hp INT NOT NULL DEFAULT 10,
     max_ap INT NOT NULL DEFAULT 100,
     weapon_code TEXT NOT NULL DEFAULT 'fist'
@@ -72,19 +76,30 @@ CREATE INDEX IF NOT EXISTS ix_battle_turn_links_battle_id_turn_index
 ALTER TABLE users ADD COLUMN IF NOT EXISTS max_hp INT NOT NULL DEFAULT 10;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS max_ap INT NOT NULL DEFAULT 100;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS weapon_code TEXT NOT NULL DEFAULT 'fist';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS experience INT NOT NULL DEFAULT 0;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS strength INT NOT NULL DEFAULT 10;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS endurance INT NOT NULL DEFAULT 10;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS accuracy INT NOT NULL DEFAULT 10;
 
-INSERT INTO users (username, password, max_hp, max_ap, weapon_code)
+INSERT INTO users (username, password, experience, strength, endurance, accuracy, max_hp, max_ap, weapon_code)
 VALUES
-    ('test', 'test', 10, 100, 'fist'),
-    ('test2', 'test', 10, 100, 'fist')
+    ('test', 'test', 0, 10, 10, 10, 20, 20, 'fist'),
+    ('test2', 'test', 0, 10, 10, 10, 20, 20, 'fist')
 ON CONFLICT (username) DO UPDATE
 SET password = EXCLUDED.password,
+    experience = EXCLUDED.experience,
+    strength = EXCLUDED.strength,
+    endurance = EXCLUDED.endurance,
+    accuracy = EXCLUDED.accuracy,
     max_hp = EXCLUDED.max_hp,
     max_ap = EXCLUDED.max_ap,
     weapon_code = EXCLUDED.weapon_code;
 
 -- На случай уже существующих строк до смены сида:
-UPDATE users SET max_ap = 100 WHERE username IN ('test', 'test2');
+UPDATE users
+SET
+    max_hp = GREATEST(1, strength * 2),
+    max_ap = GREATEST(1, endurance * 2);
 
 -- Старые БД: таблица weapons могла быть создана без icon_key / attack_ap_cost
 ALTER TABLE weapons ADD COLUMN IF NOT EXISTS icon_key TEXT NOT NULL DEFAULT 'fist';

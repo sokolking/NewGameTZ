@@ -21,7 +21,7 @@ public partial class BattleRoom
         PlayerLevels[playerId] = Math.Max(1, level);
     }
 
-    public void SetPlayerCombatProfile(string playerId, int maxHp, int maxAp, string weaponCode, int weaponDamage, int weaponRange, int weaponAttackApCost)
+    public void SetPlayerCombatProfile(string playerId, int maxHp, int maxAp, string weaponCode, int weaponDamage, int weaponRange, int weaponAttackApCost, int accuracy)
     {
         PlayerCombatProfiles[playerId] = (
             Math.Max(1, maxHp),
@@ -29,7 +29,8 @@ public partial class BattleRoom
             string.IsNullOrWhiteSpace(weaponCode) ? DefaultWeaponCode : weaponCode,
             Math.Max(0, weaponDamage),
             Math.Max(0, weaponRange),
-            Math.Max(1, weaponAttackApCost));
+            Math.Max(1, weaponAttackApCost),
+            Math.Max(0, accuracy));
     }
 
     /// <summary>Смена оружия вне очереди хода (до отправки хода в текущем раунде). Статы берутся из БД оружия на сервере.</summary>
@@ -69,9 +70,9 @@ public partial class BattleRoom
         Units[unitId] = unit;
 
         if (PlayerCombatProfiles.TryGetValue(playerId, out var prof))
-            PlayerCombatProfiles[playerId] = (prof.Item1, prof.Item2, code, unit.WeaponDamage, unit.WeaponRange, unit.WeaponAttackApCost);
+            PlayerCombatProfiles[playerId] = (prof.Item1, prof.Item2, code, unit.WeaponDamage, unit.WeaponRange, unit.WeaponAttackApCost, prof.Item7);
         else
-            PlayerCombatProfiles[playerId] = (DefaultPlayerMaxHp, MaxAp, code, unit.WeaponDamage, unit.WeaponRange, unit.WeaponAttackApCost);
+            PlayerCombatProfiles[playerId] = (DefaultPlayerMaxHp, MaxAp, code, unit.WeaponDamage, unit.WeaponRange, unit.WeaponAttackApCost, 10);
 
         return true;
     }

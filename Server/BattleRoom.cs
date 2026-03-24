@@ -81,7 +81,7 @@ public partial class BattleRoom
 
     /// <summary>Текущее состояние каждого игрока (позиция, ОД, штраф). Обновляется после каждого раунда.</summary>
     public Dictionary<string, PlayerBattleState> CurrentState { get; } = new();
-    public Dictionary<string, (int maxHp, int maxAp, string weaponCode, int weaponDamage, int weaponRange, int weaponAttackApCost)> PlayerCombatProfiles { get; } = new();
+    public Dictionary<string, (int maxHp, int maxAp, string weaponCode, int weaponDamage, int weaponRange, int weaponAttackApCost, int accuracy)> PlayerCombatProfiles { get; } = new();
 
     /// <summary>Порядок отправки хода в текущем раунде (кто раньше отправил — выше приоритет на клетку).</summary>
     public List<string> SubmissionOrder { get; } = new();

@@ -205,6 +205,18 @@ BattleRoom.RoundClosedForPush += room =>
             Console.WriteLine($"[tzInfo] Round push error: {ex.Message}");
         }
     });
+
+    if (turn.BattleFinished && turn.Results != null)
+    {
+        foreach (var r in turn.Results)
+        {
+            if (r == null || r.UnitType != UnitType.Player || string.IsNullOrWhiteSpace(r.PlayerId))
+                continue;
+            string username = room.PlayerDisplayNames.TryGetValue(r.PlayerId, out var dn) ? dn : r.PlayerId;
+            int rewardExp = r.IsDead ? 50 : 100;
+            battleUserDb.TryAwardBattleExperience(username, rewardExp, out _);
+        }
+    }
 };
 
 // Фон: тик таймеров раундов раз в 0.2 сек
@@ -222,16 +234,14 @@ app.MapPost("/api/battle/join", (BattleRoomStore s, JoinRequest? body) =>
     string password = body?.password ?? "";
     if (!battleUserDb.ValidateCredentials(username, password))
         return Results.Json(new ErrorResponse { Error = "Invalid username or password." }, jsonOpt, statusCode: 401);
-    battleUserDb.TryGetCombatProfile(username, out int playerMaxHp, out int playerMaxAp, out string weaponCode);
+    battleUserDb.TryGetCombatProfile(username, out int playerMaxHp, out int playerMaxAp, out int accuracy, out int levelFromDb, out string weaponCode);
     if (!battleWeaponDb.TryGetWeaponByCode(weaponCode, out var weapon))
     {
         weaponCode = "fist";
         battleWeaponDb.TryGetWeaponByCode(weaponCode, out weapon);
     }
 
-    int characterLevel = 1;
-    if (body != null && body.characterLevel > 0)
-        characterLevel = Math.Min(body.characterLevel, 9999);
+    int characterLevel = levelFromDb;
 
     var resp = s.JoinOrCreate(
         startCol,
@@ -244,7 +254,8 @@ app.MapPost("/api/battle/join", (BattleRoomStore s, JoinRequest? body) =>
         weapon.Range,
         weapon.AttackApCost,
         username,
-        characterLevel);
+        characterLevel,
+        accuracy);
     return Results.Json(resp, jsonOpt);
 });
 
@@ -470,6 +481,24 @@ app.MapPost("/api/db/user/inventory", (BattleUserDatabase users, UserInventoryAu
     if (!users.TryGetInventory(body.username.Trim(), body.password ?? "", out var slots))
         return Results.Json(new { error = "Invalid credentials" }, jsonOpt, statusCode: 401);
     return Results.Json(new { slots }, jsonOpt);
+});
+
+app.MapPost("/api/db/user/profile", (BattleUserDatabase users, UserInventoryAuthRequest? body) =>
+{
+    if (body == null || string.IsNullOrWhiteSpace(body.username))
+        return Results.Json(new { error = "username required" }, jsonOpt, statusCode: 400);
+    if (!users.TryGetUserProgressProfile(body.username.Trim(), body.password ?? "", out var profile))
+        return Results.Json(new { error = "Invalid credentials" }, jsonOpt, statusCode: 401);
+    return Results.Json(profile, jsonOpt);
+});
+
+app.MapGet("/api/db/user/profile/{username}", (string username, BattleUserDatabase users) =>
+{
+    if (string.IsNullOrWhiteSpace(username))
+        return Results.Json(new { error = "username required" }, jsonOpt, statusCode: 400);
+    if (!users.TryGetUserProgressProfileByUsername(username.Trim(), out var profile))
+        return Results.Json(new { error = "User not found" }, jsonOpt, statusCode: 404);
+    return Results.Json(profile, jsonOpt);
 });
 
 app.MapGet("/api/db/weapons", (BattleWeaponDatabase db, int? take) =>

@@ -401,6 +401,10 @@ public partial class BattleRoom
                                                     pHex *= f;
                                                 }
 
+                                                pHex += Math.Max(0, unit.Accuracy) * 0.02;
+                                                if (pHex > 1)
+                                                    pHex = 1;
+
                                                 bool hitHex = _rng.NextDouble() < pHex;
                                                 if (!hitHex)
                                                 {
@@ -572,6 +576,10 @@ public partial class BattleRoom
                                         p *= f;
                                     }
 
+                                    p += Math.Max(0, unit.Accuracy) * 0.02;
+                                    if (p > 1)
+                                        p = 1;
+
                                     bool hit = _rng.NextDouble() < p;
                                     if (!hit)
                                     {
@@ -642,7 +650,7 @@ public partial class BattleRoom
                             }
 
                             if (!string.IsNullOrEmpty(pid) && PlayerCombatProfiles.TryGetValue(pid, out var prof))
-                                PlayerCombatProfiles[pid] = (prof.Item1, prof.Item2, wpn.Code, wpn.Damage, wpn.Range, Math.Max(1, wpn.AttackApCost));
+                                PlayerCombatProfiles[pid] = (prof.Item1, prof.Item2, wpn.Code, wpn.Damage, wpn.Range, Math.Max(1, wpn.AttackApCost), prof.Item7);
                             executed.Succeeded = true;
                         }
                     }

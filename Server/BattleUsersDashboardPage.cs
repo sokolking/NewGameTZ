@@ -225,11 +225,17 @@ public static class BattleUsersDashboardPage
       <label>New password <span style="font-weight:400">(leave empty to keep)</span>
         <input id="editPassword" type="password" autocomplete="new-password" />
       </label>
-      <label>maxHp
-        <input id="editMaxHp" type="number" min="1" step="1" required />
+      <label>Experience
+        <input id="editExperience" type="number" min="0" step="1" required />
       </label>
-      <label>maxAp
-        <input id="editMaxAp" type="number" min="1" step="1" required />
+      <label>Strength
+        <input id="editStrength" type="number" min="0" step="1" required />
+      </label>
+      <label>Endurance
+        <input id="editEndurance" type="number" min="0" step="1" required />
+      </label>
+      <label>Accuracy
+        <input id="editAccuracy" type="number" min="0" step="1" required />
       </label>
       <label>Weapon
         <select id="editWeapon"></select>
@@ -251,8 +257,10 @@ public static class BattleUsersDashboardPage
     const editIdEl = document.getElementById('editId');
     const editUsernameEl = document.getElementById('editUsername');
     const editPasswordEl = document.getElementById('editPassword');
-    const editMaxHpEl = document.getElementById('editMaxHp');
-    const editMaxApEl = document.getElementById('editMaxAp');
+    const editExperienceEl = document.getElementById('editExperience');
+    const editStrengthEl = document.getElementById('editStrength');
+    const editEnduranceEl = document.getElementById('editEndurance');
+    const editAccuracyEl = document.getElementById('editAccuracy');
     const editWeaponEl = document.getElementById('editWeapon');
     const editCancelBtn = document.getElementById('editCancel');
     let users = [];
@@ -287,6 +295,12 @@ public static class BattleUsersDashboardPage
             <div class="meta">
               <span>id ${user.id}</span>
               <span>password ${escapeHtml(user.password)}</span>
+              <span>exp ${user.experience}</span>
+              <span>lvl ${user.level}</span>
+              <span>str ${user.strength}</span>
+              <span>end ${user.endurance}</span>
+              <span>acc ${user.accuracy}</span>
+              <span>free ${user.availableStatPoints}</span>
               <span>maxHp ${user.maxHp}</span>
               <span>maxAp ${user.maxAp}</span>
               <span>weapon ${escapeHtml(user.weaponCode || '')}</span>
@@ -314,8 +328,10 @@ public static class BattleUsersDashboardPage
       editIdEl.value = String(user.id);
       editUsernameEl.value = user.username;
       editPasswordEl.value = '';
-      editMaxHpEl.value = user.maxHp;
-      editMaxApEl.value = user.maxAp;
+      editExperienceEl.value = user.experience;
+      editStrengthEl.value = user.strength;
+      editEnduranceEl.value = user.endurance;
+      editAccuracyEl.value = user.accuracy;
       const code = user.weaponCode || 'fist';
       const hasOpt = [...editWeaponEl.options].some(o => o.value === code);
       if (!hasOpt) {
@@ -336,8 +352,12 @@ public static class BattleUsersDashboardPage
       const payload = {
         id,
         username: editUsernameEl.value.trim(),
-        maxHp: Number(editMaxHpEl.value),
-        maxAp: Number(editMaxApEl.value),
+        experience: Number(editExperienceEl.value),
+        strength: Number(editStrengthEl.value),
+        endurance: Number(editEnduranceEl.value),
+        accuracy: Number(editAccuracyEl.value),
+        maxHp: 1,
+        maxAp: 1,
         weaponCode: editWeaponEl.value
       };
       const pw = editPasswordEl.value;

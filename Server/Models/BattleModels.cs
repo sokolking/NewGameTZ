@@ -107,6 +107,8 @@ public class UnitStateDto
     public int WeaponRange { get; set; } = 1;
     /// <summary>Стоимость атаки (ОД) из weapons.attack_ap_cost.</summary>
     public int WeaponAttackApCost { get; set; } = 1;
+    /// <summary>Меткость юнита (каждый пункт даёт +2% к шансу попадания).</summary>
+    public int Accuracy { get; set; } = 10;
     public string Posture { get; set; } = "walk";
 }
 
@@ -268,6 +270,12 @@ public class BattleUserBrowseRowDto
     public long Id { get; set; }
     public string Username { get; set; } = "";
     public string Password { get; set; } = "";
+    public int Experience { get; set; }
+    public int Level { get; set; }
+    public int Strength { get; set; }
+    public int Endurance { get; set; }
+    public int Accuracy { get; set; }
+    public int AvailableStatPoints { get; set; }
     public int MaxHp { get; set; }
     public int MaxAp { get; set; }
     public string WeaponCode { get; set; } = "fist";
@@ -279,8 +287,27 @@ public class UserUpdateRequest
     public long Id { get; set; }
     public string Username { get; set; } = "";
     public string? Password { get; set; }
+    public int Experience { get; set; }
+    public int Strength { get; set; }
+    public int Endurance { get; set; }
+    public int Accuracy { get; set; }
     public int MaxHp { get; set; }
     public int MaxAp { get; set; }
+    public string WeaponCode { get; set; } = "fist";
+}
+
+public class UserProgressProfileDto
+{
+    public string Username { get; set; } = "";
+    public int Experience { get; set; }
+    public int Level { get; set; }
+    public int Strength { get; set; }
+    public int Endurance { get; set; }
+    public int Accuracy { get; set; }
+    public int AvailableStatPoints { get; set; }
+    public int MaxHp { get; set; }
+    public int MaxAp { get; set; }
+    public int HitBonusPercent { get; set; }
     public string WeaponCode { get; set; } = "fist";
 }
 

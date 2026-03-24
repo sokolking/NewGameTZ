@@ -19,7 +19,7 @@ public partial class BattleRoom
             var unitId = playerId + "_UNIT";
             var profile = PlayerCombatProfiles.TryGetValue(playerId, out var p)
                 ? p
-                : (DefaultPlayerMaxHp, MaxAp, DefaultWeaponCode, DefaultWeaponDamage, DefaultWeaponRange, GetWeaponAttackApCostFromDb(DefaultWeaponCode));
+                : (DefaultPlayerMaxHp, MaxAp, DefaultWeaponCode, DefaultWeaponDamage, DefaultWeaponRange, GetWeaponAttackApCostFromDb(DefaultWeaponCode), 10);
             PlayerToUnitId[playerId] = unitId;
             Units[unitId] = new UnitStateDto
             {
@@ -36,6 +36,7 @@ public partial class BattleRoom
                 WeaponDamage = profile.Item4,
                 WeaponRange = profile.Item5,
                 WeaponAttackApCost = Math.Max(1, profile.Item6),
+                Accuracy = profile.Item7,
                 Posture = PostureWalk
             };
         }
