@@ -244,8 +244,7 @@ public partial class BattleRoom
 
                                     if (dist > weaponRange)
                                     {
-                                        executed.Succeeded = true;
-                                        executed.Damage = 0;
+                                        executed.FailureReason = "Attack target out of range";
                                     }
                                     else
                                     {
@@ -460,10 +459,7 @@ public partial class BattleRoom
 
                             if (dist > weaponRange)
                             {
-                                executed.Succeeded = true;
-                                executed.TargetUnitId = resolvedTargetId;
-                                executed.Damage = 0;
-                                attackTargetByUnit[uid] = resolvedTargetId;
+                                executed.FailureReason = "Attack target out of range";
                             }
                             else
                             {

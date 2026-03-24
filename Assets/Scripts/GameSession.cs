@@ -427,21 +427,14 @@ public class GameSession : MonoBehaviour
             return false;
         }
 
-        HexCubeOffset.GetHexLine(pc, pr, col, row, _hexAimLineScratch);
-        if (_hexAimLineScratch.Count < 2)
+        if (d > weaponRange)
         {
-            OnNetworkMessage?.Invoke("Выберите другой гекс");
+            OnNetworkMessage?.Invoke("Гекс вне дальности оружия");
             return false;
         }
 
-        int step = Mathf.Min(weaponRange, d, _hexAimLineScratch.Count - 1);
-        if (step < 1)
-        {
-            OnNetworkMessage?.Invoke("Выберите другой гекс");
-            return false;
-        }
-
-        (int aimCol, int aimRow) = _hexAimLineScratch[step];
+        int aimCol = col;
+        int aimRow = row;
 
         int attackCost = Mathf.Max(1, local.WeaponAttackApCost);
         int apBefore = local.CurrentAp;
@@ -639,7 +632,7 @@ public class GameSession : MonoBehaviour
     public void ApplyTurnResult(TurnResultPayload result)
     {
         if (result == null || result.results == null) return;
-        AppendServerTurnLogs(result, showDamagePopupsImmediately: false);
+        AppendServerTurnLogs(result);
         var playback = BuildExecutedActionPlayback(result);
         var animJobs = BuildTurnResultAnimationJobs(result, prepareForAnimation: true, deferLocomotionPosture: playback.Count > 0);
         if (playback.Count > 0)
@@ -662,7 +655,7 @@ public class GameSession : MonoBehaviour
         _animateResolvedRoundForPendingSubmit = true;
         if (!animateResolvedRound)
             ApplyMapUpdatesFromTurnResult(result);
-        AppendServerTurnLogs(result, showDamagePopupsImmediately: !animateResolvedRound);
+        AppendServerTurnLogs(result);
         var playback = animateResolvedRound ? BuildExecutedActionPlayback(result) : null;
         var animJobs = BuildTurnResultAnimationJobs(result, animateResolvedRound, deferLocomotionPosture: playback != null && playback.Count > 0);
         StartCoroutine(DeferredRoundAfterAnimations(animJobs, playback, nextRoundIndex, roundDeadlineUtcMs, result));
@@ -1562,7 +1555,6 @@ public class GameSession : MonoBehaviour
     {
         if (payload == null) return;
         CancelTurnReplayPlayback();
-        ClearAllDamagePopups();
         _battleId = payload.battleId ?? _battleId;
         _playerId = payload.playerId ?? _playerId;
 
@@ -1873,7 +1865,6 @@ public class GameSession : MonoBehaviour
         foreach (var remote in _remoteUnits.Values)
             remote?.ForceStopMovement();
 
-        ClearAllDamagePopups();
         _isTurnHistoryReplayPlaying = false;
     }
 
@@ -1980,7 +1971,6 @@ public class GameSession : MonoBehaviour
         if (grid == null)
             return;
 
-        ClearAllDamagePopups();
         foreach (var snapshot in _initialReplayState.Values)
         {
             if (snapshot.IsLocal)
@@ -2240,7 +2230,7 @@ public class GameSession : MonoBehaviour
         }
     }
 
-    private void AppendServerTurnLogs(TurnResultPayload result, bool showDamagePopupsImmediately)
+    private void AppendServerTurnLogs(TurnResultPayload result)
     {
         if (result == null || result.results == null)
             return;
@@ -2261,8 +2251,6 @@ public class GameSession : MonoBehaviour
                     {
                         string targetLabel = string.IsNullOrEmpty(action.targetUnitId) ? "цель" : action.targetUnitId;
                         string bodyPart = string.IsNullOrEmpty(action.bodyPart) ? "корпус" : action.bodyPart;
-                        if (showDamagePopupsImmediately)
-                            ShowDamagePopupForAction(result, action);
                         OnNetworkMessage?.Invoke($"[{action.unitId}] удар в {bodyPart}: {targetLabel} -{action.damage} HP");
                         if (action.targetDied)
                             OnNetworkMessage?.Invoke($"{targetLabel} погиб");
@@ -2281,10 +2269,10 @@ public class GameSession : MonoBehaviour
         if (target == null)
             return;
 
-        DamagePopupStack stack = target.GetComponent<DamagePopupStack>();
-        if (stack == null)
-            stack = target.gameObject.AddComponent<DamagePopupStack>();
-        stack.ShowDamage(action.damage);
+        DamagePopupQueue queue = target.GetComponent<DamagePopupQueue>();
+        if (queue == null)
+            queue = target.gameObject.AddComponent<DamagePopupQueue>();
+        queue.ShowDamage(action.damage);
     }
 
     private Transform ResolveDamagePopupTarget(TurnResultPayload result, string targetUnitId)
@@ -2312,24 +2300,6 @@ public class GameSession : MonoBehaviour
             return fallbackRemote.transform;
 
         return null;
-    }
-
-    private void ClearAllDamagePopups()
-    {
-        Player local = LocalPlayer;
-        if (local != null)
-        {
-            DamagePopupStack localStack = local.GetComponent<DamagePopupStack>();
-            localStack?.ClearAll();
-        }
-
-        foreach (var remote in _remoteUnits.Values)
-        {
-            if (remote == null)
-                continue;
-            DamagePopupStack stack = remote.GetComponent<DamagePopupStack>();
-            stack?.ClearAll();
-        }
     }
 
     private bool TryResolveAnimatedUnit(TurnResultPayload result, string unitId, out object unit, out bool isLocal)
