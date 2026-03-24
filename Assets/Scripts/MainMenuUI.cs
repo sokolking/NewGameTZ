@@ -78,14 +78,13 @@ public class MainMenuUI : MonoBehaviour
 
         if (_settingsPanel != null)
         {
-            _btnCloseSettings = _settingsPanel.transform.Find("Button_CloseSettings")?.GetComponent<Button>();
-            _btnResPrev = _settingsPanel.transform.Find("Button_ResolutionPrev")?.GetComponent<Button>();
-            _btnResNext = _settingsPanel.transform.Find("Button_ResolutionNext")?.GetComponent<Button>();
-            _btnResApply = _settingsPanel.transform.Find("Button_ResolutionApply")?.GetComponent<Button>();
+            Transform sp = _settingsPanel.transform;
+            _btnCloseSettings = FindDeepChild(sp, "Button_CloseSettings")?.GetComponent<Button>();
+            _btnResPrev = FindDeepChild(sp, "Button_ResolutionPrev")?.GetComponent<Button>();
+            _btnResNext = FindDeepChild(sp, "Button_ResolutionNext")?.GetComponent<Button>();
+            _btnResApply = FindDeepChild(sp, "Button_ResolutionApply")?.GetComponent<Button>();
             if (_resolutionText == null)
-            {
-                _resolutionText = _settingsPanel.transform.Find("ResolutionText")?.GetComponent<Text>();
-            }
+                _resolutionText = FindDeepChild(sp, "ResolutionText")?.GetComponent<Text>();
         }
 
         if (_soloVsMonsterToggle == null)
@@ -297,6 +296,19 @@ public class MainMenuUI : MonoBehaviour
         return _passwordInputField != null && !string.IsNullOrEmpty(_passwordInputField.text)
             ? _passwordInputField.text
             : "test";
+    }
+
+    private static Transform FindDeepChild(Transform root, string objectName)
+    {
+        if (root == null || string.IsNullOrEmpty(objectName))
+            return null;
+        foreach (Transform t in root.GetComponentsInChildren<Transform>(true))
+        {
+            if (t.name == objectName)
+                return t;
+        }
+
+        return null;
     }
 }
 
