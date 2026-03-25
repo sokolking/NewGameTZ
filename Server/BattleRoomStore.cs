@@ -89,7 +89,7 @@ public class BattleRoomStore
     /// - Если есть ожидающий и solo == false — создаём пару и возвращаем battleStarted второму игроку.
     /// - Иначе встаём в очередь как P1 и ждём второго игрока.
     /// </summary>
-    public JoinResponse JoinOrCreate(int startCol, int startRow, bool solo, int playerMaxHp, int playerMaxAp, string weaponCode, int weaponDamage, int weaponRange, int weaponAttackApCost, string displayName, int characterLevel = 1, int accuracy = 10)
+    public JoinResponse JoinOrCreate(int startCol, int startRow, bool solo, int playerMaxHp, int playerMaxAp, string weaponCode, int weaponDamage, int weaponRange, int weaponAttackApCost, string displayName, int characterLevel = 1, int accuracy = 10, double weaponSpreadPenalty = 0, int weaponTrajectoryHeight = 1)
     {
         lock (_lock)
         {
@@ -102,7 +102,7 @@ public class BattleRoomStore
                 int soloRow = Math.Clamp(startRow, 0, HexSpawn.DefaultGridLength - 1);
                 soloRoom.AddPlayer("P1", soloCol, soloRow);
                 soloRoom.SetPlayerDisplayInfo("P1", displayName, characterLevel);
-                soloRoom.SetPlayerCombatProfile("P1", playerMaxHp, playerMaxAp, weaponCode, weaponDamage, weaponRange, weaponAttackApCost, accuracy);
+                soloRoom.SetPlayerCombatProfile("P1", playerMaxHp, playerMaxAp, weaponCode, weaponDamage, weaponRange, weaponAttackApCost, accuracy, weaponSpreadPenalty, weaponTrajectoryHeight);
                 _rooms[soloBattleId] = soloRoom;
                 _battleHistoryDb.EnsureBattle(soloBattleId);
                 soloRoom.StartFirstRound();
@@ -123,7 +123,7 @@ public class BattleRoomStore
                 var (p2c, p2r) = HexSpawn.FindOpponentSpawn(p1c, p1r, HexSpawn.DefaultGridWidth, HexSpawn.DefaultGridLength, HexSpawn.MinSpawnHexDistance);
                 waitingRoom.AddPlayer("P2", p2c, p2r);
                 waitingRoom.SetPlayerDisplayInfo("P2", displayName, characterLevel);
-                waitingRoom.SetPlayerCombatProfile("P2", playerMaxHp, playerMaxAp, weaponCode, weaponDamage, weaponRange, weaponAttackApCost, accuracy);
+                waitingRoom.SetPlayerCombatProfile("P2", playerMaxHp, playerMaxAp, weaponCode, weaponDamage, weaponRange, weaponAttackApCost, accuracy, weaponSpreadPenalty, weaponTrajectoryHeight);
                 waitingRoom.StartFirstRound();
                 Console.WriteLine($"[tzInfo] Matchmaking pair completed: battleId={battleId}, P1=({p1c},{p1r}), P2=({p2c},{p2r})");
                 _waitingBattleId = null;
@@ -136,7 +136,7 @@ public class BattleRoomStore
             int pr = Math.Clamp(startRow, 0, HexSpawn.DefaultGridLength - 1);
             r.AddPlayer("P1", pc, pr);
             r.SetPlayerDisplayInfo("P1", displayName, characterLevel);
-            r.SetPlayerCombatProfile("P1", playerMaxHp, playerMaxAp, weaponCode, weaponDamage, weaponRange, weaponAttackApCost, accuracy);
+            r.SetPlayerCombatProfile("P1", playerMaxHp, playerMaxAp, weaponCode, weaponDamage, weaponRange, weaponAttackApCost, accuracy, weaponSpreadPenalty, weaponTrajectoryHeight);
             _rooms[bid] = r;
             _battleHistoryDb.EnsureBattle(bid);
             _waitingBattleId = bid;

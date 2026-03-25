@@ -6,17 +6,16 @@ namespace BattleServer;
 
 public partial class BattleRoom
 {
-    private static bool IsWallObstacleTag(string? tag) =>
-        tag == "wall" || tag == "damaged_wall";
-
-    /// <summary>Полная стена при HP ≥ половины от max; повреждённая (damaged_wall) — при HP строго меньше половины (но &gt; 0).</summary>
-    private void SetWallTagFromRemainingHp((int col, int row) wc, int hpRemaining, int wallMaxHp)
+    /// <summary>Полная стена при HP ≥ половины от max; повреждённая — при HP строго меньше половины (но &gt; 0). Сохраняет wall_low / wall.</summary>
+    private void SetWallTagFromRemainingHp((int col, int row) wc, int hpRemaining, int wallMaxHp, bool isLowWall)
     {
         if (hpRemaining <= 0)
             return;
         int maxHp = Math.Max(1, wallMaxHp);
         bool belowHalf = hpRemaining * 2 < maxHp;
-        string tag = belowHalf ? "damaged_wall" : "wall";
+        string tag = isLowWall
+            ? (belowHalf ? "damaged_wall_low" : "wall_low")
+            : (belowHalf ? "damaged_wall" : "wall");
         _obstacleTags[wc] = tag;
     }
 
@@ -30,6 +29,7 @@ public partial class BattleRoom
     {
         if (!_obstacleTags.TryGetValue(wc, out var oldTag) || !IsWallObstacleTag(oldTag))
             return;
+        bool isLowWall = oldTag == "wall_low" || oldTag == "damaged_wall_low";
 
         int hp = _wallHpRemaining.GetValueOrDefault(wc, bal.WallMaxHp);
         hp -= Math.Max(0, rawDamage);
@@ -44,7 +44,7 @@ public partial class BattleRoom
         }
 
         _wallHpRemaining[wc] = hp;
-        SetWallTagFromRemainingHp(wc, hp, bal.WallMaxHp);
+        SetWallTagFromRemainingHp(wc, hp, bal.WallMaxHp, isLowWall);
         _obstacleTags.TryGetValue(wc, out var newTag);
         var newState = newTag == "damaged_wall" ? CellObjectState.Damaged : CellObjectState.Full;
         mapUpdates.Add(new MapUpdateDto { Tick = tick, Col = wc.col, Row = wc.row, NewState = newState });

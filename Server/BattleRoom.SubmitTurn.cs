@@ -36,6 +36,9 @@ public partial class BattleRoom
                     WeaponDamage = DefaultWeaponDamage,
                     WeaponRange = DefaultWeaponRange,
                     WeaponAttackApCost = GetWeaponAttackApCostFromDb(DefaultWeaponCode),
+                    Accuracy = 10,
+                    WeaponSpreadPenalty = 0,
+                    WeaponTrajectoryHeight = 1,
                     Posture = PostureWalk
                 };
             }

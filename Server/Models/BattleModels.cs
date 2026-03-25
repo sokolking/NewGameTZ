@@ -66,6 +66,26 @@ public class BattleObstacleBalanceRowDto
     public static BattleObstacleBalanceRowDto Defaults => new BattleObstacleBalanceRowDto();
 }
 
+/// <summary>Строка из таблицы weapons (список/поиск по коду).</summary>
+public class BattleWeaponBrowseRowDto
+{
+    public long Id { get; set; }
+    public string Code { get; set; } = "";
+    public string Name { get; set; } = "";
+    public int Damage { get; set; }
+    public int Range { get; set; }
+    public string IconKey { get; set; } = "";
+    public int AttackApCost { get; set; } = 1;
+    /// <summary>Штраф кучности (0…1), вычитается из p попадания после дистанции и укрытий.</summary>
+    public double SpreadPenalty { get; set; }
+    /// <summary>Высота траектории 0…2 для правил ЛС (см. сервер 7.20).</summary>
+    public int TrajectoryHeight { get; set; } = 1;
+    /// <summary>Только БД; в бой пока не входит.</summary>
+    public int Quality { get; set; } = 100;
+    /// <summary>Только БД; в бой пока не входит. Колонка <c>weapon_condition</c>.</summary>
+    public int WeaponCondition { get; set; } = 100;
+}
+
 public class ExecutedBattleActionDto
 {
     public string UnitId { get; set; } = "";
@@ -105,10 +125,14 @@ public class UnitStateDto
     public string WeaponCode { get; set; } = "fist";
     public int WeaponDamage { get; set; } = 1;
     public int WeaponRange { get; set; } = 1;
-    /// <summary>Стоимость атаки (ОД) из weapons.attack_ap_cost.</summary>
+    /// <summary>Стоимость атаки (ОД), фиксированная логикой боя.</summary>
     public int WeaponAttackApCost { get; set; } = 1;
-    /// <summary>Меткость юнита (каждый пункт даёт +2% к шансу попадания).</summary>
+    /// <summary>Меткость: аддитивный бонус к p попадания (+2% за пункт после множителей дистанции и укрытия).</summary>
     public int Accuracy { get; set; } = 10;
+    /// <summary>Кучность оружия: вычитается из p (0…1).</summary>
+    public double WeaponSpreadPenalty { get; set; }
+    /// <summary>Высота траектории выстрела для ЛС и стен (0 низкая, 1 обычная, 2 высокая).</summary>
+    public int WeaponTrajectoryHeight { get; set; } = 1;
     public string Posture { get; set; } = "walk";
 }
 
@@ -134,8 +158,10 @@ public class PlayerTurnResultDto
     public string WeaponCode { get; set; } = "fist";
     public int WeaponDamage { get; set; } = 1;
     public int WeaponRange { get; set; } = 1;
-    /// <summary>Стоимость атаки (ОД) из weapons.attack_ap_cost.</summary>
+    /// <summary>Стоимость атаки (ОД), фиксированная логикой боя.</summary>
     public int WeaponAttackApCost { get; set; } = 1;
+    public double WeaponSpreadPenalty { get; set; }
+    public int WeaponTrajectoryHeight { get; set; } = 1;
     public ExecutedBattleActionDto[]? ExecutedActions { get; set; }
 }
 
@@ -207,6 +233,8 @@ public class BattleStartedPayloadDto
     public int[]? SpawnWeaponDamages { get; set; }
     public int[]? SpawnWeaponRanges { get; set; }
     public int[]? SpawnWeaponAttackApCosts { get; set; }
+    public double[]? SpawnWeaponSpreadPenalties { get; set; }
+    public int[]? SpawnWeaponTrajectoryHeights { get; set; }
     public string[]? SpawnDisplayNames { get; set; }
     public int[]? SpawnLevels { get; set; }
     public int[]? ObstacleCols { get; set; }
@@ -277,7 +305,6 @@ public class BattleUserBrowseRowDto
     public int Accuracy { get; set; }
     public int MaxHp { get; set; }
     public int MaxAp { get; set; }
-    public string WeaponCode { get; set; } = "fist";
 }
 
 /// <summary>Обновление пользователя из админки /users (игрок сам характеристики не меняет). Пароль: null — не менять.</summary>
@@ -307,20 +334,6 @@ public class UserProgressProfileDto
     public int MaxHp { get; set; }
     public int MaxAp { get; set; }
     public int HitBonusPercent { get; set; }
-    public string WeaponCode { get; set; } = "fist";
-}
-
-public class BattleWeaponBrowseRowDto
-{
-    public long Id { get; set; }
-    public string Code { get; set; } = "";
-    public string Name { get; set; } = "";
-    public int Damage { get; set; }
-    public int Range { get; set; }
-    /// <summary>Ключ спрайта на клиенте (Resources/WeaponIcons/{iconKey}).</summary>
-    public string IconKey { get; set; } = "fist";
-    /// <summary>Стоимость атаки этим оружием (ОД). По умолчанию 1; для fist — 3, для stone — 7.</summary>
-    public int AttackApCost { get; set; } = 1;
 }
 
 /// <summary>Одна ячейка инвентаря пользователя (0..11).</summary>

@@ -6,6 +6,37 @@ namespace BattleServer;
 
 public partial class BattleRoom
 {
+    private static int GetHexesBeyondWeaponRange(int hexDistance, int weaponRange) =>
+        Math.Max(0, hexDistance - Math.Max(0, weaponRange));
+
+    /// <summary>За каждый гекс дальше номинальной дальности оружия урон умножается на 0.5.</summary>
+    private static int ApplyOverRangeDamage(int rawDamage, int hexDistanceToImpact, int weaponRange)
+    {
+        if (rawDamage <= 0)
+            return 0;
+        int over = GetHexesBeyondWeaponRange(hexDistanceToImpact, weaponRange);
+        double mult = Math.Pow(0.5, over);
+        return Math.Max(0, (int)Math.Floor(rawDamage * mult));
+    }
+
+    /// <summary>Только p_дистанция (0…1); штраф за гексы за пределами дальности — 0.5^N. Итог — <see cref="CombineHitProbability"/>.</summary>
+    private static double GetBaseHitProbabilityFromRange(int hexDistance, int weaponRange)
+    {
+        int wr = Math.Max(1, weaponRange);
+        if (hexDistance <= 1)
+            return 1.0;
+        int dClamped = Math.Min(hexDistance, Math.Max(0, weaponRange));
+        double p = (wr + 1 - dClamped) / wr;
+        if (p < 0)
+            p = 0;
+        if (p > 1)
+            p = 1;
+        int over = GetHexesBeyondWeaponRange(hexDistance, weaponRange);
+        if (over > 0)
+            p *= Math.Pow(0.5, over);
+        return p;
+    }
+
     /// <summary>Закрыть раунд: пошаговая симуляция (приоритет по порядку SubmitTurn), пересчёт ОД по actualPath, TurnResult.</summary>
     /// <param name="fromTimer">true — время вышло; false — все участники сдали ход досрочно.</param>
     public void CloseRound(bool fromTimer = false)
@@ -242,18 +273,12 @@ public partial class BattleRoom
                                     int rawDamage = Math.Max(0, unit.WeaponDamage);
                                     var bal = _obstacleDb?.GetBalance() ?? BattleObstacleBalanceRowDto.Defaults;
 
-                                    if (dist > weaponRange)
-                                    {
-                                        executed.FailureReason = "Attack target out of range";
-                                    }
-                                    else
-                                    {
-                                        HexSpawn.GetHexLineBetweenExclusive(currentPos.col, currentPos.row, ac, ar, _hexLineBuffer);
+                                    HexSpawn.GetHexLineBetweenExclusive(currentPos.col, currentPos.row, ac, ar, _hexLineBuffer);
 
                                         (int col, int row)? firstWall = null;
                                         foreach (var cell in _hexLineBuffer)
                                         {
-                                            if (_obstacleTags.TryGetValue(cell, out var tag) && IsWallObstacleTag(tag))
+                                            if (_obstacleTags.TryGetValue(cell, out var tag) && CellBlocksLineOfFire(tag, unit.WeaponTrajectoryHeight))
                                             {
                                                 firstWall = cell;
                                                 break;
@@ -266,16 +291,18 @@ public partial class BattleRoom
                                             var wc = firstWall.Value;
                                             executed.Succeeded = true;
                                             executed.Damage = 0;
-                                            ApplyWallDamageAndRecord(tick, wc, rawDamage, bal, mapUpdates);
+                                            int dWall = HexSpawn.HexDistance(currentPos.col, currentPos.row, wc.col, wc.row);
+                                            ApplyWallDamageAndRecord(tick, wc, ApplyOverRangeDamage(rawDamage, dWall, weaponRange), bal, mapUpdates);
                                             wallDone = true;
                                         }
-                                        else if (_obstacleTags.TryGetValue((ac, ar), out var aimTag) && IsWallObstacleTag(aimTag))
+                                        else if (_obstacleTags.TryGetValue((ac, ar), out var aimTag) && CellBlocksLineOfFire(aimTag, unit.WeaponTrajectoryHeight))
                                         {
                                             // Соседний гекс: линия «между» пуста — стена на гексе прицела.
                                             (int col, int row) wc = (ac, ar);
                                             executed.Succeeded = true;
                                             executed.Damage = 0;
-                                            ApplyWallDamageAndRecord(tick, wc, rawDamage, bal, mapUpdates);
+                                            int dWall = HexSpawn.HexDistance(currentPos.col, currentPos.row, wc.col, wc.row);
+                                            ApplyWallDamageAndRecord(tick, wc, ApplyOverRangeDamage(rawDamage, dWall, weaponRange), bal, mapUpdates);
                                             wallDone = true;
                                         }
 
@@ -348,20 +375,6 @@ public partial class BattleRoom
 
                                                 int distHex = HexSpawn.HexDistance(currentPos.col, currentPos.row, hexHitPos.col, hexHitPos.row);
                                                 int weaponRangeHex = Math.Max(0, unit.WeaponRange);
-                                                double pHex;
-                                                if (distHex == 1)
-                                                {
-                                                    pHex = 1.0;
-                                                }
-                                                else
-                                                {
-                                                    pHex = (weaponRangeHex + 1 - distHex) / (double)Math.Max(1, weaponRangeHex);
-                                                    if (pHex < 0)
-                                                        pHex = 0;
-                                                    if (pHex > 1)
-                                                        pHex = 1;
-                                                }
-
                                                 bool anyTreeHex = false;
                                                 bool anyRockHex = false;
                                                 foreach (var cell in _coverLineBuffer)
@@ -384,26 +397,14 @@ public partial class BattleRoom
                                                 }
 
                                                 string tgtPostureHex = postureByUnit.TryGetValue(hexHitId, out var tpHex) ? NormalizePosture(tpHex) : PostureWalk;
-                                                if (anyTreeHex)
-                                                {
-                                                    double f = 1.0 - bal.TreeCoverMissPercent / 100.0;
-                                                    if (f < 0)
-                                                        f = 0;
-                                                    pHex *= f;
-                                                }
-
-                                                if (anyRockHex && (string.Equals(tgtPostureHex, PostureSit, StringComparison.OrdinalIgnoreCase)
-                                                    || string.Equals(tgtPostureHex, PostureHide, StringComparison.OrdinalIgnoreCase)))
-                                                {
-                                                    double f = 1.0 - bal.RockCoverMissPercent / 100.0;
-                                                    if (f < 0)
-                                                        f = 0;
-                                                    pHex *= f;
-                                                }
-
-                                                pHex += Math.Max(0, unit.Accuracy) * 0.02;
-                                                if (pHex > 1)
-                                                    pHex = 1;
+                                                double pHex = CombineHitProbability(
+                                                    GetBaseHitProbabilityFromRange(distHex, weaponRangeHex),
+                                                    anyTreeHex,
+                                                    anyRockHex && (string.Equals(tgtPostureHex, PostureSit, StringComparison.OrdinalIgnoreCase)
+                                                        || string.Equals(tgtPostureHex, PostureHide, StringComparison.OrdinalIgnoreCase)),
+                                                    bal,
+                                                    unit.Accuracy,
+                                                    unit.WeaponSpreadPenalty);
 
                                                 bool hitHex = _rng.NextDouble() < pHex;
                                                 if (!hitHex)
@@ -415,7 +416,7 @@ public partial class BattleRoom
                                                 }
                                                 else
                                                 {
-                                                    int damageHex = rawDamage;
+                                                    int damageHex = ApplyOverRangeDamage(rawDamage, distHex, weaponRangeHex);
                                                     hexHitUnit.CurrentHp = Math.Max(0, hexHitUnit.CurrentHp - damageHex);
                                                     Units[hexHitId] = hexHitUnit;
                                                     executed.Succeeded = true;
@@ -433,7 +434,6 @@ public partial class BattleRoom
                                                 }
                                             }
                                         }
-                                    }
                                 }
                             }
                         }
@@ -461,18 +461,12 @@ public partial class BattleRoom
                             int rawDamage = Math.Max(0, unit.WeaponDamage);
                             var bal = _obstacleDb?.GetBalance() ?? BattleObstacleBalanceRowDto.Defaults;
 
-                            if (dist > weaponRange)
-                            {
-                                executed.FailureReason = "Attack target out of range";
-                            }
-                            else
-                            {
-                                HexSpawn.GetHexLineBetweenExclusive(currentPos.col, currentPos.row, targetPos.col, targetPos.row, _hexLineBuffer);
+                            HexSpawn.GetHexLineBetweenExclusive(currentPos.col, currentPos.row, targetPos.col, targetPos.row, _hexLineBuffer);
 
                                 (int col, int row)? firstWall = null;
                                 foreach (var cell in _hexLineBuffer)
                                 {
-                                    if (_obstacleTags.TryGetValue(cell, out var tag) && IsWallObstacleTag(tag))
+                                    if (_obstacleTags.TryGetValue(cell, out var tag) && CellBlocksLineOfFire(tag, unit.WeaponTrajectoryHeight))
                                     {
                                         firstWall = cell;
                                         break;
@@ -485,7 +479,8 @@ public partial class BattleRoom
                                     executed.Succeeded = true;
                                     executed.TargetUnitId = resolvedTargetId;
                                     executed.Damage = 0;
-                                    ApplyWallDamageAndRecord(tick, wc, rawDamage, bal, mapUpdates);
+                                    int dWall = HexSpawn.HexDistance(currentPos.col, currentPos.row, wc.col, wc.row);
+                                    ApplyWallDamageAndRecord(tick, wc, ApplyOverRangeDamage(rawDamage, dWall, weaponRange), bal, mapUpdates);
                                     attackTargetByUnit[uid] = resolvedTargetId;
                                 }
                                 else
@@ -526,18 +521,6 @@ public partial class BattleRoom
                                             break;
                                     }
 
-                                    double p;
-                                    if (dist == 1)
-                                    {
-                                        p = 1.0;
-                                    }
-                                    else
-                                    {
-                                        p = (weaponRange + 1 - dist) / (double)Math.Max(1, weaponRange);
-                                        if (p < 0) p = 0;
-                                        if (p > 1) p = 1;
-                                    }
-
                                     bool anyTree = false;
                                     bool anyRock = false;
                                     foreach (var cell in _coverLineBuffer)
@@ -561,24 +544,14 @@ public partial class BattleRoom
                                     }
 
                                     string tgtPosture = postureByUnit.TryGetValue(resolvedTargetId, out var tp) ? NormalizePosture(tp) : PostureWalk;
-                                    if (anyTree)
-                                    {
-                                        double f = 1.0 - bal.TreeCoverMissPercent / 100.0;
-                                        if (f < 0) f = 0;
-                                        p *= f;
-                                    }
-
-                                    if (anyRock && (string.Equals(tgtPosture, PostureSit, StringComparison.OrdinalIgnoreCase)
-                                        || string.Equals(tgtPosture, PostureHide, StringComparison.OrdinalIgnoreCase)))
-                                    {
-                                        double f = 1.0 - bal.RockCoverMissPercent / 100.0;
-                                        if (f < 0) f = 0;
-                                        p *= f;
-                                    }
-
-                                    p += Math.Max(0, unit.Accuracy) * 0.02;
-                                    if (p > 1)
-                                        p = 1;
+                                    double p = CombineHitProbability(
+                                        GetBaseHitProbabilityFromRange(dist, weaponRange),
+                                        anyTree,
+                                        anyRock && (string.Equals(tgtPosture, PostureSit, StringComparison.OrdinalIgnoreCase)
+                                            || string.Equals(tgtPosture, PostureHide, StringComparison.OrdinalIgnoreCase)),
+                                        bal,
+                                        unit.Accuracy,
+                                        unit.WeaponSpreadPenalty);
 
                                     bool hit = _rng.NextDouble() < p;
                                     if (!hit)
@@ -590,7 +563,7 @@ public partial class BattleRoom
                                     }
                                     else
                                     {
-                                        int damage = rawDamage;
+                                        int damage = ApplyOverRangeDamage(rawDamage, dist, weaponRange);
                                         targetUnit.CurrentHp = Math.Max(0, targetUnit.CurrentHp - damage);
                                         Units[resolvedTargetId] = targetUnit;
                                         executed.Succeeded = true;
@@ -607,7 +580,6 @@ public partial class BattleRoom
                                         }
                                     }
                                 }
-                            }
                         }
                     }
                     else if (string.Equals(actionType, ActionChangePosture, StringComparison.OrdinalIgnoreCase))
@@ -638,6 +610,8 @@ public partial class BattleRoom
                             unit.WeaponDamage = wpn.Damage;
                             unit.WeaponRange = wpn.Range;
                             unit.WeaponAttackApCost = Math.Max(1, wpn.AttackApCost);
+                            unit.WeaponSpreadPenalty = Math.Clamp(wpn.SpreadPenalty, 0.0, 1.0);
+                            unit.WeaponTrajectoryHeight = Math.Clamp(wpn.TrajectoryHeight, 0, 3);
                             Units[uid] = unit;
                             string? pid = null;
                             foreach (var kv in PlayerToUnitId)
@@ -650,7 +624,7 @@ public partial class BattleRoom
                             }
 
                             if (!string.IsNullOrEmpty(pid) && PlayerCombatProfiles.TryGetValue(pid, out var prof))
-                                PlayerCombatProfiles[pid] = (prof.Item1, prof.Item2, wpn.Code, wpn.Damage, wpn.Range, Math.Max(1, wpn.AttackApCost), prof.Item7);
+                                PlayerCombatProfiles[pid] = (prof.Item1, prof.Item2, wpn.Code, wpn.Damage, wpn.Range, Math.Max(1, wpn.AttackApCost), prof.Item7, unit.WeaponSpreadPenalty, unit.WeaponTrajectoryHeight);
                             executed.Succeeded = true;
                         }
                     }
@@ -727,6 +701,8 @@ public partial class BattleRoom
                 WeaponDamage = us.WeaponDamage,
                 WeaponRange = us.WeaponRange,
                 WeaponAttackApCost = Math.Max(1, us.WeaponAttackApCost),
+                WeaponSpreadPenalty = us.WeaponSpreadPenalty,
+                WeaponTrajectoryHeight = us.WeaponTrajectoryHeight,
                 ExecutedActions = unitActions.ToArray()
             });
         }
@@ -753,7 +729,7 @@ public partial class BattleRoom
             mapState.Add(new CellObject
             {
                 Hex = new HexPositionDto { Col = wc.col, Row = wc.row },
-                State = kv.Value == "damaged_wall" ? CellObjectState.Damaged : CellObjectState.Full
+                State = kv.Value is "damaged_wall" or "damaged_wall_low" ? CellObjectState.Damaged : CellObjectState.Full
             });
         }
 

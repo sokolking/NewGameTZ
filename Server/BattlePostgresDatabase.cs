@@ -27,6 +27,8 @@ public sealed class BattlePostgresDatabase : IDisposable
             using var connection = _dataSource.OpenConnection();
             using var command = connection.CreateCommand();
             command.CommandText = """
+DROP TABLE IF EXISTS user_inventory_slots CASCADE;
+
 CREATE TABLE IF NOT EXISTS battles (
     battle_id TEXT PRIMARY KEY,
     created_utc TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -41,18 +43,7 @@ CREATE TABLE IF NOT EXISTS users (
     endurance INT NOT NULL DEFAULT 10,
     accuracy INT NOT NULL DEFAULT 10,
     max_hp INT NOT NULL DEFAULT 10,
-    max_ap INT NOT NULL DEFAULT 100,
-    weapon_code TEXT NOT NULL DEFAULT 'fist'
-);
-
-CREATE TABLE IF NOT EXISTS weapons (
-    id BIGSERIAL PRIMARY KEY,
-    code TEXT NOT NULL UNIQUE,
-    name TEXT NOT NULL,
-    damage INT NOT NULL,
-    range INT NOT NULL,
-    icon_key TEXT NOT NULL DEFAULT 'fist',
-    attack_ap_cost INT NOT NULL DEFAULT 1
+    max_ap INT NOT NULL DEFAULT 100
 );
 
 CREATE TABLE IF NOT EXISTS battle_turns (
@@ -75,16 +66,16 @@ CREATE INDEX IF NOT EXISTS ix_battle_turn_links_battle_id_turn_index
 
 ALTER TABLE users ADD COLUMN IF NOT EXISTS max_hp INT NOT NULL DEFAULT 10;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS max_ap INT NOT NULL DEFAULT 100;
-ALTER TABLE users ADD COLUMN IF NOT EXISTS weapon_code TEXT NOT NULL DEFAULT 'fist';
 ALTER TABLE users ADD COLUMN IF NOT EXISTS experience INT NOT NULL DEFAULT 0;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS strength INT NOT NULL DEFAULT 10;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS endurance INT NOT NULL DEFAULT 10;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS accuracy INT NOT NULL DEFAULT 10;
+ALTER TABLE users DROP COLUMN IF EXISTS weapon_code;
 
-INSERT INTO users (username, password, experience, strength, endurance, accuracy, max_hp, max_ap, weapon_code)
+INSERT INTO users (username, password, experience, strength, endurance, accuracy, max_hp, max_ap)
 VALUES
-    ('test', 'test', 0, 10, 10, 10, 20, 20, 'fist'),
-    ('test2', 'test', 0, 10, 10, 10, 20, 20, 'fist')
+    ('test', 'test', 0, 10, 10, 10, 20, 20),
+    ('test2', 'test', 0, 10, 10, 10, 20, 20)
 ON CONFLICT (username) DO UPDATE
 SET password = EXCLUDED.password,
     experience = EXCLUDED.experience,
@@ -92,63 +83,12 @@ SET password = EXCLUDED.password,
     endurance = EXCLUDED.endurance,
     accuracy = EXCLUDED.accuracy,
     max_hp = EXCLUDED.max_hp,
-    max_ap = EXCLUDED.max_ap,
-    weapon_code = EXCLUDED.weapon_code;
+    max_ap = EXCLUDED.max_ap;
 
--- На случай уже существующих строк до смены сида:
 UPDATE users
 SET
     max_hp = GREATEST(1, strength * 2),
     max_ap = GREATEST(1, endurance * 2);
-
--- Старые БД: таблица weapons могла быть создана без icon_key / attack_ap_cost
-ALTER TABLE weapons ADD COLUMN IF NOT EXISTS icon_key TEXT NOT NULL DEFAULT 'fist';
-ALTER TABLE weapons ADD COLUMN IF NOT EXISTS attack_ap_cost INT NOT NULL DEFAULT 1;
-ALTER TABLE weapons ALTER COLUMN attack_ap_cost SET DEFAULT 1;
-
-INSERT INTO weapons (code, name, damage, range, icon_key, attack_ap_cost)
-VALUES
-    ('fist', 'Fist', 1, 1, 'fist', 3),
-    ('stone', 'Камень', 3, 2, 'stone', 5),
-    ('gun', 'Пистолет', 4, 5, 'gun', 9),
-    ('revolver', 'Револьвер', 6, 4, 'revolver', 12),
-    ('shotgun', 'Дробовик', 8, 3, 'shotgun', 7),
-    ('rifle', 'Винтовка', 10, 6, 'rifle', 7),
-    ('sniper', 'Снайперская винтовка', 12, 8, 'sniper', 7),
-    ('machine_gun', 'Пулемёт', 14, 10, 'machine_gun', 7),
-    ('rocket_launcher', 'Ракетница', 16, 12, 'rocket_launcher', 7),
-    ('grenade_launcher', 'Гранатомёт', 18, 14, 'grenade_launcher', 7),
-    ('plasma_gun', 'Плазменный пистолет', 20, 16, 'plasma_gun', 7)
-
-ON CONFLICT (code) DO UPDATE
-SET name = EXCLUDED.name,
-    damage = EXCLUDED.damage,
-    range = EXCLUDED.range,
-    icon_key = EXCLUDED.icon_key,
-    attack_ap_cost = EXCLUDED.attack_ap_cost;
-
-CREATE TABLE IF NOT EXISTS user_inventory_slots (
-    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    slot_index INT NOT NULL CHECK (slot_index >= 0 AND slot_index < 12),
-    weapon_id BIGINT REFERENCES weapons(id) ON DELETE SET NULL,
-    PRIMARY KEY (user_id, slot_index)
-);
-
-INSERT INTO user_inventory_slots (user_id, slot_index, weapon_id)
-SELECT u.id, 0, w.id FROM users u CROSS JOIN weapons w WHERE w.code = 'fist'
-ON CONFLICT (user_id, slot_index) DO NOTHING;
-
-INSERT INTO user_inventory_slots (user_id, slot_index, weapon_id)
-SELECT u.id, 1, w.id FROM users u CROSS JOIN weapons w WHERE w.code = 'stone'
-ON CONFLICT (user_id, slot_index) DO NOTHING;
-
-INSERT INTO user_inventory_slots (user_id, slot_index, weapon_id)
-SELECT u.id, 2, w.id FROM users u CROSS JOIN weapons w WHERE w.code = 'gun'
-ON CONFLICT (user_id, slot_index) DO NOTHING;
-
-INSERT INTO user_inventory_slots (user_id, slot_index, weapon_id)
-SELECT u.id, 3, w.id FROM users u CROSS JOIN weapons w WHERE w.code = 'revolver'
-ON CONFLICT (user_id, slot_index) DO NOTHING;
 
 CREATE TABLE IF NOT EXISTS battle_obstacle_balance (
     id INT PRIMARY KEY,
@@ -163,6 +103,29 @@ CREATE TABLE IF NOT EXISTS battle_obstacle_balance (
 INSERT INTO battle_obstacle_balance (id, wall_max_hp, tree_cover_miss_percent, rock_cover_miss_percent, wall_segments_count, rock_count, tree_count)
 SELECT 1, 5, 15, 20, 10, 5, 5
 WHERE NOT EXISTS (SELECT 1 FROM battle_obstacle_balance WHERE id = 1);
+
+CREATE TABLE IF NOT EXISTS weapons (
+    id BIGSERIAL PRIMARY KEY,
+    code TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    damage INT NOT NULL DEFAULT 1,
+    range INT NOT NULL DEFAULT 1,
+    icon_key TEXT NOT NULL DEFAULT '',
+    attack_ap_cost INT NOT NULL DEFAULT 3,
+    spread_penalty REAL NOT NULL DEFAULT 0,
+    trajectory_height INT NOT NULL DEFAULT 1,
+    quality INT NOT NULL DEFAULT 100,
+    weapon_condition INT NOT NULL DEFAULT 100
+);
+
+ALTER TABLE weapons ADD COLUMN IF NOT EXISTS spread_penalty REAL NOT NULL DEFAULT 0;
+ALTER TABLE weapons ADD COLUMN IF NOT EXISTS trajectory_height INT NOT NULL DEFAULT 1;
+ALTER TABLE weapons ADD COLUMN IF NOT EXISTS quality INT NOT NULL DEFAULT 100;
+ALTER TABLE weapons ADD COLUMN IF NOT EXISTS weapon_condition INT NOT NULL DEFAULT 100;
+
+INSERT INTO weapons (code, name, damage, range, icon_key, attack_ap_cost, spread_penalty, trajectory_height, quality, weapon_condition)
+VALUES ('fist', 'Fist', 1, 1, 'fist', 3, 0, 1, 100, 100)
+ON CONFLICT (code) DO NOTHING;
 """;
             command.ExecuteNonQuery();
         }

@@ -427,12 +427,6 @@ public class GameSession : MonoBehaviour
             return false;
         }
 
-        if (d > weaponRange)
-        {
-            OnNetworkMessage?.Invoke("Гекс вне дальности оружия");
-            return false;
-        }
-
         int aimCol = col;
         int aimRow = row;
 
@@ -469,7 +463,7 @@ public class GameSession : MonoBehaviour
     }
 
     /// <summary>
-    /// Развернуть локального игрока к конечной клетке выстрела (с обрезкой по дальности оружия). ЛКМ по силуэту / Ctrl+клик.
+    /// Развернуть локального игрока к клетке прицела (в т.ч. за номинальной дальностью — сервер режет урон). ЛКМ по силуэту / Ctrl+клик.
     /// </summary>
     public void ApplyLocalPlayerRangedFacingTowardTargetHex(int targetCol, int targetRow)
     {
@@ -487,20 +481,8 @@ public class GameSession : MonoBehaviour
         if (!grid.IsInBounds(fc, fr) || !grid.IsInBounds(targetCol, targetRow))
             return;
 
-        int dist = HexGrid.GetDistance(fc, fr, targetCol, targetRow);
-        int weaponRange = pl.WeaponRangeHexes;
         int finalHexCol = targetCol;
         int finalHexRow = targetRow;
-        if (dist > weaponRange)
-        {
-            HexCubeOffset.GetHexLine(fc, fr, targetCol, targetRow, _bulletLineHexBuffer);
-            if (_bulletLineHexBuffer.Count == 0)
-                return;
-            int idx = Mathf.Min(weaponRange, dist);
-            if (idx >= _bulletLineHexBuffer.Count)
-                idx = _bulletLineHexBuffer.Count - 1;
-            (finalHexCol, finalHexRow) = _bulletLineHexBuffer[idx];
-        }
 
         Vector3 end = grid.GetCellWorldPosition(finalHexCol, finalHexRow) + Vector3.up * _bulletHexEndYOffset;
         Vector3 fromCell = grid.GetCellWorldPosition(fc, fr);
@@ -1134,20 +1116,8 @@ public class GameSession : MonoBehaviour
         if (!grid.IsInBounds(fc, fr) || !grid.IsInBounds(tc, tr))
             return false;
 
-        int weaponRange = pl.WeaponRangeHexes;
-        int dist = HexGrid.GetDistance(fc, fr, tc, tr);
         int finalHexCol = tc;
         int finalHexRow = tr;
-        if (dist > weaponRange)
-        {
-            HexCubeOffset.GetHexLine(fc, fr, tc, tr, _bulletLineHexBuffer);
-            if (_bulletLineHexBuffer.Count == 0)
-                return false;
-            int idx = Mathf.Min(weaponRange, dist);
-            if (idx >= _bulletLineHexBuffer.Count)
-                idx = _bulletLineHexBuffer.Count - 1;
-            (finalHexCol, finalHexRow) = _bulletLineHexBuffer[idx];
-        }
 
         Vector3 end = grid.GetCellWorldPosition(finalHexCol, finalHexRow) + Vector3.up * _bulletHexEndYOffset;
         Vector3 fromCell = grid.GetCellWorldPosition(fc, fr);
@@ -1241,7 +1211,7 @@ public class GameSession : MonoBehaviour
         SubmitTurnLocal(actions, roundIndex);
     }
 
-    /// <summary>Пуля от атакующего к цели (или до исчерпания дальности оружия по линии гексов). Только при weaponRange &gt; 1.</summary>
+    /// <summary>Пуля от атакующего к цели по линии гексов; дальность оружия влияет только на урон на сервере, не на длину визуала.</summary>
     private IEnumerator PlayRangedBulletAnimation(TurnResultPayload result, BattleExecutedAction action)
     {
         if (action == null || !action.succeeded || string.IsNullOrEmpty(action.actionType)
@@ -1276,30 +1246,16 @@ public class GameSession : MonoBehaviour
         if (!grid.IsInBounds(fc, fr) || !grid.IsInBounds(tc, tr))
             yield break;
 
-        int dist = HexGrid.GetDistance(fc, fr, tc, tr);
-
         Vector3 HexEndWorld(int col, int row) =>
             grid.GetCellWorldPosition(col, row) + Vector3.up * _bulletHexEndYOffset;
 
-        // «Дно» конечной точки выстрела (цель или обрезка по дальности) — всегда, даже если пуля визуально упрётся в препятствие раньше.
         int finalHexCol = tc;
         int finalHexRow = tr;
-        if (dist > weaponRange)
-        {
-            // Атака вне дальности (редко при succeeded): обрезка по линии гексов к max range шагам.
-            HexCubeOffset.GetHexLine(fc, fr, tc, tr, _bulletLineHexBuffer);
-            if (_bulletLineHexBuffer.Count == 0)
-                yield break;
-            int idx = Mathf.Min(weaponRange, dist);
-            if (idx >= _bulletLineHexBuffer.Count)
-                idx = _bulletLineHexBuffer.Count - 1;
-            (finalHexCol, finalHexRow) = _bulletLineHexBuffer[idx];
-        }
 
         Vector3 finalShotEndWorld = HexEndWorld(finalHexCol, finalHexRow);
         int distToFinalHex = HexGrid.GetDistance(fc, fr, finalHexCol, finalHexRow);
 
-        int durationSteps = Mathf.Max(1, Mathf.Min(weaponRange, distToFinalHex));
+        int durationSteps = Mathf.Max(1, distToFinalHex);
         bool obstacleBeforeFinal = false;
         int obsCol = -1;
         int obsRow = -1;
@@ -1310,7 +1266,7 @@ public class GameSession : MonoBehaviour
             if (dObs < distToFinalHex)
             {
                 obstacleBeforeFinal = true;
-                durationSteps = Mathf.Max(1, Mathf.Min(weaponRange, dObs));
+                durationSteps = Mathf.Max(1, dObs);
             }
         }
 

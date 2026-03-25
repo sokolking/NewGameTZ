@@ -81,7 +81,7 @@ public partial class BattleRoom
 
     /// <summary>Текущее состояние каждого игрока (позиция, ОД, штраф). Обновляется после каждого раунда.</summary>
     public Dictionary<string, PlayerBattleState> CurrentState { get; } = new();
-    public Dictionary<string, (int maxHp, int maxAp, string weaponCode, int weaponDamage, int weaponRange, int weaponAttackApCost, int accuracy)> PlayerCombatProfiles { get; } = new();
+    public Dictionary<string, (int maxHp, int maxAp, string weaponCode, int weaponDamage, int weaponRange, int weaponAttackApCost, int accuracy, double weaponSpreadPenalty, int weaponTrajectoryHeight)> PlayerCombatProfiles { get; } = new();
 
     /// <summary>Порядок отправки хода в текущем раунде (кто раньше отправил — выше приоритет на клетку).</summary>
     public List<string> SubmissionOrder { get; } = new();
@@ -97,7 +97,7 @@ public partial class BattleRoom
 
     /// <summary>Кто в этом раунде завершил ход досрочно (пока таймер не истёк).</summary>
     public Dictionary<string, bool> EndedTurnEarlyThisRound { get; } = new();
-    /// <summary>Тег препятствия на клетке: wall | damaged_wall | tree | rock.</summary>
+    /// <summary>Тег препятствия: wall | wall_low | damaged_* | tree | rock (ЛС стен — см. BattleRoom.LineOfFire).</summary>
     private readonly Dictionary<(int col, int row), string> _obstacleTags = new();
     private readonly Dictionary<(int col, int row), int> _wallHpRemaining = new();
     private readonly Dictionary<(int col, int row), float> _wallYawDegrees = new();
