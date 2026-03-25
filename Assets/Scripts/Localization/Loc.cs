@@ -15,7 +15,7 @@ public static class Loc
     static bool _loaded;
 
     /// <summary>Active UI language. TODO: persist from settings menu.</summary>
-    public static GameLanguage Current { get; set; } = GameLanguage.Russian;
+    public static GameLanguage Current { get; set; } = GameLanguage.English;
 
     static void EnsureLoaded()
     {

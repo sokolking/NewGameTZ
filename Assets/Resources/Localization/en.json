@@ -65,5 +65,17 @@
   "battle_log.local_end_turn": "Local end of turn",
   "battle_log.local_anim_end": "Local animation end",
   "battle_log.turn_accepted_waiting": "Turn accepted, waiting for round",
-  "battle_log.player_to_hex": "Player -> {0}"
+  "battle_log.player_to_hex": "Player -> {0}",
+  "login.field_login": "Login",
+  "login.field_password": "Password",
+  "login.solo_battle_label": "Battle with monster (solo)",
+  "esc.mute": "No sound",
+  "esc.master_volume": "Master volume",
+  "ui.skip_ap_question": "How many AP to skip?",
+  "ui.cancel": "Cancel",
+  "scene.battle_waiting_round": "Waiting for round result…",
+  "scene.hud_move_animation": "Move animation",
+  "scene.hud_end_turn": "End turn",
+  "scene.hud_undo_action": "Undo action",
+  "scene.hud_back_planning": "Back to planning"
 }

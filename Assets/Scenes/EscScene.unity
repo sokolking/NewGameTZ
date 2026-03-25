@@ -2301,6 +2301,7 @@ GameObject:
   - component: {fileID: 1030409904}
   - component: {fileID: 1030409903}
   - component: {fileID: 1030409902}
+  - component: {fileID: 1030409905}
   m_Layer: 0
   m_Name: Label_Mute
   m_TagString: Untagged
@@ -2380,7 +2381,20 @@ MonoBehaviour:
     m_HorizontalOverflow: 0
     m_VerticalOverflow: 0
     m_LineSpacing: 1
-  m_Text: "\u0411\u0435\u0437 \u0437\u0432\u0443\u043A\u0430"
+  m_Text: No sound
+--- !u!114 &1030409905
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1030409900}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: a7f3e2d1c0b94a8e9f1d2c3b4a596877, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::LocalizedText
+  _localizationKey: esc.mute
 --- !u!222 &1030409904
 CanvasRenderer:
   m_ObjectHideFlags: 0
@@ -3621,6 +3635,7 @@ GameObject:
   - component: {fileID: 1661461145}
   - component: {fileID: 1661461144}
   - component: {fileID: 1661461143}
+  - component: {fileID: 1661461146}
   m_Layer: 0
   m_Name: Label_MasterVolume
   m_TagString: Untagged
@@ -3700,7 +3715,20 @@ MonoBehaviour:
     m_HorizontalOverflow: 0
     m_VerticalOverflow: 0
     m_LineSpacing: 1
-  m_Text: "\u0413\u0440\u043E\u043C\u043A\u043E\u0441\u0442\u044C"
+  m_Text: Master volume
+--- !u!114 &1661461146
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1661461141}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: a7f3e2d1c0b94a8e9f1d2c3b4a596877, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::LocalizedText
+  _localizationKey: esc.master_volume
 --- !u!222 &1661461145
 CanvasRenderer:
   m_ObjectHideFlags: 0

@@ -65,5 +65,17 @@
   "battle_log.local_end_turn": "Локальный конец хода",
   "battle_log.local_anim_end": "Локал. аним. конец",
   "battle_log.turn_accepted_waiting": "Ход принят, ждём раунд",
-  "battle_log.player_to_hex": "Игрок -> {0}"
+  "battle_log.player_to_hex": "Игрок -> {0}",
+  "login.field_login": "Логин",
+  "login.field_password": "Пароль",
+  "login.solo_battle_label": "Бой с монстром (соло)",
+  "esc.mute": "Без звука",
+  "esc.master_volume": "Громкость",
+  "ui.skip_ap_question": "Сколько ОД пропустить?",
+  "ui.cancel": "Отмена",
+  "scene.battle_waiting_round": "Ожидание результата раунда…",
+  "scene.hud_move_animation": "Анимация хода",
+  "scene.hud_end_turn": "Закончить ход",
+  "scene.hud_undo_action": "Отменить действие",
+  "scene.hud_back_planning": "Назад к планированию"
 }

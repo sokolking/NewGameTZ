@@ -1,0 +1,32 @@
+---
+description: English-first app strings; RU only in comments, locale JSON, and markdown; use Loc for UI
+alwaysApply: true
+---
+
+# Application language (Hope / Unity + server)
+
+## Default language
+
+- **Primary language for the running app** is **English**: all user-visible text in code (C#, embedded HTML/JS on the server, Unity `[Header]` / `[Tooltip]` where they surface in editor or builds) should be **English**, not Russian.
+- **Server/API** messages intended for clients or operators should be **English** unless they are purely internal debug logs (still prefer English for consistency).
+
+## Allowed exceptions (Russian or other languages)
+
+1. **Code comments**: `//`, `/* */`, and XML doc `///` — any language the team prefers (including Russian).
+2. **Locale files**: `Assets/Resources/Localization/*.json` (e.g. `en.json` as source strings, `ru.json` for Russian UI).
+3. **Markdown documentation**: `**/*.md` — Russian is OK (also excluded from default Cursor context via `.cursorignore` where configured).
+
+Do **not** treat `.meta` or non-JSON assets as “locale files”; only the explicit `Localization` JSON maps are bilingual stores.
+
+## Localization workflow for new UI / runtime strings
+
+- **Never** hardcode Russian (or other non-English) strings in gameplay/UI code for text the player sees.
+- Add a **stable English key** and English value in **`en.json`**, Russian value in **`ru.json`**, and resolve at runtime with **`Loc.T` / `Loc.Tf`** (see `Assets/Scripts/Localization/Loc.cs`).
+- If the user pastes or authors Russian text for a feature, **convert it**: put Russian only in **`ru.json`**, keep **`en.json`** as the canonical English source, and reference by key from code.
+- For **dynamic** server errors shown in UI, prefer English in API responses or map known codes to `Loc` keys on the client.
+
+## Quick checklist
+
+- New button label / toast / log line for players → **English in code** or **`Loc` + JSON**.
+- Explaining code to maintainers → **comments**, any language.
+- Long design docs → **`.md`**, any language.
