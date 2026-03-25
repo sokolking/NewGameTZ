@@ -19,13 +19,13 @@ public sealed class InventoryUI : MonoBehaviour
     [SerializeField] private Image[] _cellImages = new Image[12];
     [SerializeField] private Button[] _cellButtons = new Button[12];
     [SerializeField] private Image _activeWeaponImage;
-    [Tooltip("Text for AP:X attack cost with current weapon. Scene name: ItemAtionPointsCost.")]
+    [Tooltip("Text for AP:X attack cost with current weapon. Wire object named ItemAtionPointsCost in scene (legacy typo).")]
     [SerializeField] private TextMeshProUGUI _itemActionPointsCostTmp;
     [SerializeField] private Text _itemActionPointsCostLegacy;
 
     private UserInventorySlotPayload[] _slots = new UserInventorySlotPayload[12];
     private BattleServerConnection _serverConnection;
-    private int _lastDisplayedAttackApOd = int.MinValue;
+    private int _lastDisplayedAttackApCost = int.MinValue;
 
     private void Awake()
     {
@@ -318,14 +318,14 @@ public sealed class InventoryUI : MonoBehaviour
     {
         if (_itemActionPointsCostTmp != null || _itemActionPointsCostLegacy != null)
             return;
-        GameObject go = GameObject.Find(UiHierarchyNames.ItemAtionPointsCost);
+        GameObject go = GameObject.Find(UiHierarchyNames.ItemActionPointsCost);
         if (go == null)
         {
             var panel = GameObject.Find(UiHierarchyNames.ActiveItemPanel);
             if (panel != null)
             {
-                var tr = panel.transform.Find(UiHierarchyNames.ItemAtionPointsCost)
-                         ?? FindChildRecursive(panel.transform, UiHierarchyNames.ItemAtionPointsCost);
+                var tr = panel.transform.Find(UiHierarchyNames.ItemActionPointsCost)
+                         ?? FindChildRecursive(panel.transform, UiHierarchyNames.ItemActionPointsCost);
                 if (tr != null)
                     go = tr.gameObject;
             }
@@ -345,11 +345,11 @@ public sealed class InventoryUI : MonoBehaviour
         if (_player == null)
             _player = FindFirstObjectByType<Player>();
         string code = _player != null ? _player.WeaponCode : WeaponCatalog.DefaultWeaponCode;
-        int od = GetAttackApCostForCurrentWeaponDisplay(code);
-        if (od == _lastDisplayedAttackApOd)
+        int attackApCost = GetAttackApCostForCurrentWeaponDisplay(code);
+        if (attackApCost == _lastDisplayedAttackApCost)
             return;
-        _lastDisplayedAttackApOd = od;
-        string s = Loc.Tf("ui.ap_colon", od);
+        _lastDisplayedAttackApCost = attackApCost;
+        string s = Loc.Tf("ui.ap_colon", attackApCost);
         if (_itemActionPointsCostTmp != null)
             _itemActionPointsCostTmp.text = s;
         if (_itemActionPointsCostLegacy != null)

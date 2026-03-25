@@ -87,8 +87,8 @@ public static class UiHierarchyNames
     public const string ActiveItemPanel = "ActiveItemPanel";
     /// <summary>Дочерний объект с Image (внутри <see cref="ActiveItemPanel"/>).</summary>
     public const string ActiveItem = "ActiveItem";
-    /// <summary>Текст стоимости смены оружия (формат «ОД:X»). Имя в сцене с опечаткой.</summary>
-    public const string ItemAtionPointsCost = "ItemAtionPointsCost";
+    /// <summary>Attack AP cost label; scene GameObject is still named with legacy typo <c>ItemAtionPointsCost</c>.</summary>
+    public const string ItemActionPointsCost = "ItemAtionPointsCost";
     public const string InventoryCellImage = "InventoryCellImage";
 
     /// <summary>Ячейки: InventoryCell1 … InventoryCell12.</summary>
