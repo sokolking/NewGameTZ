@@ -101,6 +101,9 @@ public static class HexGridSetupTool
         SetSerializedField(input, "_camera", cam);
         SetSerializedField(input, "_grid", grid);
         SetSerializedField(input, "_player", player);
+        var holdIndicator = AssetDatabase.LoadAssetAtPath<HoldTargetIndicator>("Assets/Resources/HoldTargetIndicator.prefab");
+        if (holdIndicator != null)
+            SetSerializedField(input, "_holdIndicatorPrefab", holdIndicator);
         EditorUtility.SetDirty(inputGo);
 
         Selection.activeGameObject = gridGo;

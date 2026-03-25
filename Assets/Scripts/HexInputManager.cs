@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using UnityEngine;
-using UnityEngine.Rendering;
 using UnityEngine.EventSystems;
 using UnityEngine.InputSystem;
 
@@ -12,14 +11,6 @@ using UnityEngine.InputSystem;
 [DefaultExecutionOrder(50)]
 public class HexInputManager : MonoBehaviour
 {
-    private enum BodyPart
-    {
-        None = 0,
-        Head = 1,
-        Torso = 2,
-        Legs = 3
-    }
-
     private const float DoubleClickTime = 0.3f;
     private const float DoubleClickMaxDist = 10f;
     private const float DoubleClickMaxDistSqr = DoubleClickMaxDist * DoubleClickMaxDist;
@@ -29,30 +20,16 @@ public class HexInputManager : MonoBehaviour
     [SerializeField] private Player _player;
     [SerializeField] private LayerMask _hexLayer = -1;
     [Header("ЛКМ по другому юниту/мобу")]
-    [Tooltip("Sprite для индикатора (если не задан, загружается Resources/hold_indicator).")]
-    [SerializeField] private Sprite _holdIndicatorSprite;
+    [Tooltip("Префаб с компонентом HoldTargetIndicator (меню Tools/UI/Create Hold Target Indicator Prefab).")]
+    [SerializeField] private HoldTargetIndicator _holdIndicatorPrefab;
     [SerializeField] private Vector3 _holdIndicatorWorldOffset = new Vector3(0.8f, 1.5f, 0f);
-    [SerializeField] private Vector3 _holdIndicatorScale = new Vector3(0.8f, 0.8f, 1f);
-    [Header("Подсветка частей силуэта")]
-    [SerializeField] private Color _holdPartBaseColor = new Color(1, 1, 1, 0.55f);
-    [SerializeField] private Color _holdPartHighlightColor = new Color(1f, 0f, 0f, 0.55f);
-    [Header("Границы блоков (UV 0..1)")]
-    [SerializeField] private Rect _headUvRect = new Rect(0.25f, 0.8f, 0.5f, 0.2f);
-    [SerializeField] private Rect _torsoUvRect = new Rect(0.25f, 0.45f, 0.5f, 0.35f);
-    [SerializeField] private Rect _legsUvRect = new Rect(0.25f, 0f, 0.5f, 0.45f);
 
     private float _lastClickTime;
     private Vector2 _lastClickPosition;
     private HexCell _lastHoveredCell;
     private int _lastHoverAp = int.MinValue;
     private MovementPosture _lastHoverPosture = MovementPosture.Walk;
-    private GameObject _holdIndicatorGo;
-    private SpriteRenderer _holdIndicatorBaseRenderer;
-    private static Sprite _holdBlockSprite;
-    private static Material _holdOverlayMaterial;
-    // Индекс = (int)BodyPart (0=None,1=Head,2=Torso,3=Legs). Массив вместо Dictionary — нет foreach-аллокации.
-    private readonly SpriteRenderer[] _holdPartRenderers = new SpriteRenderer[4];
-    private BodyPart _hoveredBodyPart = BodyPart.None;
+    private HoldTargetIndicator _holdIndicator;
     private RemoteBattleUnitView _heldRemoteTarget;
     private Vector3 _holdIndicatorAnchorWorld;
     private bool _hasHoldIndicatorAnchor;
@@ -63,8 +40,6 @@ public class HexInputManager : MonoBehaviour
     /// <summary>Удержание ЛКМ по юниту — без <see cref="Physics.RaycastAll"/> (GC).</summary>
     private static readonly RaycastHit[] _remoteHoldRaycastHits = new RaycastHit[64];
     private readonly List<(int col, int row)> _doubleClickPathBuffer = new(64);
-    private float _holdCompositeHalfWidth = 0.5f;
-    private float _holdCompositeHalfHeight = 0.5f;
     [SerializeField] private AttackRangeHexOutline _attackRangeOutline;
     public static bool IsHoldingRemoteTargetWithLeftMouse { get; private set; }
 
@@ -80,31 +55,23 @@ public class HexInputManager : MonoBehaviour
     /// <summary>Обрабатываем только ближайшие попадания — дальше по лучу обычно не нужны; меньше сортировка/итерации.</summary>
     private const int MaxRaycastHitsToProcess = 32;
 
-    private Vector2 _lastBodyPartHighlightMousePos = new Vector2(float.NaN, float.NaN);
-
     // Кэш camera.transform — чтобы не дёргать native bridge каждый кадр.
     private Transform _cameraTransform;
-
-    // Предвычисленные границы UV-зон для ClassifyBodyPartFromUv — без Mathf.Clamp01 в хот-пасе.
-    private float _headMinU, _headMaxU, _headMinV, _headMaxV;
-    private float _torsoMinU, _torsoMaxU, _torsoMinV, _torsoMaxV;
-    private float _legsMinU, _legsMaxU, _legsMinV, _legsMaxV;
 
     private void Awake()
     {
         _hexGridCamera = FindFirstObjectByType<HexGridCamera>();
         if (_camera != null) _cameraTransform = _camera.transform;
-        PrecomputeUvBounds();
+        TryAssignHoldIndicatorPrefabFromResources();
     }
 
-    private void PrecomputeUvBounds()
+    private void TryAssignHoldIndicatorPrefabFromResources()
     {
-        _headMinU  = Mathf.Clamp01(_headUvRect.xMin);  _headMaxU  = Mathf.Clamp01(_headUvRect.xMax);
-        _headMinV  = Mathf.Clamp01(_headUvRect.yMin);  _headMaxV  = Mathf.Clamp01(_headUvRect.yMax);
-        _torsoMinU = Mathf.Clamp01(_torsoUvRect.xMin); _torsoMaxU = Mathf.Clamp01(_torsoUvRect.xMax);
-        _torsoMinV = Mathf.Clamp01(_torsoUvRect.yMin); _torsoMaxV = Mathf.Clamp01(_torsoUvRect.yMax);
-        _legsMinU  = Mathf.Clamp01(_legsUvRect.xMin);  _legsMaxU  = Mathf.Clamp01(_legsUvRect.xMax);
-        _legsMinV  = Mathf.Clamp01(_legsUvRect.yMin);  _legsMaxV  = Mathf.Clamp01(_legsUvRect.yMax);
+        if (_holdIndicatorPrefab != null)
+            return;
+        var fromResources = Resources.Load<HoldTargetIndicator>("HoldTargetIndicator");
+        if (fromResources != null)
+            _holdIndicatorPrefab = fromResources;
     }
 
     /// <summary>Сортировка по distance (insertion sort; при n ≤ 32 дёшево). Не используем System.Array.Sort — в Unity конфликтует с UnityEngine.Array.</summary>
@@ -477,7 +444,6 @@ public class HexInputManager : MonoBehaviour
         {
             _heldRemoteTarget = null;
             _hasHoldIndicatorAnchor = false;
-            _hoveredBodyPart = BodyPart.None;
             SetHoldIndicatorVisible(false);
             IsHoldingRemoteTargetWithLeftMouse = false;
             return;
@@ -496,11 +462,11 @@ public class HexInputManager : MonoBehaviour
         // При отпускании ЛКМ — сразу скрываем.
         if (!mouse.leftButton.isPressed)
         {
-            if (_heldRemoteTarget != null && _hoveredBodyPart != BodyPart.None)
-                ApplyAttackOnRelease(_heldRemoteTarget, _hoveredBodyPart, kb);
+            if (_heldRemoteTarget != null && _holdIndicator != null &&
+                _holdIndicator.HoveredPart != HoldTargetIndicator.BodyPartKind.None)
+                ApplyAttackOnRelease(_heldRemoteTarget, _holdIndicator.HoveredPart, kb);
             _heldRemoteTarget = null;
             _hasHoldIndicatorAnchor = false;
-            _hoveredBodyPart = BodyPart.None;
             SetHoldIndicatorVisible(false);
             IsHoldingRemoteTargetWithLeftMouse = false;
             return;
@@ -539,15 +505,20 @@ public class HexInputManager : MonoBehaviour
             _attackRangeOutline.ShowFromPlayer(_player);
 
         EnsureHoldIndicator();
-        if (_holdIndicatorGo == null) return;
+        if (_holdIndicator == null || !_holdIndicator.HasValidVisuals)
+            return;
 
-        _holdIndicatorGo.transform.position = _hasHoldIndicatorAnchor
+        Vector3 pos = _hasHoldIndicatorAnchor
             ? _holdIndicatorAnchorWorld
             : _heldRemoteTarget.transform.position + _holdIndicatorWorldOffset;
-        if (_cameraTransform != null)
-            _holdIndicatorGo.transform.rotation = Quaternion.LookRotation(-_cameraTransform.forward, _cameraTransform.up);
-        UpdateHoldIndicatorBodyPartHighlight(mouse, mouse.leftButton.wasPressedThisFrame);
-        SetHoldIndicatorVisible(true);
+        Quaternion rot = _cameraTransform != null
+            ? Quaternion.LookRotation(-_cameraTransform.forward, _cameraTransform.up)
+            : Quaternion.identity;
+        _holdIndicator.SetWorldPose(pos, rot);
+        _holdIndicator.UpdateBodyPartHighlight(_camera, mouse.position.ReadValue(), mouse.leftButton.wasPressedThisFrame);
+        _holdIndicator.SetVisible(true);
+        if (_hexGridCamera != null)
+            _hexGridCamera.ClearThirdPersonOrbitLmbDragThisPress();
         IsHoldingRemoteTargetWithLeftMouse = true;
     }
 
@@ -618,223 +589,61 @@ public class HexInputManager : MonoBehaviour
 
     private void EnsureHoldIndicator()
     {
-        if (_holdIndicatorGo != null) return;
+        if (_holdIndicator != null)
+            return;
+        if (_holdIndicatorPrefab == null)
+            return;
 
-        _holdIndicatorGo = new GameObject("HoldTargetIndicator");
-        _holdIndicatorGo.transform.localScale = _holdIndicatorScale;
-
-        Sprite baseSprite = LoadHoldIndicatorSprite();
-        if (baseSprite == null)
+        GameObject go = Instantiate(_holdIndicatorPrefab.gameObject);
+        go.name = "HoldTargetIndicator";
+        _holdIndicator = go.GetComponent<HoldTargetIndicator>();
+        if (_holdIndicator == null)
         {
-            Destroy(_holdIndicatorGo);
-            _holdIndicatorGo = null;
+            Destroy(go);
             return;
         }
 
-        GameObject baseGo = new GameObject("HoldBase");
-        baseGo.transform.SetParent(_holdIndicatorGo.transform, false);
-        _holdIndicatorBaseRenderer = baseGo.AddComponent<SpriteRenderer>();
-        _holdIndicatorBaseRenderer.sprite = baseSprite;
-        ConfigureOverlayRenderer(_holdIndicatorBaseRenderer, 5000);
-        _holdIndicatorBaseRenderer.color = Color.white;
+        _holdIndicator.EnsureBuilt();
+        if (!_holdIndicator.HasValidVisuals)
+        {
+            Destroy(go);
+            _holdIndicator = null;
+            return;
+        }
 
-        RecalculateCompositeBounds();
-        CreateBodyPartBlock(BodyPart.Head, _headUvRect);
-        CreateBodyPartBlock(BodyPart.Torso, _torsoUvRect);
-        CreateBodyPartBlock(BodyPart.Legs, _legsUvRect);
-
-        RecalculateCompositeBounds();
-        ApplyHoldPartColors(BodyPart.None);
-        SetHoldIndicatorVisible(false);
-    }
-
-    private Sprite LoadHoldIndicatorSprite()
-    {
-        if (_holdIndicatorSprite != null)
-            return _holdIndicatorSprite;
-
-        Sprite fromSprite = Resources.Load<Sprite>("hold_indicator");
-        if (fromSprite != null)
-            return fromSprite;
-
-        Texture2D tex = Resources.Load<Texture2D>("hold_indicator");
-        if (tex == null)
-            return null;
-
-        return Sprite.Create(
-            tex,
-            new Rect(0f, 0f, tex.width, tex.height),
-            new Vector2(0.5f, 0.5f),
-            100f);
+        _holdIndicator.SetVisible(false);
     }
 
     private void SetHoldIndicatorVisible(bool visible)
     {
-        if (_holdIndicatorGo != null && _holdIndicatorGo.activeSelf != visible)
-            _holdIndicatorGo.SetActive(visible);
+        if (_holdIndicator != null)
+            _holdIndicator.SetVisible(visible);
         if (!visible)
             HideAttackRangeOutline();
     }
 
-    private void CreateBodyPartBlock(BodyPart part, Rect uvRect)
+    private void ApplyAttackOnRelease(RemoteBattleUnitView target, HoldTargetIndicator.BodyPartKind part, Keyboard kb)
     {
-        Sprite s = GetHoldBlockSprite();
-        if (s == null) return;
-
-        float fullW = _holdCompositeHalfWidth * 2f;
-        float fullH = _holdCompositeHalfHeight * 2f;
-        float minU = Mathf.Clamp01(uvRect.xMin);
-        float maxU = Mathf.Clamp01(uvRect.xMax);
-        float minV = Mathf.Clamp01(uvRect.yMin);
-        float maxV = Mathf.Clamp01(uvRect.yMax);
-        float centerU = (minU + maxU) * 0.5f;
-        float centerV = (minV + maxV) * 0.5f;
-        float sizeU = Mathf.Max(0f, maxU - minU);
-        float sizeV = Mathf.Max(0f, maxV - minV);
-
-        GameObject go = new GameObject("HoldBlock_" + part);
-        go.transform.SetParent(_holdIndicatorGo.transform, false);
-        go.transform.localPosition = new Vector3((centerU - 0.5f) * fullW, (centerV - 0.5f) * fullH, 0f);
-        go.transform.localScale = new Vector3(sizeU * fullW, sizeV * fullH, 1f);
-
-        SpriteRenderer sr = go.AddComponent<SpriteRenderer>();
-        sr.sprite = s;
-        ConfigureOverlayRenderer(sr, 5001);
-        sr.color = _holdPartBaseColor;
-        _holdPartRenderers[(int)part] = sr;
-    }
-
-    private static void ConfigureOverlayRenderer(SpriteRenderer sr, int sortingOrder)
-    {
-        if (sr == null) return;
-        sr.shadowCastingMode = ShadowCastingMode.Off;
-        sr.receiveShadows = false;
-        sr.lightProbeUsage = LightProbeUsage.Off;
-        sr.reflectionProbeUsage = ReflectionProbeUsage.Off;
-        sr.motionVectorGenerationMode = MotionVectorGenerationMode.ForceNoMotion;
-        sr.allowOcclusionWhenDynamic = false;
-        sr.sortingOrder = sortingOrder;
-
-        int uiLayerId = SortingLayer.NameToID("UI");
-        if (uiLayerId != 0)
-            sr.sortingLayerID = uiLayerId;
-
-        Material overlayMat = GetHoldOverlayMaterial();
-        if (overlayMat != null)
-            sr.sharedMaterial = overlayMat;
-    }
-
-    private static Material GetHoldOverlayMaterial()
-    {
-        if (_holdOverlayMaterial != null) return _holdOverlayMaterial;
-        Shader shader = Shader.Find("Custom/HoldIndicatorOverlay");
-        if (shader == null)
-            shader = Shader.Find("Sprites/Default");
-        if (shader == null) return null;
-        _holdOverlayMaterial = new Material(shader)
-        {
-            renderQueue = 5000
-        };
-        _holdOverlayMaterial.enableInstancing = true;
-        return _holdOverlayMaterial;
-    }
-
-    private void RecalculateCompositeBounds()
-    {
-        float maxHalfW = 0.5f;
-        float maxHalfH = 0.5f;
-        if (_holdIndicatorBaseRenderer != null && _holdIndicatorBaseRenderer.sprite != null)
-        {
-            Bounds bb = _holdIndicatorBaseRenderer.sprite.bounds;
-            maxHalfW = Mathf.Max(maxHalfW, Mathf.Abs(bb.extents.x));
-            maxHalfH = Mathf.Max(maxHalfH, Mathf.Abs(bb.extents.y));
-        }
-
-        for (int i = 1; i < _holdPartRenderers.Length; i++) // 0=None, пропускаем
-        {
-            SpriteRenderer sr = _holdPartRenderers[i];
-            if (sr == null || sr.sprite == null) continue;
-            Bounds b = sr.bounds;
-            maxHalfW = Mathf.Max(maxHalfW, Mathf.Abs(b.extents.x));
-            maxHalfH = Mathf.Max(maxHalfH, Mathf.Abs(b.extents.y));
-        }
-        _holdCompositeHalfWidth = maxHalfW;
-        _holdCompositeHalfHeight = maxHalfH;
-    }
-
-    private static Sprite GetHoldBlockSprite()
-    {
-        if (_holdBlockSprite != null) return _holdBlockSprite;
-        Texture2D t = new Texture2D(1, 1, TextureFormat.RGBA32, false);
-        t.SetPixel(0, 0, Color.white);
-        t.Apply();
-        _holdBlockSprite = Sprite.Create(t, new Rect(0f, 0f, 1f, 1f), new Vector2(0.5f, 0.5f), 1f);
-        return _holdBlockSprite;
-    }
-
-    private BodyPart ClassifyBodyPartFromUv(float u, float v)
-    {
-        if (u >= _headMinU  && u <= _headMaxU  && v >= _headMinV  && v <= _headMaxV)  return BodyPart.Head;
-        if (u >= _torsoMinU && u <= _torsoMaxU && v >= _torsoMinV && v <= _torsoMaxV) return BodyPart.Torso;
-        if (u >= _legsMinU  && u <= _legsMaxU  && v >= _legsMinV  && v <= _legsMaxV)  return BodyPart.Legs;
-        return BodyPart.None;
-    }
-
-    private void UpdateHoldIndicatorBodyPartHighlight(Mouse mouse, bool forceImmediate = false)
-    {
-        if (_holdIndicatorGo == null || _camera == null)
-            return;
-
-        Vector2 mousePos = mouse.position.ReadValue();
-        // Каждый второй кадр + пропуск при почти неподвижной мыши — меньше Plane.Raycast / InverseTransform.
-        // forceImmediate: при первом нажатии обязательно определяем body part, иначе быстрый клик-отпуск не зарегистрирует атаку.
-        if (!forceImmediate && (Time.frameCount & 1) != 0)
-            return;
-        if (!forceImmediate && !float.IsNaN(_lastBodyPartHighlightMousePos.x) &&
-            (mousePos - _lastBodyPartHighlightMousePos).sqrMagnitude < 0.25f)
-            return;
-        _lastBodyPartHighlightMousePos = mousePos;
-
-        Ray ray = _camera.ScreenPointToRay(new Vector3(mousePos.x, mousePos.y, 0f));
-        Plane spritePlane = new Plane(_holdIndicatorGo.transform.forward, _holdIndicatorGo.transform.position);
-        if (!spritePlane.Raycast(ray, out float enter) || enter <= 0f)
-        {
-            ApplyHoldPartColors(BodyPart.None);
-            return;
-        }
-
-        Vector3 worldHit = ray.GetPoint(enter);
-        Vector3 localHit = _holdIndicatorGo.transform.InverseTransformPoint(worldHit);
-        float halfW = Mathf.Max(0.0001f, _holdCompositeHalfWidth);
-        float halfH = Mathf.Max(0.0001f, _holdCompositeHalfHeight);
-        float u = localHit.x / (halfW * 2f) + 0.5f;
-        float v = localHit.y / (halfH * 2f) + 0.5f;
-        if (u < 0f || u > 1f || v < 0f || v > 1f)
-        {
-            ApplyHoldPartColors(BodyPart.None);
-            return;
-        }
-
-        BodyPart part = ClassifyBodyPartFromUv(u, v);
-        ApplyHoldPartColors(part);
-    }
-
-    private void ApplyAttackOnRelease(RemoteBattleUnitView target, BodyPart part, Keyboard kb)
-    {
-        if (target == null || part == BodyPart.None)
+        if (target == null || part == HoldTargetIndicator.BodyPartKind.None)
             return;
 
         string label = "корпус";
         switch (part)
         {
-            case BodyPart.Head:
+            case HoldTargetIndicator.BodyPartKind.Head:
                 label = "голова";
                 break;
-            case BodyPart.Torso:
+            case HoldTargetIndicator.BodyPartKind.Torso:
                 label = "корпус";
                 break;
-            case BodyPart.Legs:
+            case HoldTargetIndicator.BodyPartKind.Legs:
                 label = "ноги";
+                break;
+            case HoldTargetIndicator.BodyPartKind.LeftHand:
+                label = "левая рука";
+                break;
+            case HoldTargetIndicator.BodyPartKind.RightHand:
+                label = "правая рука";
                 break;
         }
 
@@ -844,19 +653,5 @@ public class HexInputManager : MonoBehaviour
             GameSession.Active.TryPerformSilhouetteAttack(target, label, shiftRepeat);
         if (!applied)
             GameSession.OnNetworkMessage?.Invoke("Атака не применена");
-    }
-
-    private void ApplyHoldPartColors(BodyPart highlightedPart)
-    {
-        if (_hoveredBodyPart == highlightedPart) return;
-        _hoveredBodyPart = highlightedPart;
-
-        int highlighted = (int)highlightedPart;
-        for (int i = 1; i < _holdPartRenderers.Length; i++) // 0=None, пропускаем
-        {
-            SpriteRenderer sr = _holdPartRenderers[i];
-            if (sr == null) continue;
-            sr.color = i == highlighted ? _holdPartHighlightColor : _holdPartBaseColor;
-        }
     }
 }

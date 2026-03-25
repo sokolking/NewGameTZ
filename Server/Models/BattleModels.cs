@@ -275,13 +275,12 @@ public class BattleUserBrowseRowDto
     public int Strength { get; set; }
     public int Endurance { get; set; }
     public int Accuracy { get; set; }
-    public int AvailableStatPoints { get; set; }
     public int MaxHp { get; set; }
     public int MaxAp { get; set; }
     public string WeaponCode { get; set; } = "fist";
 }
 
-/// <summary>Обновление пользователя из админки /users. Пароль: null — не менять.</summary>
+/// <summary>Обновление пользователя из админки /users (игрок сам характеристики не меняет). Пароль: null — не менять.</summary>
 public class UserUpdateRequest
 {
     public long Id { get; set; }
@@ -296,6 +295,7 @@ public class UserUpdateRequest
     public string WeaponCode { get; set; } = "fist";
 }
 
+/// <summary>Публичный срез прогресса. Характеристики меняются только через БД/админку, не игроком.</summary>
 public class UserProgressProfileDto
 {
     public string Username { get; set; } = "";
@@ -304,7 +304,6 @@ public class UserProgressProfileDto
     public int Strength { get; set; }
     public int Endurance { get; set; }
     public int Accuracy { get; set; }
-    public int AvailableStatPoints { get; set; }
     public int MaxHp { get; set; }
     public int MaxAp { get; set; }
     public int HitBonusPercent { get; set; }

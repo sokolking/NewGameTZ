@@ -300,7 +300,6 @@ public static class BattleUsersDashboardPage
               <span>str ${user.strength}</span>
               <span>end ${user.endurance}</span>
               <span>acc ${user.accuracy}</span>
-              <span>free ${user.availableStatPoints}</span>
               <span>maxHp ${user.maxHp}</span>
               <span>maxAp ${user.maxAp}</span>
               <span>weapon ${escapeHtml(user.weaponCode || '')}</span>

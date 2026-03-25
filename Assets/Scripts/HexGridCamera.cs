@@ -87,6 +87,12 @@ public class HexGridCamera : MonoBehaviour
         && _thirdPersonOrbitMouseButton == 0
         && _thirdPersonOrbitLmbDragThisPress;
 
+    /// <summary>Сбрасывает «орбиту ЛКМ в этом нажатии», когда начато удержание цели по силуэту (камера обновляется раньше ввода).</summary>
+    public void ClearThirdPersonOrbitLmbDragThisPress()
+    {
+        _thirdPersonOrbitLmbDragThisPress = false;
+    }
+
     public float LastZoomInputTime => _lastZoomInputTime;
     public int ZoomChangeCount => _zoomChangeCount;
     public bool IsZoomApplied => _cam != null && _cam.orthographic && _cam.orthographicSize < _orthoMax - 0.001f;
@@ -250,13 +256,15 @@ public class HexGridCamera : MonoBehaviour
         }
 
         Vector2 mouseDelta = Mouse.current.delta.ReadValue();
-        if (_thirdPersonOrbitMouseButton == 0 && mouseDelta.sqrMagnitude >= 0.0001f)
-            _thirdPersonOrbitLmbDragThisPress = true;
+        if (mouseDelta.sqrMagnitude < 0.0001f)
+            return;
 
-        if (mouseDelta.sqrMagnitude < 0.0001f) return;
-
+        // Движение мыши по силуэту цели (ЛКМ) не считаем орбитой — иначе флаг выставлялся до этой проверки и индикатор исчезал.
         if (_thirdPersonOrbitMouseButton == 0 && HexInputManager.IsHoldingRemoteTargetWithLeftMouse)
             return;
+
+        if (_thirdPersonOrbitMouseButton == 0)
+            _thirdPersonOrbitLmbDragThisPress = true;
 
         _thirdPersonOrbitYawDeg += mouseDelta.x * _thirdPersonOrbitYawSensitivity;
         _thirdPersonOrbitPitchDeg -= mouseDelta.y * _thirdPersonOrbitPitchSensitivity;

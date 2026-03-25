@@ -9,7 +9,6 @@ public sealed class BattleUserDatabase
     private const int BaseStat = 10;
     private const int MaxLevel = 16;
     private const int ExpPerLevel = 500;
-    private const int PointsPerLevel = 10;
 
     private readonly BattlePostgresDatabase _database;
 
@@ -67,7 +66,6 @@ LIMIT @take;
             });
             var last = rows[^1];
             last.Level = ComputeLevel(last.Experience);
-            last.AvailableStatPoints = ComputeAvailableStatPoints(last.Level, last.Strength, last.Endurance, last.Accuracy);
         }
 
         return rows;
@@ -141,7 +139,6 @@ LIMIT 1;
             Strength = strength,
             Endurance = endurance,
             Accuracy = accuracy,
-            AvailableStatPoints = ComputeAvailableStatPoints(level, strength, endurance, accuracy),
             MaxHp = ComputeMaxHp(strength),
             MaxAp = ComputeMaxAp(endurance),
             HitBonusPercent = accuracy * 2,
@@ -183,7 +180,6 @@ LIMIT 1;
             Strength = strength,
             Endurance = endurance,
             Accuracy = accuracy,
-            AvailableStatPoints = ComputeAvailableStatPoints(level, strength, endurance, accuracy),
             MaxHp = ComputeMaxHp(strength),
             MaxAp = ComputeMaxAp(endurance),
             HitBonusPercent = accuracy * 2,
@@ -270,14 +266,6 @@ ORDER BY s.slot_index;
         if (req.Password != null && string.IsNullOrWhiteSpace(req.Password))
         {
             error = "password cannot be empty when provided";
-            return false;
-        }
-
-        int level = ComputeLevel(req.Experience);
-        int available = ComputeAvailableStatPoints(level, req.Strength, req.Endurance, req.Accuracy);
-        if (available < 0)
-        {
-            error = "allocated stats exceed points budget for current level";
             return false;
         }
 
@@ -368,13 +356,6 @@ WHERE username = @username;
     {
         int lv = 1 + Math.Max(0, experience) / ExpPerLevel;
         return Math.Clamp(lv, 1, MaxLevel);
-    }
-
-    private static int ComputeAvailableStatPoints(int level, int strength, int endurance, int accuracy)
-    {
-        int budget = (Math.Max(1, level) - 1) * PointsPerLevel;
-        int spent = Math.Max(0, strength - BaseStat) + Math.Max(0, endurance - BaseStat) + Math.Max(0, accuracy - BaseStat);
-        return budget - spent;
     }
 
     private static int ComputeMaxHp(int strength) => Math.Max(1, strength * 2);
