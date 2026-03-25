@@ -17,21 +17,21 @@ public class HexGridCamera : MonoBehaviour
     public bool IsFollowThirdPersonFullyActive => _followThirdPersonActive;
 
     [SerializeField] private HexGrid _grid;
-    [Tooltip("Отступ от краёв сетки (world units).")]
+    [Tooltip("Padding from grid edges (world units).")]
     [SerializeField] private float _padding = 2f;
 
-    [Header("Зум")]
-    [Tooltip("Чувствительность колёсика (чем больше — сильнее зум за один щелчок).")]
+    [Header("Zoom")]
+    [Tooltip("Mouse wheel sensitivity (higher = stronger zoom per notch).")]
     [SerializeField] private float _zoomSensitivity = 3f;
-    [Tooltip("Минимальный orthographic size относительно начального «вся сетка» (меньше — сильнее приближение). Отдалить дальше начального кадра нельзя.")]
+    [Tooltip("Minimum orthographic size vs initial \"fit whole grid\" (lower = zoom in more). Cannot zoom out past initial frame.")]
     [SerializeField] [Range(0.05f, 1f)] private float _minZoomFactor = 0.2f;
 
-    [Header("Перетаскивание камеры (drag)")]
-    [Tooltip("0 = ЛКМ, 1 = ПКМ, 2 = СКМ. Рекомендуется СКМ или ПКМ, чтобы не мешать кликам по гексам.")]
+    [Header("Camera pan (drag)")]
+    [Tooltip("0 = LMB, 1 = RMB, 2 = MMB. Prefer MMB or RMB so hex clicks are not blocked.")]
     [SerializeField] private int _panMouseButton = 0;
-    [Tooltip("Чувствительность сдвига при перетаскивании.")]
+    [Tooltip("Pan sensitivity while dragging.")]
     [SerializeField] private float _panSensitivity = 0.35f;
-    [Tooltip("Разрешать сдвиг только если зум ближе, чем «вся сетка» (orthographic size меньше максимума).")]
+    [Tooltip("Allow pan only when zoomed in closer than \"fit whole grid\" (ortho size below max).")]
     [SerializeField] private bool _panOnlyWhenZoomedIn = true;
 
     private Camera _cam;
@@ -42,30 +42,30 @@ public class HexGridCamera : MonoBehaviour
     private float _lastZoomInputTime = -999f;
     private int _zoomChangeCount;
 
-    [Header("Слежение 3-е лицо во время анимации хода")]
-    [Tooltip("Высота камеры над землёй относительно юнита.")]
+    [Header("Third-person follow during move animation")]
+    [Tooltip("Camera height above ground relative to unit.")]
     [SerializeField] private float _followHeight = 5f;
-    [Tooltip("Дистанция «сзади» по горизонтали (относительно того, куда смотрит цель).")]
+    [Tooltip("Horizontal distance behind target (relative to where the target faces).")]
     [SerializeField] private float _followBackDistance = 6f;
-    [Tooltip("Сглаживание поворота камеры к цели (выше — меньше дёрганья по pitch/yaw).")]
+    [Tooltip("Camera rotation smoothing toward target (higher = less jitter on pitch/yaw).")]
     [SerializeField] private float _followRotationLerp = 18f;
-    [Tooltip("Сглаживание позиции камеры (0 = жёстко следует юниту; >0 может дёргаться вместе с Lerp движения).")]
+    [Tooltip("Camera position smoothing (0 = rigid follow; >0 may jitter with movement lerp).")]
     [SerializeField] private float _followPositionSmoothTime = 0f;
-    [Tooltip("Длительность плавного «зума» из вида сверху в 3-е лицо перед анимацией хода.")]
+    [Tooltip("Duration of smooth zoom from top-down into third person before move animation.")]
     [SerializeField] private float _thirdPersonEnterDuration = 0.45f;
-    [Tooltip("Длительность плавного возврата к виду сверху после анимации хода.")]
+    [Tooltip("Duration of smooth return to top-down after move animation.")]
     [SerializeField] private float _thirdPersonExitDuration = 0.5f;
 
-    [Header("3-е лицо: орбита (ручной поворот)")]
-    [Tooltip("0 = ЛКМ, 1 = ПКМ, 2 = СКМ. Удерживайте и двигайте мышь, чтобы крутить камеру вокруг цели.")]
+    [Header("Third person: orbit (manual rotate)")]
+    [Tooltip("0 = LMB, 1 = RMB, 2 = MMB. Hold and drag to orbit camera around target.")]
     [SerializeField] private int _thirdPersonOrbitMouseButton = 0;
-    [Tooltip("Чувствительность поворота вокруг вертикальной оси (град/пикс).")]
+    [Tooltip("Yaw sensitivity (deg/pixel).")]
     [SerializeField] private float _thirdPersonOrbitYawSensitivity = 0.5f;
-    [Tooltip("Чувствительность наклона вверх/вниз (град/пикс).")]
+    [Tooltip("Pitch sensitivity (deg/pixel).")]
     [SerializeField] private float _thirdPersonOrbitPitchSensitivity = 0.12f;
-    [Tooltip("Минимальный угол наклона (смотреть чуть сверху).")]
+    [Tooltip("Minimum pitch (slightly from above).")]
     [SerializeField] private float _thirdPersonOrbitPitchMin = -35f;
-    [Tooltip("Максимальный угол наклона (смотреть снизу).")]
+    [Tooltip("Maximum pitch (can look from below).")]
     [SerializeField] private float _thirdPersonOrbitPitchMax = 55f;
 
     private Transform _followTarget;

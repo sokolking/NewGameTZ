@@ -18,14 +18,14 @@ public sealed class CharacterNameplateView : MonoBehaviour
 {
     [SerializeField] private TextMeshProUGUI _nameLevelText;
     [SerializeField] private RectTransform _hpFillRect;
-    [Tooltip("Смещение от точки следования (мировые координаты). Компонента Z переопределяется режимом камеры (планирование / просмотр).")]
+    [Tooltip("Offset from follow point (world space). Z is overridden by camera mode (planning / view).")]
     [SerializeField] private Vector3 _worldOffset = new Vector3(0f, 2.1f, 0f);
-    [Tooltip("World offset Z в Top-Down View (вид сверху).")]
+    [Tooltip("World offset Z in top-down view.")]
     [SerializeField] private float _planningWorldOffsetZ = 1f;
-    [Tooltip("World offset Z в Thirf-Person View (3-е лицо).")]
+    [Tooltip("World offset Z in third-person view.")]
     [SerializeField] private float _viewWorldOffsetZ = 0f;
     [SerializeField] private bool _faceCamera = true;
-    [Tooltip("Поворот вокруг локальной Y после выравнивания с плоскостью экрана. 180° убирает зеркальный TMP на world-space canvas.")]
+    [Tooltip("Extra local Y rotation after aligning to screen plane. 180° fixes mirrored TMP on world-space canvas.")]
     [SerializeField] private float _extraBillboardYawDegrees = 180f;
 
     private Transform _follow;

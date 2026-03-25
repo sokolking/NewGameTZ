@@ -33,12 +33,14 @@ public partial class BattleRoom
                     MaxHp = DefaultPlayerMaxHp,
                     CurrentHp = DefaultPlayerMaxHp,
                     WeaponCode = DefaultWeaponCode,
+                    WeaponDamageMin = DefaultWeaponDamage,
                     WeaponDamage = DefaultWeaponDamage,
                     WeaponRange = DefaultWeaponRange,
                     WeaponAttackApCost = GetWeaponAttackApCostFromDb(DefaultWeaponCode),
                     Accuracy = 10,
                     WeaponSpreadPenalty = 0,
                     WeaponTrajectoryHeight = 1,
+                    WeaponIsSniper = false,
                     Posture = PostureWalk
                 };
             }

@@ -12,24 +12,24 @@ using UnityEngine;
 [DefaultExecutionOrder(100)]
 public class GrassGroundPlane : MonoBehaviour
 {
-    [Header("Текстура травы")]
-    [Tooltip("Текстура травы. Если не задана — загружается Assets/Resources/grass_seamless.")]
+    [Header("Grass texture")]
+    [Tooltip("Grass texture. If unset, loads Assets/Resources/grass_seamless.")]
     [SerializeField] private Texture2D _grassTexture;
 
-    [Tooltip("Размер одной плитки текстуры в world-units. Меньше значение = мельче узор.")]
+    [Tooltip("One texture tile size in world units. Smaller = finer pattern.")]
     [SerializeField] private float _tileWorldSize = 3f;
 
-    [Header("Transform плоскости")]
-    [Tooltip("Позиция плоскости (local). Если Scale = (0,0) — вычисляется автоматически по сетке.")]
+    [Header("Plane transform")]
+    [Tooltip("Plane position (local). If Scale is (0,0), computed from grid.")]
     [SerializeField] private Vector3 _position = new Vector3(0f, -0.02f, 0f);
 
-    [Tooltip("Поворот плоскости (Euler). X=90 — горизонтальная плоскость.")]
+    [Tooltip("Plane rotation (Euler). X=90 = horizontal plane.")]
     [SerializeField] private Vector3 _rotation = new Vector3(90f, 0f, 0f);
 
-    [Tooltip("Масштаб плоскости (X, Y). (0, 0) — авторасчёт по размеру сетки + Border Padding.")]
+    [Tooltip("Plane scale (X, Y). (0,0) = auto from grid size + Border Padding.")]
     [SerializeField] private Vector2 _scale = Vector2.zero;
 
-    [Tooltip("Отступ вокруг сетки при авторасчёте Scale (world-units).")]
+    [Tooltip("Padding around grid when auto-calculating scale (world units).")]
     [SerializeField] private float _borderPadding = 1.5f;
 
     private GameObject _groundPlane;
@@ -112,8 +112,8 @@ public class GrassGroundPlane : MonoBehaviour
 
         if (tex == null)
         {
-            Debug.LogWarning("[GrassGroundPlane] Текстура не найдена. " +
-                             "Положите grass_seamless.jpg в Assets/Resources/ или назначьте в инспекторе.");
+            Debug.LogWarning("[GrassGroundPlane] Texture not found. " +
+                             "Place grass_seamless.jpg in Assets/Resources/ or assign in the inspector.");
             return mat;
         }
 

@@ -8,30 +8,30 @@ using System.Collections.Generic;
 /// </summary>
 public class MainMenuUI : MonoBehaviour
 {
-    [Header("Сцены")]
+    [Header("Scenes")]
     [SerializeField] private string _gameSceneName = "MainScene";
 
-    [Header("Панель настроек")]
+    [Header("Settings panel")]
     [SerializeField] private GameObject _settingsPanel;
 
-    [Header("Разрешение экрана")]
+    [Header("Screen resolution")]
     [SerializeField] private Text _resolutionText;
 
-    [Header("Матчмейкинг")]
+    [Header("Matchmaking")]
     [SerializeField] private MainMenuMatchmaking _matchmaking;
 
-    [Header("Авторизация")]
-    [Tooltip("Назначь в сцене (имя AuthPanel/LoginInputField). Создаётся Tools → Hex Grid → Setup Main Menu UI / Add Main Menu Auth Panel.")]
+    [Header("Auth")]
+    [Tooltip("Assign in scene (AuthPanel/LoginInputField). Created via Tools → Hex Grid → Setup Main Menu UI / Add Main Menu Auth Panel.")]
     [SerializeField] private InputField _loginInputField;
-    [Tooltip("Назначь в сцене (AuthPanel/PasswordInputField).")]
+    [Tooltip("Assign in scene (AuthPanel/PasswordInputField).")]
     [SerializeField] private InputField _passwordInputField;
 
-    [Header("Режим игры")]
-    [Tooltip("Включено — соло-бой на сервере (1 игрок + моб). Выключено — поиск живого соперника (PvP). Назначь Toggle в сцене (имя Toggle_SoloVsMonster или Toggle_SinglePlayer).")]
+    [Header("Game mode")]
+    [Tooltip("On: solo battle on server (1 player + mob). Off: PvP matchmaking. Assign Toggle in scene (Toggle_SoloVsMonster or Toggle_SinglePlayer).")]
     [SerializeField] private Toggle _soloVsMonsterToggle;
 
-    [Header("Сервер")]
-    [Tooltip("Включено: http://localhost:5000. Выключено: " + BattleServerRuntime.ProductionBaseUrl + ". Только ссылка из сцены (имя Toggle_Debug).")]
+    [Header("Server")]
+    [Tooltip("On: http://localhost:5000. Off: " + BattleServerRuntime.ProductionBaseUrl + ". Wire from scene (Toggle_Debug).")]
     [SerializeField] private Toggle _debugLocalhostToggle;
 
     // Кнопки меню (находим по имени).

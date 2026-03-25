@@ -5,7 +5,7 @@ using UnityEngine;
 /// </summary>
 public sealed class BattleSceneMusic : MonoBehaviour
 {
-    [Tooltip("Путь в Resources без расширения, например Audio/battle для Assets/Resources/Audio/battle.mp3")]
+    [Tooltip("Resources path without extension, e.g. Audio/battle for Assets/Resources/Audio/battle.mp3")]
     [SerializeField] private string _clipResourcesPath = "Audio/battle";
 
     [SerializeField] [Range(0f, 1f)] private float _volume = 0.55f;

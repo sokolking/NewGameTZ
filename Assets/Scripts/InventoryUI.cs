@@ -19,7 +19,7 @@ public sealed class InventoryUI : MonoBehaviour
     [SerializeField] private Image[] _cellImages = new Image[12];
     [SerializeField] private Button[] _cellButtons = new Button[12];
     [SerializeField] private Image _activeWeaponImage;
-    [Tooltip("Текст «ОД:X» стоимости атаки текущим оружием. Имя в сцене: ItemAtionPointsCost.")]
+    [Tooltip("Text for AP:X attack cost with current weapon. Scene name: ItemAtionPointsCost.")]
     [SerializeField] private TextMeshProUGUI _itemActionPointsCostTmp;
     [SerializeField] private Text _itemActionPointsCostLegacy;
 
@@ -349,7 +349,7 @@ public sealed class InventoryUI : MonoBehaviour
         if (od == _lastDisplayedAttackApOd)
             return;
         _lastDisplayedAttackApOd = od;
-        string s = $"ОД:{od}";
+        string s = Loc.Tf("ui.ap_colon", od);
         if (_itemActionPointsCostTmp != null)
             _itemActionPointsCostTmp.text = s;
         if (_itemActionPointsCostLegacy != null)

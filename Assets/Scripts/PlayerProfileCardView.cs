@@ -19,10 +19,10 @@ public sealed class PlayerProfileCardView : MonoBehaviour
     public void SetData(string nickname, int level, int strength, int endurance, int accuracy)
     {
         if (_nicknameText != null) _nicknameText.text = string.IsNullOrWhiteSpace(nickname) ? "Player" : nickname;
-        if (_levelText != null) _levelText.text = $"Level {Mathf.Max(1, level)}";
-        if (_strengthText != null) _strengthText.text = $"Сила: {Mathf.Max(0, strength)}";
-        if (_enduranceText != null) _enduranceText.text = $"Выносливость: {Mathf.Max(0, endurance)}";
-        if (_accuracyText != null) _accuracyText.text = $"Меткость: {Mathf.Max(0, accuracy)}";
+        if (_levelText != null) _levelText.text = Loc.Tf("profile.level", Mathf.Max(1, level));
+        if (_strengthText != null) _strengthText.text = Loc.Tf("profile.strength", Mathf.Max(0, strength));
+        if (_enduranceText != null) _enduranceText.text = Loc.Tf("profile.endurance", Mathf.Max(0, endurance));
+        if (_accuracyText != null) _accuracyText.text = Loc.Tf("profile.accuracy", Mathf.Max(0, accuracy));
     }
 
     private void Update()

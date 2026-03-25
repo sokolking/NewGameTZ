@@ -7,7 +7,7 @@ using UnityEngine;
 [DisallowMultipleComponent]
 public sealed class UiModalBackdropOrder : MonoBehaviour
 {
-    [Tooltip("Если пусто — ищется дочерний Background / Backdrop / GrayBG.")]
+    [Tooltip("If empty, searches for child Background / Backdrop / GrayBG.")]
     [SerializeField] private Transform _backdrop;
 
     private void OnEnable()

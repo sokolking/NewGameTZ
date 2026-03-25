@@ -55,10 +55,10 @@ static bool DownloadsHasAnyFile(string downloadsPath)
         if (Directory.Exists(path))
         {
             builder.WebHost.UseWebRoot(path);
-            Console.WriteLine($"[StaticFiles] WebRoot из appsettings StaticFiles:WebRoot = {path}");
+            Console.WriteLine($"[StaticFiles] WebRoot from appsettings StaticFiles:WebRoot = {path}");
         }
         else
-            Console.WriteLine($"[StaticFiles] Предупреждение: StaticFiles:WebRoot не существует: {path}");
+            Console.WriteLine($"[StaticFiles] Warning: StaticFiles:WebRoot does not exist: {path}");
     }
     else
     {
@@ -94,10 +94,10 @@ static bool DownloadsHasAnyFile(string downloadsPath)
         if (picked != null)
         {
             builder.WebHost.UseWebRoot(picked);
-            Console.WriteLine($"[StaticFiles] WebRoot авто = {picked} (ContentRoot = {cr})");
+            Console.WriteLine($"[StaticFiles] WebRoot auto = {picked} (ContentRoot = {cr})");
         }
         else
-            Console.WriteLine($"[StaticFiles] WebRoot не найден; ContentRoot = {cr}");
+            Console.WriteLine($"[StaticFiles] WebRoot not found; ContentRoot = {cr}");
     }
 }
 var logStore = new BattleLogStore();
@@ -108,11 +108,13 @@ builder.Services.AddSingleton<BattleTurnDatabase>();
 builder.Services.AddSingleton<BattleUserDatabase>();
 builder.Services.AddSingleton<BattleWeaponDatabase>();
 builder.Services.AddSingleton<BattleObstacleBalanceDatabase>();
+builder.Services.AddSingleton<BattleBodyPartDatabase>();
 builder.Services.AddSingleton<BattleRoomStore>(sp => new BattleRoomStore(
     sp.GetRequiredService<BattleHistoryDatabase>(),
     sp.GetRequiredService<BattleTurnDatabase>(),
     sp.GetRequiredService<BattleWeaponDatabase>(),
-    sp.GetRequiredService<BattleObstacleBalanceDatabase>()));
+    sp.GetRequiredService<BattleObstacleBalanceDatabase>(),
+    sp.GetRequiredService<BattleBodyPartDatabase>()));
 builder.Services.AddCors(options =>
 {
     options.AddDefaultPolicy(p => p.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader());
@@ -164,6 +166,7 @@ app.MapGet("/api/client/version", (IConfiguration cfg) =>
 
 var postgresDb = app.Services.GetRequiredService<BattlePostgresDatabase>();
 postgresDb.EnsureCreated();
+app.Services.GetRequiredService<BattleBodyPartDatabase>().RefreshCache();
 var battleHistoryDb = app.Services.GetRequiredService<BattleHistoryDatabase>();
 var battleTurnDb = app.Services.GetRequiredService<BattleTurnDatabase>();
 var battleUserDb = app.Services.GetRequiredService<BattleUserDatabase>();
@@ -247,14 +250,16 @@ app.MapPost("/api/battle/join", (BattleRoomStore s, JoinRequest? body) =>
         playerMaxHp,
         playerMaxAp,
         weaponCode,
-        weapon.Damage,
+        weapon.DamageMin,
+        weapon.DamageMax,
         weapon.Range,
         weapon.AttackApCost,
         username,
         characterLevel,
         accuracy,
         weapon.SpreadPenalty,
-        weapon.TrajectoryHeight);
+        weapon.TrajectoryHeight,
+        weapon.IsSniper);
     return Results.Json(resp, jsonOpt);
 });
 
@@ -379,7 +384,7 @@ app.MapGet("/api/battle/{battleId}", (string battleId, BattleRoomStore s) =>
     if (room == null) return Results.Json(new { error = "Battle not found" }, statusCode: 404);
     var battleRecord = battleHistoryDb.GetBattle(battleId);
 
-    room.FillSpawnArrays(out var spawnIds, out var spawnCols, out var spawnRows, out var spawnCurrentAps, out var spawnMaxHps, out var spawnCurrentHps, out var spawnCurrentPostures, out var spawnWeaponCodes, out var spawnWeaponDamages, out var spawnWeaponRanges, out var spawnWeaponAttackApCosts, out var spawnWeaponSpreadPenalties, out var spawnWeaponTrajectoryHeights, out var spawnDisplayNames, out var spawnLevels);
+    room.FillSpawnArrays(out var spawnIds, out var spawnCols, out var spawnRows, out var spawnCurrentAps, out var spawnMaxHps, out var spawnCurrentHps, out var spawnCurrentPostures, out var spawnWeaponCodes, out var spawnWeaponDamageMins, out var spawnWeaponDamages, out var spawnWeaponRanges, out var spawnWeaponAttackApCosts, out var spawnWeaponSpreadPenalties, out var spawnWeaponTrajectoryHeights, out var spawnWeaponIsSnipers, out var spawnDisplayNames, out var spawnLevels);
     var response = new BattleStateResponse
     {
         RoundIndex = room.RoundIndex,
@@ -399,11 +404,13 @@ app.MapGet("/api/battle/{battleId}", (string battleId, BattleRoomStore s) =>
         SpawnCurrentHps = spawnCurrentHps,
         SpawnCurrentPostures = spawnCurrentPostures,
         SpawnWeaponCodes = spawnWeaponCodes,
+        SpawnWeaponDamageMins = spawnWeaponDamageMins,
         SpawnWeaponDamages = spawnWeaponDamages,
         SpawnWeaponRanges = spawnWeaponRanges,
         SpawnWeaponAttackApCosts = spawnWeaponAttackApCosts,
         SpawnWeaponSpreadPenalties = spawnWeaponSpreadPenalties,
         SpawnWeaponTrajectoryHeights = spawnWeaponTrajectoryHeights,
+        SpawnWeaponIsSnipers = spawnWeaponIsSnipers,
         SpawnDisplayNames = spawnDisplayNames,
         SpawnLevels = spawnLevels
     };
@@ -419,9 +426,9 @@ app.MapPost("/api/battle/{battleId}/equip-weapon", (string battleId, EquipWeapon
         return Results.Json(new { error = "Battle not found" }, statusCode: 404);
     if (!weapons.TryGetWeaponByCode(body.WeaponCode.Trim(), out var w))
         return Results.Json(new { error = "Unknown weapon" }, statusCode: 400);
-    if (!room.TryEquipWeapon(body.PlayerId.Trim(), w.Code, w.Damage, w.Range, w.AttackApCost, w.SpreadPenalty, w.TrajectoryHeight, out var fail))
+    if (!room.TryEquipWeapon(body.PlayerId.Trim(), w.Code, w.DamageMin, w.DamageMax, w.Range, w.AttackApCost, w.SpreadPenalty, w.TrajectoryHeight, w.IsSniper, out var fail))
         return Results.Json(new { error = fail ?? "equip_failed" }, statusCode: 400);
-    return Results.Json(new { ok = true, weaponCode = w.Code, weaponDamage = w.Damage, weaponRange = w.Range, weaponAttackApCost = w.AttackApCost, weaponSpreadPenalty = w.SpreadPenalty, weaponTrajectoryHeight = w.TrajectoryHeight });
+    return Results.Json(new { ok = true, weaponCode = w.Code, weaponDamageMin = w.DamageMin, weaponDamage = w.DamageMax, weaponRange = w.Range, weaponAttackApCost = w.AttackApCost, weaponSpreadPenalty = w.SpreadPenalty, weaponTrajectoryHeight = w.TrajectoryHeight, weaponIsSniper = w.IsSniper });
 });
 
 app.MapGet("/api/battle/{battleId}/turns/{turnId}", (string battleId, string turnId) =>
@@ -508,6 +515,9 @@ app.MapGet("/api/db/weapons", (BattleWeaponDatabase db, int? take) =>
     return Results.Json(db.ListWeapons(requested), jsonOpt);
 });
 
+app.MapGet("/api/db/body-parts", (BattleBodyPartDatabase db) =>
+    Results.Json(db.ListBodyParts(), jsonOpt));
+
 app.MapPost("/api/db/weapons", (BattleWeaponDatabase db, WeaponUpsertRequest request) =>
 {
     if (request == null)
@@ -515,7 +525,7 @@ app.MapPost("/api/db/weapons", (BattleWeaponDatabase db, WeaponUpsertRequest req
     if (string.IsNullOrWhiteSpace(request.code) || string.IsNullOrWhiteSpace(request.name))
         return Results.Json(new { error = "code and name are required" }, statusCode: 400);
 
-    db.UpsertWeapon(request.code, request.name, request.damage, request.range, request.iconKey, request.attackApCost, request.spreadPenalty, request.trajectoryHeight, request.quality, request.weaponCondition);
+    db.UpsertWeapon(request.ToUpsertDto());
     return Results.Ok(new { ok = true });
 });
 
@@ -575,7 +585,12 @@ app.MapGet("/api/logs/stream", async (HttpContext ctx, BattleLogStore logs) =>
 app.MapGet("/logs", () => Results.Content(BattleLogDashboardPage.Html, "text/html; charset=utf-8"));
 app.MapGet("/db", () => Results.Content(BattleDbDashboardPage.Html, "text/html; charset=utf-8"));
 app.MapGet("/users", () => Results.Content(BattleUsersDashboardPage.Html, "text/html; charset=utf-8"));
-app.MapGet("/weapons", () => Results.Content(BattleWeaponsDashboardPage.Html, "text/html; charset=utf-8"));
+app.MapGet("/weapons", async (HttpContext ctx) =>
+{
+    ctx.Response.Headers.CacheControl = "no-store, max-age=0, must-revalidate";
+    ctx.Response.ContentType = "text/html; charset=utf-8";
+    await ctx.Response.WriteAsync(BattleWeaponsDashboardPage.Html);
+});
 app.MapGet("/obstacle-balance", () => Results.Content(BattleObstacleBalanceDashboardPage.Html, "text/html; charset=utf-8"));
 
 // POST leave — только вне игровой сцены (отмена очереди с меню; в бою выход — disconnect WS + leave по сокету).
@@ -632,11 +647,13 @@ public class BattleStateResponse
     public int[]? SpawnCurrentHps { get; set; }
     public string[]? SpawnCurrentPostures { get; set; }
     public string[]? SpawnWeaponCodes { get; set; }
+    public int[]? SpawnWeaponDamageMins { get; set; }
     public int[]? SpawnWeaponDamages { get; set; }
     public int[]? SpawnWeaponRanges { get; set; }
     public int[]? SpawnWeaponAttackApCosts { get; set; }
     public double[]? SpawnWeaponSpreadPenalties { get; set; }
     public int[]? SpawnWeaponTrajectoryHeights { get; set; }
+    public bool[]? SpawnWeaponIsSnipers { get; set; }
     public string[]? SpawnDisplayNames { get; set; }
     public int[]? SpawnLevels { get; set; }
 }
@@ -658,15 +675,95 @@ public class WeaponUpsertRequest
 {
     public string code { get; set; } = "";
     public string name { get; set; } = "";
+    /// <summary>Устаревшее поле: если <see cref="damageMax"/> не задан, подставляется в min и max.</summary>
     public int damage { get; set; }
+    public int damageMin { get; set; }
+    public int damageMax { get; set; }
     public int range { get; set; }
     public string? iconKey { get; set; }
-    /// <summary>Стоимость атаки этим оружием (ОД). По умолчанию 1.</summary>
     public int attackApCost { get; set; } = 1;
     public double spreadPenalty { get; set; }
     public int trajectoryHeight { get; set; } = 1;
     public int quality { get; set; } = 100;
     public int weaponCondition { get; set; } = 100;
+    public bool isSniper { get; set; }
+    public double mass { get; set; }
+    public string? caliber { get; set; }
+    public int armorPierce { get; set; }
+    public int magazineSize { get; set; }
+    public int reloadApCost { get; set; }
+    public string? category { get; set; }
+    public int reqLevel { get; set; } = 1;
+    public int reqStrength { get; set; }
+    public int reqEndurance { get; set; }
+    public int reqAccuracy { get; set; }
+    public string? reqMasteryCategory { get; set; }
+    public int statEffectStrength { get; set; }
+    public int statEffectEndurance { get; set; }
+    public int statEffectAccuracy { get; set; }
+    public string? damageType { get; set; }
+    public int burstRounds { get; set; }
+    public int burstApCost { get; set; }
+
+    public BattleWeaponUpsertDto ToUpsertDto()
+    {
+        int dMin = damageMin;
+        int dMax = damageMax;
+        if (dMax <= 0 && damage > 0)
+        {
+            dMin = damage;
+            dMax = damage;
+        }
+        else
+        {
+            if (dMin <= 0 && dMax > 0)
+                dMin = dMax;
+            if (dMax <= 0 && dMin > 0)
+                dMax = dMin;
+        }
+
+        if (dMin <= 0 && dMax <= 0)
+        {
+            dMin = 1;
+            dMax = 1;
+        }
+
+        if (dMin > dMax)
+            (dMin, dMax) = (dMax, dMin);
+
+        return new BattleWeaponUpsertDto
+        {
+            Code = code,
+            Name = name,
+            DamageMin = dMin,
+            DamageMax = dMax,
+            Range = range,
+            IconKey = iconKey ?? "",
+            AttackApCost = attackApCost,
+            SpreadPenalty = spreadPenalty,
+            TrajectoryHeight = trajectoryHeight,
+            Quality = quality,
+            WeaponCondition = weaponCondition,
+            IsSniper = isSniper,
+            Mass = mass,
+            Caliber = caliber ?? "",
+            ArmorPierce = armorPierce,
+            MagazineSize = magazineSize,
+            ReloadApCost = reloadApCost,
+            Category = category ?? "cold",
+            ReqLevel = reqLevel,
+            ReqStrength = reqStrength,
+            ReqEndurance = reqEndurance,
+            ReqAccuracy = reqAccuracy,
+            ReqMasteryCategory = reqMasteryCategory ?? "",
+            StatEffectStrength = statEffectStrength,
+            StatEffectEndurance = statEffectEndurance,
+            StatEffectAccuracy = statEffectAccuracy,
+            DamageType = damageType ?? "physical",
+            BurstRounds = burstRounds,
+            BurstApCost = burstApCost
+        };
+    }
 }
 
 public class UserInventoryAuthRequest

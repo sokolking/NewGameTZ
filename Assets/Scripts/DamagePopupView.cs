@@ -9,15 +9,15 @@ using UnityEngine;
 public sealed class DamagePopupView : MonoBehaviour
 {
     [SerializeField] private TextMeshProUGUI _damageText;
-    [Tooltip("Смещение от точки следования (мировые координаты). Компонента Z переопределяется режимом камеры.")]
+    [Tooltip("Offset from follow point (world space). Z is overridden by camera mode.")]
     [SerializeField] private Vector3 _worldOffset = new Vector3(0.9f, 2.1f, 0f);
     [SerializeField] private float _planningWorldOffsetZ = 1f;
     [SerializeField] private float _viewWorldOffsetZ = 0f;
     [SerializeField] private bool _faceCamera = true;
     [SerializeField] private float _extraBillboardYawDegrees = 180f;
-    [Tooltip("Если у юнита есть CharacterNameplateView, плашка урона фиксируется слева от него на это расстояние (в мировых единицах).")]
+    [Tooltip("If the unit has CharacterNameplateView, damage popup sits this far left of it (world units).")]
     [SerializeField] private float _leftOffsetFromNameplate = 2.35f;
-    [Tooltip("Дополнительное смещение вверх в world units (для очереди урона).")]
+    [Tooltip("Extra upward offset in world units (damage queue stacking).")]
     [SerializeField] private float _stackRiseWorld = 0f;
     [SerializeField] private RectTransform _panelRect;
 

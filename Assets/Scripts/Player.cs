@@ -14,10 +14,10 @@ public class Player : MonoBehaviour
     private const float RunPenaltyThresholdFraction = 0.85f;
     private const float MaxPenaltyFraction = 0.95f;
 
-    [Header("Сетка")]
+    [Header("Grid")]
     [SerializeField] private HexGrid _grid;
 
-    [Header("Движение")]
+    [Header("Movement")]
     [SerializeField] private float _moveDurationPerHex = 0.2f;
     private PlayerCharacterAnimator _characterAnimator;
     private Animator _animator;
@@ -25,24 +25,24 @@ public class Player : MonoBehaviour
     private Renderer[] _cachedRenderers;
     private Collider[] _cachedColliders;
 
-    [Header("Дальний бой (VFX)")]
-    [Tooltip("Необязательно: точка выстрела вместо кости Humanoid RightHand.")]
+    [Header("Ranged combat (VFX)")]
+    [Tooltip("Optional: fire origin instead of Humanoid RightHand bone.")]
     [SerializeField] private Transform _rangedMuzzleOverride;
-    [Tooltip("Если нет Animator/Humanoid — старт линии на этой высоте над центром гекса.")]
+    [Tooltip("If no Animator/Humanoid, line start at this height above hex center.")]
     [SerializeField] private float _rangedFireFallbackHeightAboveHex = 1.05f;
 
-    [Header("Очки действия")]
+    [Header("Action points")]
     [SerializeField] private int _maxAp = 100;
-    [Header("Жизни")]
+    [Header("Health")]
     [SerializeField] private int _maxHp = 10;
 
-    [Header("UI над головой")]
-    [Tooltip("Отдельный префаб с CharacterNameplateView; иначе Resources/CharacterNameplate.")]
+    [Header("Overhead UI")]
+    [Tooltip("Optional CharacterNameplateView prefab; else Resources/CharacterNameplate.")]
     [SerializeField] private GameObject _characterNameplatePrefab;
-    [Tooltip("Точка над головой; иначе корень Player.")]
+    [Tooltip("Anchor above head; else Player root.")]
     [SerializeField] private Transform _nameplateFollowAnchor;
 
-    [Header("Таймер хода, сек")]
+    [Header("Turn timer (sec)")]
     [SerializeField] private float _turnDurationSeconds = 100f;
 
     private int _currentCol;
@@ -86,6 +86,7 @@ public class Player : MonoBehaviour
     /// <summary>Код оружия (сервер / локальный каталог).</summary>
     private string _weaponCode = WeaponCatalog.DefaultWeaponCode;
     private int _weaponDamage = 1;
+    private int _weaponDamageMin = 1;
     /// <summary>Макс. дистанция атаки в шагах гекса (как на сервере <see cref="UnitStateDto.WeaponRange"/>).</summary>
     private int _weaponRangeHexes = 1;
     /// <summary>Стоимость атаки (ОД) из БД / сервера, не из каталога.</summary>
@@ -143,6 +144,8 @@ public class Player : MonoBehaviour
 
     public string WeaponCode => _weaponCode;
     public int WeaponDamage => _weaponDamage;
+    /// <summary>Минимальный урон за попадание (сервер); для UI диапазона.</summary>
+    public int WeaponDamageMin => _weaponDamageMin;
     /// <summary>Мировая точка выстрела для линии пули: <see cref="_rangedMuzzleOverride"/>, иначе кость RightHand, иначе центр гекса + высота.</summary>
     public bool TryGetRangedFireWorldPosition(out Vector3 worldPos)
     {
@@ -188,10 +191,13 @@ public class Player : MonoBehaviour
 
     /// <summary>Синхронизация с сервером или локальная смена (кулак / камень и т.д.).</summary>
     /// <param name="attackApCost">Стоимость атаки из БД / сервера; по умолчанию 1.</param>
-    public void SetEquippedWeapon(string code, int damage, int rangeHexes, int attackApCost = 1)
+    /// <param name="weaponDamageMin">Если &lt; 0 — считается равным <paramref name="damage"/>.</param>
+    public void SetEquippedWeapon(string code, int damage, int rangeHexes, int attackApCost = 1, int weaponDamageMin = -1)
     {
         _weaponCode = WeaponCatalog.NormalizeWeaponCode(code);
         _weaponDamage = Mathf.Max(0, damage);
+        int rawMin = weaponDamageMin >= 0 ? weaponDamageMin : _weaponDamage;
+        _weaponDamageMin = Mathf.Clamp(rawMin, 0, _weaponDamage);
         _weaponRangeHexes = Mathf.Max(0, rangeHexes);
         _weaponAttackApCost = Mathf.Max(1, attackApCost);
         OnEquippedWeaponChanged?.Invoke();
@@ -639,7 +645,8 @@ public class Player : MonoBehaviour
         return QueuePostureChange(MovementPosture.Sit);
     }
 
-    public bool QueueAttackAction(string targetUnitId, string bodyPart, int cost = 1)
+    /// <param name="bodyPartId">Server <see cref="BodyPartIds"/> / body_parts.id; 0 = unspecified.</param>
+    public bool QueueAttackAction(string targetUnitId, int bodyPartId, int cost = 1)
     {
         int safeCost = Mathf.Max(1, cost);
         if (_currentAp < safeCost)
@@ -652,7 +659,7 @@ public class Player : MonoBehaviour
         {
             actionType = "Attack",
             targetUnitId = targetUnitId,
-            bodyPart = bodyPart,
+            bodyPart = bodyPartId,
             posture = MovementPostureUtility.ToId(_currentPosture),
             cost = safeCost
         });
@@ -676,7 +683,7 @@ public class Player : MonoBehaviour
             actionType = "Attack",
             targetUnitId = "",
             targetPosition = new HexPosition(col, row),
-            bodyPart = "",
+            bodyPart = BodyPartIds.None,
             posture = MovementPostureUtility.ToId(_currentPosture),
             cost = safeCost
         });
@@ -729,19 +736,19 @@ public class Player : MonoBehaviour
         failureReason = null;
         if (IsDead || _isHidden)
         {
-            failureReason = "Недоступно";
+            failureReason = Loc.T("player.undo_unavailable");
             return false;
         }
 
         if (_isMoving)
         {
-            failureReason = "Дождитесь окончания движения";
+            failureReason = Loc.T("player.undo_wait_movement");
             return false;
         }
 
         if (_turnActions == null || _turnActions.Count == 0)
         {
-            failureReason = "Нет действий для отмены";
+            failureReason = Loc.T("player.undo_no_actions");
             return false;
         }
 
@@ -812,7 +819,7 @@ public class Player : MonoBehaviour
         }
 
         _turnActions.Add(last);
-        failureReason = "Неизвестный тип действия";
+        failureReason = Loc.T("player.undo_unknown_action");
         return false;
     }
 

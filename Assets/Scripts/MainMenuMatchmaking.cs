@@ -13,7 +13,7 @@ public class MainMenuMatchmaking : MonoBehaviour
 {
     [SerializeField] private string _serverUrl = "http://localhost:5000";
     [SerializeField] private string _gameSceneName = "MainScene";
-    [Tooltip("Текст статуса (например «Searching for opponent...»).")]
+    [Tooltip("Status text (e.g. Searching for opponent...).")]
     [SerializeField] private Text _statusText;
 
     private bool _searching;
@@ -171,7 +171,7 @@ public class MainMenuMatchmaking : MonoBehaviour
             {
                 _queueBattleId = null;
                 _queuePlayerId = null;
-                SetStatus("Поиск отменён (комната закрыта).");
+                SetStatus(Loc.T("menu.search_cancelled"));
                 _searching = false;
                 yield break;
             }

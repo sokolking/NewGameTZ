@@ -11,6 +11,7 @@
 **Стало:**
 
 - Выстрел **разрешён** на любую дистанцию в пределах карты и прочих проверок (враг, живой юнит и т.д.).
+- **Сырой урон** перед множителем дальности — **случайное целое** от **`WeaponDamageMin`** до **`WeaponDamage`** включительно (из БД `damage_min` / `damage_max`).
 - **Урон** после попадания: множитель **0.5^N**, где **N = max(0, расстояние_до_фактического_попадания − WeaponRange)**. Каждый «лишний» гекс относительно номинальной дальности **половинит** урон; итог округляется вниз до целого.
 - То же правило для **урона по стене:** расстояние считается от стрелка до **клетки стены**, в которую попал выстрел.
 - **Базовая вероятность попадания по дистанции** (`GetBaseHitProbabilityFromRange`) остаётся «линейной» внутри номинальной дальности; для гексов **за** `WeaponRange` к этому множителю дополнительно умножается **0.5^N**, иначе вероятность обнулялась бы и дальние выстрелы не попадали бы.
@@ -19,7 +20,16 @@
 
 ---
 
-## 2. Формула попадания (п. 5.15)
+## 2. Флаг снайпера (`is_sniper`)
+
+- В PostgreSQL колонка **`weapons.is_sniper`** (BOOLEAN, по умолчанию false).
+- На юните: **`UnitStateDto.WeaponIsSniper`**, в JSON спавна — **`spawnWeaponIsSnipers`**, в итоге раунда — в **`PlayerTurnResultDto`**.
+- **Только для вероятности попадания:** за пределами номинальной дальности к множителю **p** применяется **0.65^N** вместо **0.5^N** (N — число лишних гексов). **Урон** по-прежнему **0.5^N**.
+- Редактирование: дашборд `/weapons`, колонка **snp** (чекбокс) или поле **`isSniper`** в `POST /api/db/weapons`.
+
+---
+
+## 3. Формула попадания (п. 5.15)
 
 Реализовано в **`CombineHitProbability`** (`BattleRoom.CombatRules.cs`):
 
@@ -39,7 +49,7 @@
 
 ---
 
-## 3. Новые поля оружия на юните и в JSON
+## 4. Новые поля оружия на юните и в JSON
 
 ### `UnitStateDto` / `PlayerTurnResultDto`
 
@@ -47,12 +57,13 @@
 |------|-----|------------|
 | `WeaponSpreadPenalty` | `double` | Штраф кучности в формуле попадания (0…1 в данных, в комбинировании clamp до 0.95). |
 | `WeaponTrajectoryHeight` | `int` | «Высота траектории» для правил ЛС со стенами (0 низкая, 1 обычная, 2 высокая; при экипировке clamp 0…3). |
+| `WeaponIsSniper` | `bool` | Снайперская кривая **p** за пределами `WeaponRange` (см. §2). |
 
-Источник: таблица **`weapons`** (`spread_penalty`, `trajectory_height`), подстановка при **join**, **equip** и хранение в **`PlayerCombatProfiles`** (кортеж расширен до 9 полей: добавлены spread и trajectory).
+Источник: таблица **`weapons`** (`spread_penalty`, `trajectory_height`, `is_sniper`, `damage_min`/`damage_max`, …), подстановка при **join**, **equip** и хранение в **`PlayerCombatProfiles`** (кортеж из **11** полей: min/max урон, дальность, ОД атаки, меткость, кучность, траектория, снайпер).
 
 ---
 
-## 4. Линия выстрела и стены (п. 7.20)
+## 5. Линия выстрела и стены (п. 7.20)
 
 **Файл:** `BattleRoom.LineOfFire.cs`
 
@@ -74,12 +85,13 @@
 
 ---
 
-## 5. База данных PostgreSQL
+## 6. База данных PostgreSQL
 
 - Убрано **`DROP TABLE weapons`** из `BattlePostgresDatabase.EnsureCreated`, чтобы не уничтожать таблицу при каждом запуске.
 - Таблица **`weapons`** создаётся с полями:
   - `spread_penalty` (REAL),
   - `trajectory_height` (INT),
+  - `is_sniper` (BOOLEAN) — влияет на **p** за пределами дальности;
   - `quality`, `weapon_condition` (INT) — **только хранение контента**, в расчёты боя **не входят** (п. 3.10).
 - Сид строки **`fist`** с дефолтами (в т.ч. spread 0, trajectory 1).
 
@@ -89,36 +101,37 @@
 
 ---
 
-## 6. JSON: спавн и состояние боя
+## 7. JSON: спавн и состояние боя
 
 - **`BattleStartedPayloadDto`:**  
   `SpawnWeaponSpreadPenalties` (`double[]`),  
-  `SpawnWeaponTrajectoryHeights` (`int[]`) — параллельно остальным spawn-массивам.
+  `SpawnWeaponTrajectoryHeights` (`int[]`),  
+  `SpawnWeaponIsSnipers` (`bool[]`) — параллельно остальным spawn-массивам.
 - **`FillSpawnArrays`** заполняет их из `UnitStateDto` (игроки и мобы).
 - **`BattleStateResponse`** (GET `/api/battle/{battleId}`): те же массивы для отладки/клиента.
-- **`PlayerTurnResultDto`:** в конце раунда отдаются `WeaponSpreadPenalty`, `WeaponTrajectoryHeight`.
+- **`PlayerTurnResultDto`:** в конце раунда отдаются `WeaponSpreadPenalty`, `WeaponTrajectoryHeight`, `WeaponIsSniper`.
 
 ---
 
-## 7. Join, экипировка, мобы, фолбэки
+## 8. Join, экипировка, мобы, фолбэки
 
-- **`BattleRoomStore.JoinOrCreate`:** в конец добавлены `weaponSpreadPenalty`, `weaponTrajectoryHeight` → **`SetPlayerCombatProfile`**.
+- **`BattleRoomStore.JoinOrCreate`:** в конец добавлены `weaponSpreadPenalty`, `weaponTrajectoryHeight`, `weaponIsSniper` → **`SetPlayerCombatProfile`**.
 - **`Program.cs`:** при join передаются значения из строки оружия в БД (сейчас типично `fist`).
-- **`TryEquipWeapon`:** расширенная сигнатура; обновляет юнит и 9-полевой профиль.
-- **`CloseRound`:** действие **`EquipWeapon`** подтягивает из БД также spread и trajectory.
-- **Моб** (`BattleRoom.UnitsLifecycle.cs`): явно задаются `Accuracy`, `WeaponSpreadPenalty = 0`, `WeaponTrajectoryHeight = 1`.
+- **`TryEquipWeapon`:** расширенная сигнатура; обновляет юнит и **11-полевой** профиль (min/max урон, снайпер и др.).
+- **`CloseRound`:** действие **`EquipWeapon`** подтягивает из БД также spread, trajectory и **`IsSniper`**.
+- **Моб** (`BattleRoom.UnitsLifecycle.cs`): явно задаются `Accuracy`, `WeaponSpreadPenalty = 0`, `WeaponTrajectoryHeight = 1`, `WeaponIsSniper = false`.
 - **Фолбэк-юнит** в **`SubmitTurn`:** те же поля, чтобы не оставлять неинициализированное состояние.
 
 ---
 
-## 8. Прочие правки сборки / моделей
+## 9. Прочие правки сборки / моделей
 
 - Восстановлен и расширен **`BattleWeaponBrowseRowDto`**.
 - **`TryGetCombatProfile`:** актуальная сигнатура без `weapon_code` у пользователя; оружие при входе в бой берётся из БД (например, `fist`).
 
 ---
 
-## 9. Клиент Unity (точечно)
+## 10. Клиент Unity (точечно)
 
 - **`GameSession`:** снята блокировка Ctrl-выстрела «гекс вне дальности» (кроме вырожденного `weaponRange <= 0`).
 - Разворот к цели и **VFX пули** идут до **реальной** цели, без обрезки по `weaponRange` (штрафы остаются на сервере).
@@ -126,7 +139,7 @@
 
 ---
 
-## 10. Дизайн без полной реализации в коде
+## 11. Дизайн без полной реализации в коде
 
 В **`BattleRoom.CombatRules.cs`** задокументировано:
 

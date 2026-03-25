@@ -19,16 +19,16 @@ public class BattleSignalRConnection : MonoBehaviour
     /// <summary>Макс. действий из очереди за один кадр — распределяем тяжёлый JSON-парсинг по кадрам, не спайкуя FPS.</summary>
     private const int MaxActionsPerFrame = 3;
 
-    [Header("Сервер")]
+    [Header("Server")]
     [SerializeField] private string _serverUrl = "http://localhost:5000";
 
-    [Header("Сессия боя")]
+    [Header("Battle session")]
     [SerializeField] private GameSession _gameSession;
 
-    [Header("Логирование")]
+    [Header("Logging")]
     [SerializeField] private bool _logSockets = true;
 
-    [Tooltip("Ожидание submitAck (сек).")]
+    [Tooltip("submitAck wait timeout (seconds).")]
     [SerializeField] private float _submitAckTimeoutSeconds = 18f;
 
     private ClientWebSocket _ws;
@@ -129,13 +129,13 @@ public class BattleSignalRConnection : MonoBehaviour
     {
         if (_ws == null || _ws.State != WebSocketState.Open)
         {
-            onComplete?.Invoke(false, "Нет WebSocket к бою. Дождитесь подключения.");
+            onComplete?.Invoke(false, Loc.T("net.ws_not_ready"));
             return;
         }
 
         if (_submitCallback != null)
         {
-            onComplete?.Invoke(false, "Предыдущий ход ещё обрабатывается.");
+            onComplete?.Invoke(false, Loc.T("net.previous_submit_pending"));
             return;
         }
 
@@ -185,7 +185,7 @@ public class BattleSignalRConnection : MonoBehaviour
         }
 
         if (_submitCallback != null)
-            FinishSubmitCallback(false, "Таймаут submitAck от сервера.");
+            FinishSubmitCallback(false, Loc.T("net.submit_ack_timeout"));
         _submitTimeoutCo = null;
     }
 
@@ -289,7 +289,7 @@ public class BattleSignalRConnection : MonoBehaviour
                 if (ack.ok)
                     FinishSubmitCallback(true, null);
                 else
-                    FinishSubmitCallback(false, string.IsNullOrEmpty(ack.error) ? "Отклонено сервером." : ack.error);
+                    FinishSubmitCallback(false, string.IsNullOrEmpty(ack.error) ? Loc.T("net.rejected_by_server") : ack.error);
                 return;
             }
         }

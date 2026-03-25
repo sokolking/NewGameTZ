@@ -19,8 +19,19 @@ public partial class BattleRoom
         return Math.Max(0, (int)Math.Floor(rawDamage * mult));
     }
 
-    /// <summary>Только p_дистанция (0…1); штраф за гексы за пределами дальности — 0.5^N. Итог — <see cref="CombineHitProbability"/>.</summary>
-    private static double GetBaseHitProbabilityFromRange(int hexDistance, int weaponRange)
+    private int RollWeaponDamageInclusive(UnitStateDto unit)
+    {
+        int min = Math.Max(0, unit.WeaponDamageMin);
+        int max = Math.Max(0, unit.WeaponDamage);
+        if (min > max)
+            (min, max) = (max, min);
+        if (max <= 0)
+            return 0;
+        return _rng.Next(min, max + 1);
+    }
+
+    /// <summary>Только p_дистанция (0…1). За пределами <paramref name="weaponRange"/>: обычное оружие — 0.5^N, снайпер — 0.65^N (только p, урон всегда 0.5^N). Итог — <see cref="CombineHitProbability"/>.</summary>
+    private static double GetBaseHitProbabilityFromRange(int hexDistance, int weaponRange, bool weaponIsSniper)
     {
         int wr = Math.Max(1, weaponRange);
         if (hexDistance <= 1)
@@ -33,7 +44,10 @@ public partial class BattleRoom
             p = 1;
         int over = GetHexesBeyondWeaponRange(hexDistance, weaponRange);
         if (over > 0)
-            p *= Math.Pow(0.5, over);
+        {
+            double perHex = weaponIsSniper ? 0.65 : 0.5;
+            p *= Math.Pow(perHex, over);
+        }
         return p;
     }
 
@@ -194,7 +208,7 @@ public partial class BattleRoom
                         FromPosition = new HexPositionDto { Col = currentPos.col, Row = currentPos.row },
                         ToPosition = new HexPositionDto { Col = currentPos.col, Row = currentPos.row },
                         TargetUnitId = action.TargetUnitId,
-                        BodyPart = action.BodyPart,
+                        BodyPart = NormalizeBodyPartId(action.BodyPart),
                         Posture = currentPosture
                     };
 
@@ -270,7 +284,7 @@ public partial class BattleRoom
                                     executed.ToPosition = new HexPositionDto { Col = ac, Row = ar };
                                     int dist = HexSpawn.HexDistance(currentPos.col, currentPos.row, ac, ar);
                                     int weaponRange = Math.Max(0, unit.WeaponRange);
-                                    int rawDamage = Math.Max(0, unit.WeaponDamage);
+                                    int rawDamage = RollWeaponDamageInclusive(unit);
                                     var bal = _obstacleDb?.GetBalance() ?? BattleObstacleBalanceRowDto.Defaults;
 
                                     HexSpawn.GetHexLineBetweenExclusive(currentPos.col, currentPos.row, ac, ar, _hexLineBuffer);
@@ -398,7 +412,7 @@ public partial class BattleRoom
 
                                                 string tgtPostureHex = postureByUnit.TryGetValue(hexHitId, out var tpHex) ? NormalizePosture(tpHex) : PostureWalk;
                                                 double pHex = CombineHitProbability(
-                                                    GetBaseHitProbabilityFromRange(distHex, weaponRangeHex),
+                                                    GetBaseHitProbabilityFromRange(distHex, weaponRangeHex, unit.WeaponIsSniper),
                                                     anyTreeHex,
                                                     anyRockHex && (string.Equals(tgtPostureHex, PostureSit, StringComparison.OrdinalIgnoreCase)
                                                         || string.Equals(tgtPostureHex, PostureHide, StringComparison.OrdinalIgnoreCase)),
@@ -458,7 +472,7 @@ public partial class BattleRoom
                             executed.ToPosition = new HexPositionDto { Col = targetPos.col, Row = targetPos.row };
                             int dist = HexSpawn.HexDistance(currentPos.col, currentPos.row, targetPos.col, targetPos.row);
                             int weaponRange = Math.Max(0, unit.WeaponRange);
-                            int rawDamage = Math.Max(0, unit.WeaponDamage);
+                            int rawDamage = RollWeaponDamageInclusive(unit);
                             var bal = _obstacleDb?.GetBalance() ?? BattleObstacleBalanceRowDto.Defaults;
 
                             HexSpawn.GetHexLineBetweenExclusive(currentPos.col, currentPos.row, targetPos.col, targetPos.row, _hexLineBuffer);
@@ -545,7 +559,7 @@ public partial class BattleRoom
 
                                     string tgtPosture = postureByUnit.TryGetValue(resolvedTargetId, out var tp) ? NormalizePosture(tp) : PostureWalk;
                                     double p = CombineHitProbability(
-                                        GetBaseHitProbabilityFromRange(dist, weaponRange),
+                                        GetBaseHitProbabilityFromRange(dist, weaponRange, unit.WeaponIsSniper),
                                         anyTree,
                                         anyRock && (string.Equals(tgtPosture, PostureSit, StringComparison.OrdinalIgnoreCase)
                                             || string.Equals(tgtPosture, PostureHide, StringComparison.OrdinalIgnoreCase)),
@@ -607,11 +621,13 @@ public partial class BattleRoom
                         else
                         {
                             unit.WeaponCode = wpn.Code;
-                            unit.WeaponDamage = wpn.Damage;
+                            unit.WeaponDamageMin = wpn.DamageMin;
+                            unit.WeaponDamage = wpn.DamageMax;
                             unit.WeaponRange = wpn.Range;
                             unit.WeaponAttackApCost = Math.Max(1, wpn.AttackApCost);
                             unit.WeaponSpreadPenalty = Math.Clamp(wpn.SpreadPenalty, 0.0, 1.0);
                             unit.WeaponTrajectoryHeight = Math.Clamp(wpn.TrajectoryHeight, 0, 3);
+                            unit.WeaponIsSniper = wpn.IsSniper;
                             Units[uid] = unit;
                             string? pid = null;
                             foreach (var kv in PlayerToUnitId)
@@ -624,7 +640,7 @@ public partial class BattleRoom
                             }
 
                             if (!string.IsNullOrEmpty(pid) && PlayerCombatProfiles.TryGetValue(pid, out var prof))
-                                PlayerCombatProfiles[pid] = (prof.Item1, prof.Item2, wpn.Code, wpn.Damage, wpn.Range, Math.Max(1, wpn.AttackApCost), prof.Item7, unit.WeaponSpreadPenalty, unit.WeaponTrajectoryHeight);
+                                PlayerCombatProfiles[pid] = (prof.Item1, prof.Item2, wpn.Code, wpn.DamageMin, wpn.DamageMax, wpn.Range, Math.Max(1, wpn.AttackApCost), prof.Item7, unit.WeaponSpreadPenalty, unit.WeaponTrajectoryHeight, unit.WeaponIsSniper);
                             executed.Succeeded = true;
                         }
                     }
@@ -698,11 +714,13 @@ public partial class BattleRoom
                 DamageDealt = damageByUnit.TryGetValue(uid, out var dealt) ? dealt : 0,
                 CurrentPosture = us.Posture,
                 WeaponCode = us.WeaponCode ?? DefaultWeaponCode,
+                WeaponDamageMin = us.WeaponDamageMin,
                 WeaponDamage = us.WeaponDamage,
                 WeaponRange = us.WeaponRange,
                 WeaponAttackApCost = Math.Max(1, us.WeaponAttackApCost),
                 WeaponSpreadPenalty = us.WeaponSpreadPenalty,
                 WeaponTrajectoryHeight = us.WeaponTrajectoryHeight,
+                WeaponIsSniper = us.WeaponIsSniper,
                 ExecutedActions = unitActions.ToArray()
             });
         }

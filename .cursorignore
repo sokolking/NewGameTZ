@@ -1,0 +1,2 @@
+# Markdown docs: excluded from default Cursor codebase context
+**/*.md

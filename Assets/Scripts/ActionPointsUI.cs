@@ -16,67 +16,67 @@ public class ActionPointsUI : MonoBehaviour
 {
     [SerializeField] private Player _player;
     [SerializeField] private Button _endTurnButton;
-    [Header("Положение тела")]
+    [Header("Movement posture")]
     [SerializeField] private Button _walkButton;
     [SerializeField] private Button _runButton;
     [SerializeField] private Button _sitButton;
     [SerializeField] private Button _hideButton;
     [SerializeField] private Button _skipButton;
     [SerializeField] private Button _stepBackButton;
-    [Tooltip("Вкл — пошаговая анимация движения при планировании; выкл — телепорт. Имя в сцене: ToggleShowAnimation.")]
+    [Tooltip("On: step-by-step movement animation while planning; off: teleport. Scene name: ToggleShowAnimation.")]
     [SerializeField] private Toggle _toggleShowAnimation;
     [SerializeField] private Image _walkBG;
     [SerializeField] private Image _runBG;
     [SerializeField] private Image _sitBG;
     [SerializeField] private Image _hideBG;
     [SerializeField] private Image _skipBG;
-    [Header("Диалог «Сколько ОД пропустить»")]
-    [Tooltip("Корень: UiHierarchyNames.SkipDialogPanel. Дочерние: вопрос, поле ввода, OK/Отмена (по именам в UiHierarchyNames).")]
+    [Header("Skip AP dialog")]
+    [Tooltip("Root: UiHierarchyNames.SkipDialogPanel. Children: question, input, OK/Cancel (names in UiHierarchyNames).")]
     [SerializeField] private GameObject _skipDialogPanel;
     [SerializeField] private Text _skipDialogQuestionText;
-    [Tooltip("Вариант вопроса на TextMeshPro (если не используете UI.Text).")]
+    [Tooltip("TMP variant for the question (if not using UI.Text).")]
     [SerializeField] private TextMeshProUGUI _skipDialogQuestionTmpText;
     [SerializeField] private InputField _skipDialogInput;
-    [Tooltip("Поле ввода на TMP (если не используете legacy InputField).")]
+    [Tooltip("TMP input field (if not using legacy InputField).")]
     [SerializeField] private TMP_InputField _skipDialogTmpInput;
     [SerializeField] private Button _skipDialogOkButton;
     [SerializeField] private Button _skipDialogCancelButton;
-    [Tooltip("Подставляется в поле при открытии диалога.")]
+    [Tooltip("Default value placed in the field when the dialog opens.")]
     [SerializeField] private string _skipDialogInitialInput = "1";
-    [Header("Лог ходов")]
+    [Header("Turn log")]
     [SerializeField] private Text _loggerText;
     [SerializeField] private Button _loggerUpButton;
     [SerializeField] private Button _loggerDownButton;
     [SerializeField] private int _maxLogLines = 50;
     [SerializeField] private int _loggerVisibleLines = 6;
 
-    [Header("Онлайн (сервер)")]
+    [Header("Online (server)")]
     [SerializeField] private GameSession _gameSession;
 
-    [Header("Ожидание результата раунда")]
-    [Tooltip("Панель на весь экран: Image с Raycast Target, дочерний Slider (опционально).")]
+    [Header("Round result wait")]
+    [Tooltip("Full-screen panel: Image with Raycast Target, optional child Slider.")]
     [SerializeField] private GameObject _roundWaitPanel;
     [SerializeField] private Slider _roundWaitSlider;
-    [Tooltip("Секунды на один цикл заполнения бара (неопределённый прогресс).")]
+    [Tooltip("Seconds for one fill cycle of the bar (indeterminate progress).")]
     [SerializeField] private float _roundWaitBarCycleSeconds = 1.25f;
-    [Tooltip("За сколько секунд до конца live-хода автосабмитить draft, пока открыт просмотр истории.")]
+    [Tooltip("Seconds before live turn ends to auto-submit draft while viewing history.")]
     [SerializeField] private float _historicalViewAutoSubmitLeadSeconds = 1f;
 
-    [Header("Миникарта")]
-    [Tooltip("Панель миникарты из Canvas.")]
+    [Header("Minimap")]
+    [Tooltip("Minimap panel from Canvas.")]
     [SerializeField] private RectTransform _miniMapPanel;
-    [Tooltip("Панель под миникартой для времени и ОД.")]
+    [Tooltip("Panel under minimap for time and AP.")]
     [SerializeField] private RectTransform _miniMapStatsPanel;
-    [Tooltip("UI Text для таймера под миникартой.")]
+    [Tooltip("UI Text for timer under minimap.")]
     [SerializeField] private Text _miniMapTimeText;
-    [Tooltip("UI Text для ОД под миникартой.")]
+    [Tooltip("UI Text for AP under minimap.")]
     [SerializeField] private Text _miniMapApText;
     [SerializeField] private Color _miniMapTimeNormalColor = Color.white;
     [SerializeField] private Color _miniMapTimeWarningColor = Color.red;
     [SerializeField] private float _miniMapTimeWarningThresholdSeconds = 5f;
-    [Header("Трекинг ходов")]
+    [Header("Turn tracking")]
     [SerializeField] private Text _turnTrackerText;
-    [Tooltip("Если подпись сделана на TextMeshPro вместо UI.Text.")]
+    [Tooltip("Use if the label is TextMeshPro instead of UI.Text.")]
     [SerializeField] private TextMeshProUGUI _turnTrackerTmpText;
     [SerializeField] private Button _turnTrackerPrevButton;
     [SerializeField] private Button _turnTrackerNextButton;
@@ -85,24 +85,24 @@ public class ActionPointsUI : MonoBehaviour
     [SerializeField] private Color _miniMapPlayerColor = Color.white;
     [SerializeField] private Color _miniMapEnemyColor = Color.red;
     [SerializeField] private Color _miniMapMobColor = new Color(1f, 0.55f, 0.15f, 1f);
-    [Tooltip("Цвет рамки прямоугольника видимости камеры на миникарте.")]
+    [Tooltip("Color of the camera viewport rectangle on the minimap.")]
     [SerializeField] private Color _miniMapViewportRectColor = new Color(1f, 1f, 1f, 0.9f);
-    [Tooltip("Толщина сторон прямоугольника видимости (в px).")]
+    [Tooltip("Thickness of viewport rectangle edges (px).")]
     [SerializeField] private float _miniMapViewportRectThickness = 1f;
     [Header("Battle Start Intro")]
-    [Tooltip("Показывать интро при первом появлении игрового поля (HexGrid).")]
+    [Tooltip("Show intro on first appearance of the battlefield (HexGrid).")]
     [SerializeField] private bool _playBattleBeginOnFieldAppear = true;
-    [Tooltip("Текст вступления перед авто-зумом.")]
+    [Tooltip("Intro text before auto-zoom.")]
     [SerializeField] private string _battleBeginText = "your battle begin";
-    [Tooltip("Длительность показа вступительного текста (сек).")]
+    [Tooltip("Intro text duration (seconds).")]
     [SerializeField] private float _battleBeginTextDuration = 3f;
-    [Tooltip("Во сколько раз приблизить камеру после вступительного текста.")]
+    [Tooltip("Zoom factor after intro text.")]
     [SerializeField] private float _battleBeginZoomFactor = 2f;
-    [Tooltip("Длительность плавного авто-зума (сек).")]
+    [Tooltip("Smooth auto-zoom duration (seconds).")]
     [SerializeField] private float _battleBeginZoomDuration = 0.9f;
-    [Tooltip("Опциональный UI Text. Если не задан, создаётся автоматически по центру экрана.")]
+    [Tooltip("Optional UI Text; if unset, one is created at screen center.")]
     [SerializeField] private Text _battleBeginOverlayText;
-    [Header("Окно завершения боя")]
+    [Header("Battle end panel")]
     [SerializeField] private GameObject _battleEndPanel;
     [SerializeField] private Text _battleEndTitleText;
     [SerializeField] private Button _battleEndCloseButton;
@@ -212,7 +212,7 @@ public class ActionPointsUI : MonoBehaviour
         }
         RefreshMovementButtons(_player != null ? _player.CurrentMovementPosture : MovementPosture.Walk, skipSelected: false);
         if (_player != null)
-            AppendLog($"Ход {_player.TurnCount + 1} начат. ОД: {_player.CurrentAp}.");
+            AppendLog(Loc.Tf("battle_log.turn_started", _player.TurnCount + 1, _player.CurrentAp));
     }
 
     private void OnDestroy()
@@ -288,7 +288,7 @@ public class ActionPointsUI : MonoBehaviour
                 if (_gameSession.TryAutoSubmitTimedOutLiveTurn(animateResolvedRound: true))
                 {
                     ShowRoundWaitPanel();
-                    AppendLog("Автосабмит live хода");
+                    AppendLog(Loc.T("battle_log.auto_submit_live"));
                 }
             }
         }
@@ -324,7 +324,7 @@ public class ActionPointsUI : MonoBehaviour
                 if (_gameSession.TryAutoSubmitTimedOutLiveTurn(animateResolvedRound: true))
                 {
                     ShowRoundWaitPanel();
-                    AppendLog("Время хода истекло");
+                    AppendLog(Loc.T("battle_log.turn_time_expired"));
                 }
             }
             else
@@ -458,7 +458,7 @@ public class ActionPointsUI : MonoBehaviour
 
         if (!HasSkipDialogUi())
         {
-            AppendLog($"Не настроен диалог пропуска ОД ({UiHierarchyNames.SkipDialogPanel}, поле ввода, OK/Отмена).");
+            AppendLog(Loc.Tf("battle_log.skip_dialog_misconfigured", UiHierarchyNames.SkipDialogPanel));
             return;
         }
 
@@ -483,17 +483,17 @@ public class ActionPointsUI : MonoBehaviour
 
         if (!int.TryParse(GetSkipDialogInputText(), out int skipCost) || skipCost <= 0)
         {
-            AppendLog("Введите положительное число ОД");
+            AppendLog(Loc.T("battle_log.enter_positive_ap"));
             return;
         }
 
         if (!_player.QueueWaitAction(skipCost))
         {
-            AppendLog("Недостаточно ОД для пропуска");
+            AppendLog(Loc.T("battle_log.not_enough_ap_skip"));
             return;
         }
 
-        AppendLog($"Пропуск {skipCost} ОД");
+        AppendLog(Loc.Tf("battle_log.skip_ap_cost", skipCost));
         CloseSkipDialog(restoreSelection: true);
     }
 
@@ -533,7 +533,7 @@ public class ActionPointsUI : MonoBehaviour
 
         if (!_player.QueuePostureChange(posture))
         {
-            AppendLog("Недостаточно ОД для смены положения");
+            AppendLog(Loc.T("battle_log.not_enough_ap_posture"));
             return;
         }
 
@@ -555,7 +555,7 @@ public class ActionPointsUI : MonoBehaviour
             if (_gameSession.TrySubmitCurrentLiveTurnDraft(animate))
             {
                 ShowRoundWaitPanel();
-                AppendLog("Отправка хода...");
+                AppendLog(Loc.T("battle_log.submitting_turn"));
             }
             _endTurnInProgress = false;
             return;
@@ -591,14 +591,14 @@ public class ActionPointsUI : MonoBehaviour
                 _player.GetTurnActionsCopy(),
                 _gameSession.ServerRoundIndexForSubmit,
                 animateResolvedRound: false);
-            AppendLog("Отправка хода...");
+            AppendLog(Loc.T("battle_log.submitting_turn"));
             _endTurnInProgress = false;
             return;
         }
 
         // Оффлайн-режим без сервера больше не используется: одиночка тоже идёт через сервер.
         // Для совместимости оставляем только локальный лог без изменения состояния ОД/штрафов.
-        AppendLog("Локальный конец хода");
+        AppendLog(Loc.T("battle_log.local_end_turn"));
         _endTurnInProgress = false;
     }
 
@@ -613,13 +613,13 @@ public class ActionPointsUI : MonoBehaviour
                 _player.GetTurnActionsCopy(),
                 _gameSession.ServerRoundIndexForSubmit,
                 animateResolvedRound: true);
-            AppendLog("Отправка хода...");
+            AppendLog(Loc.T("battle_log.submitting_turn"));
             _endTurnInProgress = false;
             yield break;
         }
 
         // Оффлайн-режим без сервера больше не используется: одиночка тоже идёт через сервер.
-        AppendLog("Локал. аним. конец");
+        AppendLog(Loc.T("battle_log.local_anim_end"));
         _endTurnInProgress = false;
     }
 
@@ -646,7 +646,7 @@ public class ActionPointsUI : MonoBehaviour
         // Панель уже показана при нажатии «конец хода»; здесь только подтверждение по сокету.
         if (!_roundWaitVisible)
             ShowRoundWaitPanel();
-        AppendLog("Ход принят, ждём раунд");
+        AppendLog(Loc.T("battle_log.turn_accepted_waiting"));
     }
 
     private void OnTurnTrackerPrevClicked()
@@ -665,7 +665,7 @@ public class ActionPointsUI : MonoBehaviour
     {
         if (cell == null) return;
         string tag = $"{cell.ColLabel}{cell.RowLabel}";
-        AppendLog($"Игрок -> {tag}");
+        AppendLog(Loc.Tf("battle_log.player_to_hex", tag));
     }
 
     private void AppendLog(string line)
@@ -1173,7 +1173,7 @@ public class ActionPointsUI : MonoBehaviour
         int currentAp = player.CurrentAp;
         if (_miniMapApText != null && currentAp != _lastMiniMapAp)
         {
-            _miniMapApText.text = $"ОД {currentAp}";
+            _miniMapApText.text = Loc.Tf("ui.minimap_ap", currentAp);
             _lastMiniMapAp = currentAp;
         }
     }
@@ -1188,8 +1188,8 @@ public class ActionPointsUI : MonoBehaviour
 
         if (displayedTurn != _lastTurnTrackerDisplayedTurn)
         {
-            string turnLabel = $"Ход {displayedTurn}";
-        if (_turnTrackerText != null)
+            string turnLabel = Loc.Tf("ui.turn_number", displayedTurn);
+            if (_turnTrackerText != null)
                 _turnTrackerText.text = turnLabel;
             if (_turnTrackerTmpText != null)
                 _turnTrackerTmpText.text = turnLabel;
@@ -1788,7 +1788,7 @@ public class ActionPointsUI : MonoBehaviour
     {
         EnsureBattleEndPanel();
         if (_battleEndTitleText != null)
-            _battleEndTitleText.text = victory ? "Бой выигран" : "Бой проигран";
+            _battleEndTitleText.text = victory ? Loc.T("ui.battle_won") : Loc.T("ui.battle_lost");
         if (_battleEndPanel != null)
             _battleEndPanel.SetActive(true);
         HideRoundWaitPanel();
@@ -1845,9 +1845,9 @@ public class ActionPointsUI : MonoBehaviour
         }
 
         if (_battleEndCloseButton == null)
-            _battleEndCloseButton = CreateBattleEndButton("BattleEndCloseButton", "Закрыть", new Vector2(-90f, -70f), OnBattleEndCloseClicked);
+            _battleEndCloseButton = CreateBattleEndButton("BattleEndCloseButton", Loc.T("ui.battle_end_close"), new Vector2(-90f, -70f), OnBattleEndCloseClicked);
         if (_battleEndMainMenuButton == null)
-            _battleEndMainMenuButton = CreateBattleEndButton("BattleEndMainMenuButton", "Главное меню", new Vector2(90f, -70f), OnBattleEndMainMenuClicked);
+            _battleEndMainMenuButton = CreateBattleEndButton("BattleEndMainMenuButton", Loc.T("ui.battle_end_main_menu"), new Vector2(90f, -70f), OnBattleEndMainMenuClicked);
     }
 
     private Button CreateBattleEndButton(string name, string caption, Vector2 anchoredPos, UnityEngine.Events.UnityAction onClick)

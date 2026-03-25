@@ -12,11 +12,11 @@ public class RemoteBattleUnitView : MonoBehaviour
     [SerializeField] private float _moveDurationPerHex = 0.2f;
     [SerializeField] private float _rangedFaceRotationSpeed = 14f;
 
-    [Header("Визуал PvP")]
+    [Header("PvP visuals")]
     [SerializeField] private Color _enemyModelTint = new Color(0.95f, 0.28f, 0.22f, 1f);
 
-    [Header("UI над головой")]
-    [Tooltip("Префаб с CharacterNameplateView; иначе Resources/CharacterNameplate.")]
+    [Header("Overhead UI")]
+    [Tooltip("Prefab with CharacterNameplateView; otherwise Resources/CharacterNameplate.")]
     [SerializeField] private GameObject _characterNameplatePrefab;
     [SerializeField] private Transform _nameplateFollowAnchor;
 

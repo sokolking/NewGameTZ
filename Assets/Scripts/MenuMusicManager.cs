@@ -13,7 +13,7 @@ public sealed class MenuMusicManager : MonoBehaviour
     private const string MainMenuSceneName = "MainMenu";
     private const string MainBattleSceneName = "MainScene";
 
-    [Tooltip("Resources path без расширения, например Audio/MenuMusic для Assets/Resources/Audio/MenuMusic.mp3")]
+    [Tooltip("Resources path without extension, e.g. Audio/MenuMusic for Assets/Resources/Audio/MenuMusic.mp3")]
     [SerializeField] private string _clipResourcesPath = "Audio/MenuMusic";
 
     [SerializeField] [Range(0f, 1f)] private float _volume = 0.45f;

@@ -12,7 +12,7 @@ using UnityEngine.UI;
 [DefaultExecutionOrder(-100)]
 public class ClientUpdateGate : MonoBehaviour
 {
-    [Header("Ссылки (пусто — поиск по имени под Canvas)")]
+    [Header("References (empty = find by name under Canvas)")]
     [SerializeField] private Button _loginButton;
     [SerializeField] private GameObject _updatePanelRoot;
     [SerializeField] private Text _messageText;
@@ -21,7 +21,7 @@ public class ClientUpdateGate : MonoBehaviour
     [SerializeField] private Slider _progressSlider;
     [SerializeField] private Toggle _debugLocalhostToggle;
 
-    [Tooltip("Если true — при ошибке сети вход остаётся доступен (иначе блокируется до успешной проверки).")]
+    [Tooltip("If true, login stays enabled when the version check fails (otherwise blocked until success).")]
     [SerializeField] private bool _allowLoginIfVersionCheckFails = true;
 
     private string _versionApiBaseUrl;
@@ -131,7 +131,7 @@ public class ClientUpdateGate : MonoBehaviour
         }
 
         if (_blockedButtons.Count == 0 && SceneManager.GetActiveScene().name == "LoginScene")
-            Debug.LogWarning("[ClientUpdateGate] Не найдена кнопка входа (Button_Enter или Button (Legacy)) — при устаревшей версии вход не будет заблокирован.");
+            Debug.LogWarning("[ClientUpdateGate] Login button not found (Button_Enter or Button (Legacy)) — outdated builds will not block login.");
     }
 
     private static void EnsureRuntimeUpdatePanel(Transform canvasRoot)
@@ -169,7 +169,7 @@ public class ClientUpdateGate : MonoBehaviour
         vlg.childForceExpandWidth = true;
 
         CreateRtText(box.transform, UiHierarchyNames.ClientUpdateMessageText,
-            "Доступна новая версия игры.\nСкачайте обновление, чтобы продолжить.", 18, TextAnchor.UpperLeft, font);
+            Loc.T("client_update.prompt"), 18, TextAnchor.UpperLeft, font);
         CreateRtText(box.transform, UiHierarchyNames.ClientUpdateStatusText, "", 14, TextAnchor.UpperLeft, font);
 
         var sliderGo = new GameObject(UiHierarchyNames.ClientUpdateProgressSlider, typeof(RectTransform), typeof(Slider));
@@ -202,7 +202,7 @@ public class ClientUpdateGate : MonoBehaviour
         bt.fontSize = 18;
         bt.color = Color.white;
         bt.alignment = TextAnchor.MiddleCenter;
-        bt.text = "Скачать";
+        bt.text = Loc.T("client_update.download");
 
         panelGo.SetActive(false);
     }
@@ -279,7 +279,7 @@ public class ClientUpdateGate : MonoBehaviour
             {
                 ShowPanel();
                 if (_messageText != null)
-                    _messageText.text = "Не удалось проверить версию клиента. Проверьте соединение.";
+                    _messageText.text = Loc.T("client_update.version_check_failed");
             }
             yield break;
         }
@@ -295,7 +295,7 @@ public class ClientUpdateGate : MonoBehaviour
             {
                 ShowPanel();
                 if (_messageText != null)
-                    _messageText.text = "Не удалось разобрать ответ версии с сервера.";
+                    _messageText.text = Loc.T("client_update.version_parse_failed");
             }
             yield break;
         }
@@ -331,8 +331,7 @@ public class ClientUpdateGate : MonoBehaviour
             ShowPanel();
             if (_messageText != null)
             {
-                _messageText.text =
-                    $"Доступна новая версия игры.\nУ вас: {clientVer}\nАктуальная: {v.latestVersion}";
+                _messageText.text = Loc.Tf("client_update.version_available_detail", clientVer, v.latestVersion);
             }
             SetLoginInteractable(false);
         }
@@ -373,7 +372,7 @@ public class ClientUpdateGate : MonoBehaviour
             _progressSlider.value = 0f;
         }
         if (_statusText != null)
-            _statusText.text = "Загрузка…";
+            _statusText.text = Loc.T("client_update.downloading");
 
         _downloadProgress = new HttpSimple.DownloadProgressHolder();
         string err = null;
@@ -392,16 +391,16 @@ public class ClientUpdateGate : MonoBehaviour
             if (_downloadButton != null)
                 _downloadButton.interactable = true;
             if (_statusText != null)
-                _statusText.text = "Ошибка: " + err;
+                _statusText.text = Loc.Tf("client_update.download_error", err);
             yield break;
         }
 
         if (_statusText != null)
-            _statusText.text = "Готово. Установка…";
+            _statusText.text = Loc.T("client_update.installing");
 
 #if UNITY_EDITOR
         if (_statusText != null)
-            _statusText.text = "В редакторе установка не запускается.";
+            _statusText.text = Loc.T("client_update.editor_no_install");
         if (_downloadButton != null)
             _downloadButton.interactable = true;
         yield break;

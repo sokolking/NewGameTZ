@@ -174,7 +174,7 @@ public class BattleServerConnection : MonoBehaviour
     {
         if (string.IsNullOrEmpty(_serverUrl) || string.IsNullOrEmpty(_battleId) || string.IsNullOrEmpty(turnId))
         {
-            onFailed?.Invoke("Не удалось загрузить ход.");
+            onFailed?.Invoke(Loc.T("net.turn_load_failed"));
             yield break;
         }
 
@@ -191,7 +191,7 @@ public class BattleServerConnection : MonoBehaviour
 
         if (string.IsNullOrEmpty(body))
         {
-            onFailed?.Invoke("Не удалось загрузить ход.");
+            onFailed?.Invoke(Loc.T("net.turn_load_failed"));
             yield break;
         }
 
@@ -208,7 +208,7 @@ public class BattleServerConnection : MonoBehaviour
 
         if (response == null || response.turnResult == null)
         {
-            onFailed?.Invoke("Сервер вернул пустой ход.");
+            onFailed?.Invoke(Loc.T("net.turn_empty"));
             yield break;
         }
 

@@ -10,9 +10,9 @@ public class MovementRangeHighlighter : MonoBehaviour
 {
     [SerializeField] private HexGrid _grid;
     [SerializeField] private Player _player;
-    [Tooltip("Близкие клетки — светло-серый (непрозрачная заливка поверх полупрозрачной сетки).")]
+    [Tooltip("Near cells — light gray (opaque fill over semi-transparent grid).")]
     [SerializeField] private Color _nearColor = new Color(0.92f, 0.92f, 0.92f, 1f);
-    [Tooltip("Дальние клетки — красный, кольцо штрафа (непрозрачно).")]
+    [Tooltip("Far cells — red penalty ring (opaque).")]
     [SerializeField] private Color _farColor = new Color(1f, 0f, 0f, 1f);
 
     private int _lastCol = int.MinValue;

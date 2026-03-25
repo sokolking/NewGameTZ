@@ -22,21 +22,21 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
     [SerializeField] private Player _player;
     [SerializeField] private RemoteBattleUnitView _remoteBattleUnit;
     [SerializeField] private Animator _animator;
-    [Tooltip("Если true — сбросить назначенный контроллер в Awake (затем подставится заглушка из Resources или Playable Controller Override).")]
+    [Tooltip("If true, clear assigned controller in Awake (then stub from Resources or Playable Controller Override applies).")]
     [SerializeField] private bool _clearAnimatorController = true;
-    [Tooltip("Необязательно: свой пустой Animator Controller вместо Resources/Animator/PlayablesStub.")]
+    [Tooltip("Optional: your own empty Animator Controller instead of Resources/Animator/PlayablesStub.")]
     [SerializeField] private RuntimeAnimatorController _playableControllerOverride;
     [SerializeField] private float _uniformModelScale = 1f;
     [SerializeField] private bool _faceMovementDirection = true;
-    [Tooltip("Если выключено — крутится только этот объект (модель). Если включено — крутится корень Player (Transform).")]
+    [Tooltip("Off: rotate this object (model) only. On: rotate Player root (Transform).")]
     [SerializeField] private bool _rotatePlayerRoot = false;
     [SerializeField] private float _rotationSpeed = 14f;
     [SerializeField] private float _moveFaceMinSqr = 0.0004f;
-    [Header("Походка по гексам")]
-    [Tooltip("Доля полного цикла walk/run на один переход между соседними гексами (0.5 ≈ половина цикла — чередование ног при фазе 0 и 0.5).")]
+    [Header("Hex locomotion")]
+    [Tooltip("Fraction of full walk/run cycle per adjacent hex step (0.5 ≈ half cycle — leg alternation at phase 0 vs 0.5).")]
     [SerializeField] [Range(0.1f, 1f)] private float _locomotionCycleFractionPerHex = 0.5f;
 
-    [Header("Clips — Object: перетащите клип из раскрытого FBX (иконка зелёного слайдера)")]
+    [Header("Clips — Object: drag clip from expanded FBX (green slider icon)")]
     [SerializeField] private UnityEngine.Object _idle;
     [SerializeField] private UnityEngine.Object _walk;
     [SerializeField] private UnityEngine.Object _run;
@@ -293,8 +293,8 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
             _animator.runtimeAnimatorController = ctrl;
         else
             Debug.LogError(
-                "[PlayerCharacterAnimator] Нет RuntimeAnimatorController: добавьте Resources/Animator/PlayablesStub.controller " +
-                "или назначьте Playable Controller Override / отключите Clear Animator Controller и укажите пустой контроллер.",
+                "[PlayerCharacterAnimator] No RuntimeAnimatorController: add Resources/Animator/PlayablesStub.controller " +
+                "or assign Playable Controller Override / disable Clear Animator Controller and assign an empty controller.",
                 this);
     }
 
@@ -305,8 +305,8 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
         if (o is AnimationClip)
             return;
         Debug.LogWarning(
-            $"[PlayerCharacterAnimator] Поле «{name}» должно ссылаться на AnimationClip (подресурс FBX со значком слайдера). " +
-            $"Сейчас: {o.GetType().Name} — приведение к AnimationClip даст null, анимация не переключится.",
+            $"[PlayerCharacterAnimator] Field \"{name}\" must reference an AnimationClip (FBX sub-asset with slider icon). " +
+            $"Now: {o.GetType().Name} — cast to AnimationClip is null, animation will not switch.",
             o);
     }
 

@@ -38,7 +38,8 @@ public class BattleQueuedAction
     public string actionType;
     public HexPosition targetPosition;
     public string targetUnitId;
-    public string bodyPart;
+    /// <summary>Server <c>body_parts.id</c>; 0 = unspecified.</summary>
+    public int bodyPart;
     public string posture;
     /// <summary>Для ChangePosture: поза до смены (клиент, отмена последнего действия).</summary>
     public string previousPosture;
@@ -65,7 +66,8 @@ public class BattleExecutedAction
     public HexPosition fromPosition;
     public HexPosition toPosition;
     public string targetUnitId;
-    public string bodyPart;
+    /// <summary>Server <c>body_parts.id</c>; 0 = unspecified.</summary>
+    public int bodyPart;
     public string posture;
     public int damage;
     public bool targetDied;
@@ -95,6 +97,7 @@ public class PlayerTurnResult
     public string currentPosture;
     /// <summary>Состояние оружия после раунда (сервер).</summary>
     public string weaponCode;
+    public int weaponDamageMin;
     public int weaponDamage;
     public int weaponRange;
     /// <summary>Стоимость атаки (ОД), weapons.attack_ap_cost.</summary>
@@ -211,6 +214,7 @@ public class BattleStartedPayload
     public int[] spawnCurrentHps;
     public string[] spawnCurrentPostures;
     public string[] spawnWeaponCodes;
+    public int[] spawnWeaponDamageMins;
     public int[] spawnWeaponDamages;
     public int[] spawnWeaponRanges;
     public int[] spawnWeaponAttackApCosts;
@@ -240,6 +244,7 @@ public class EquipWeaponResponsePayload
     public bool ok;
     public string error;
     public string weaponCode;
+    public int weaponDamageMin;
     public int weaponDamage;
     public int weaponRange;
     public int weaponAttackApCost;

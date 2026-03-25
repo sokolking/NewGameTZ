@@ -13,7 +13,7 @@ public sealed class AttackRangeHexOutline : MonoBehaviour
     [SerializeField] private HexGrid _grid;
     [SerializeField] private float _yOffset = 0.01f;
     [SerializeField] private Color _lineColor = new Color(0.94f, 0.42f, 0.30f, 0.95f);
-    [Tooltip("Полуширина контура в мировых единицах (линия — полоса из двух треугольников). Раньше был 1px; по умолчанию ~в 2 раза толще условных 0.01.")]
+    [Tooltip("Half-width of outline in world units (line = two-triangle strip). Was ~1px; default ~2x thicker than nominal 0.01.")]
     [SerializeField] private float _lineHalfWidthWorld = 0.02f;
     [SerializeField] private int _defaultWeaponRangeHexes = 1;
 

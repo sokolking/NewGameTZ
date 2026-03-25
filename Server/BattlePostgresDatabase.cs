@@ -115,17 +115,75 @@ CREATE TABLE IF NOT EXISTS weapons (
     spread_penalty REAL NOT NULL DEFAULT 0,
     trajectory_height INT NOT NULL DEFAULT 1,
     quality INT NOT NULL DEFAULT 100,
-    weapon_condition INT NOT NULL DEFAULT 100
+    weapon_condition INT NOT NULL DEFAULT 100,
+    is_sniper BOOLEAN NOT NULL DEFAULT FALSE,
+    mass DOUBLE PRECISION NOT NULL DEFAULT 0,
+    caliber TEXT NOT NULL DEFAULT '',
+    armor_pierce INT NOT NULL DEFAULT 0,
+    magazine_size INT NOT NULL DEFAULT 0,
+    reload_ap_cost INT NOT NULL DEFAULT 0,
+    category TEXT NOT NULL DEFAULT 'cold',
+    req_level INT NOT NULL DEFAULT 1,
+    req_strength INT NOT NULL DEFAULT 0,
+    req_endurance INT NOT NULL DEFAULT 0,
+    req_accuracy INT NOT NULL DEFAULT 0,
+    req_mastery_category TEXT NOT NULL DEFAULT '',
+    stat_effect_strength INT NOT NULL DEFAULT 0,
+    stat_effect_endurance INT NOT NULL DEFAULT 0,
+    stat_effect_accuracy INT NOT NULL DEFAULT 0,
+    damage_type TEXT NOT NULL DEFAULT 'physical',
+    damage_min INT NOT NULL DEFAULT 1,
+    damage_max INT NOT NULL DEFAULT 1,
+    burst_rounds INT NOT NULL DEFAULT 0,
+    burst_ap_cost INT NOT NULL DEFAULT 0
 );
 
 ALTER TABLE weapons ADD COLUMN IF NOT EXISTS spread_penalty REAL NOT NULL DEFAULT 0;
 ALTER TABLE weapons ADD COLUMN IF NOT EXISTS trajectory_height INT NOT NULL DEFAULT 1;
 ALTER TABLE weapons ADD COLUMN IF NOT EXISTS quality INT NOT NULL DEFAULT 100;
 ALTER TABLE weapons ADD COLUMN IF NOT EXISTS weapon_condition INT NOT NULL DEFAULT 100;
+ALTER TABLE weapons ADD COLUMN IF NOT EXISTS is_sniper BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE weapons ADD COLUMN IF NOT EXISTS mass DOUBLE PRECISION NOT NULL DEFAULT 0;
+ALTER TABLE weapons ADD COLUMN IF NOT EXISTS caliber TEXT NOT NULL DEFAULT '';
+ALTER TABLE weapons ADD COLUMN IF NOT EXISTS armor_pierce INT NOT NULL DEFAULT 0;
+ALTER TABLE weapons ADD COLUMN IF NOT EXISTS magazine_size INT NOT NULL DEFAULT 0;
+ALTER TABLE weapons ADD COLUMN IF NOT EXISTS reload_ap_cost INT NOT NULL DEFAULT 0;
+ALTER TABLE weapons ADD COLUMN IF NOT EXISTS category TEXT NOT NULL DEFAULT 'cold';
+ALTER TABLE weapons ADD COLUMN IF NOT EXISTS req_level INT NOT NULL DEFAULT 1;
+ALTER TABLE weapons ADD COLUMN IF NOT EXISTS req_strength INT NOT NULL DEFAULT 0;
+ALTER TABLE weapons ADD COLUMN IF NOT EXISTS req_endurance INT NOT NULL DEFAULT 0;
+ALTER TABLE weapons ADD COLUMN IF NOT EXISTS req_accuracy INT NOT NULL DEFAULT 0;
+ALTER TABLE weapons ADD COLUMN IF NOT EXISTS req_mastery_category TEXT NOT NULL DEFAULT '';
+ALTER TABLE weapons ADD COLUMN IF NOT EXISTS stat_effect_strength INT NOT NULL DEFAULT 0;
+ALTER TABLE weapons ADD COLUMN IF NOT EXISTS stat_effect_endurance INT NOT NULL DEFAULT 0;
+ALTER TABLE weapons ADD COLUMN IF NOT EXISTS stat_effect_accuracy INT NOT NULL DEFAULT 0;
+ALTER TABLE weapons ADD COLUMN IF NOT EXISTS damage_type TEXT NOT NULL DEFAULT 'physical';
+ALTER TABLE weapons ADD COLUMN IF NOT EXISTS damage_min INT NOT NULL DEFAULT 1;
+ALTER TABLE weapons ADD COLUMN IF NOT EXISTS damage_max INT NOT NULL DEFAULT 1;
+ALTER TABLE weapons ADD COLUMN IF NOT EXISTS burst_rounds INT NOT NULL DEFAULT 0;
+ALTER TABLE weapons ADD COLUMN IF NOT EXISTS burst_ap_cost INT NOT NULL DEFAULT 0;
 
-INSERT INTO weapons (code, name, damage, range, icon_key, attack_ap_cost, spread_penalty, trajectory_height, quality, weapon_condition)
-VALUES ('fist', 'Fist', 1, 1, 'fist', 3, 0, 1, 100, 100)
+UPDATE weapons SET damage_min = GREATEST(0, damage), damage_max = GREATEST(0, damage), damage = GREATEST(0, damage)
+WHERE damage > 1 AND damage_min = 1 AND damage_max = 1;
+
+INSERT INTO weapons (code, name, damage, range, icon_key, attack_ap_cost, spread_penalty, trajectory_height, quality, weapon_condition, is_sniper,
+    mass, caliber, armor_pierce, magazine_size, reload_ap_cost, category, req_level, damage_type, damage_min, damage_max)
+VALUES ('fist', 'Fist', 1, 1, 'fist', 3, 0, 1, 100, 100, FALSE,
+    0, '', 0, 0, 0, 'cold', 1, 'physical', 1, 1)
 ON CONFLICT (code) DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS body_parts (
+    id SMALLINT PRIMARY KEY CHECK (id > 0),
+    code TEXT NOT NULL UNIQUE
+);
+
+INSERT INTO body_parts (id, code) VALUES
+    (1, 'head'),
+    (2, 'torso'),
+    (3, 'legs'),
+    (4, 'left_arm'),
+    (5, 'right_arm')
+ON CONFLICT (id) DO NOTHING;
 """;
             command.ExecuteNonQuery();
         }

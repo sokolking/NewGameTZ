@@ -9,10 +9,10 @@ using UnityEngine.UI;
 /// </summary>
 public class LoginSceneController : MonoBehaviour
 {
-    [Header("Сцена после входа")]
+    [Header("Scene after login")]
     [SerializeField] private string _mainMenuSceneName = "MainMenu";
 
-    [Header("Ссылки (пусто — поиск по имени под Canvas)")]
+    [Header("References (empty = find by name under Canvas)")]
     [SerializeField] private InputField _loginInputField;
     [SerializeField] private InputField _passwordInputField;
     [SerializeField] private Toggle _soloVsMonsterToggle;
@@ -72,7 +72,7 @@ public class LoginSceneController : MonoBehaviour
 
         if (string.IsNullOrEmpty(username) || string.IsNullOrEmpty(password))
         {
-            ShowError("Введите логин и пароль.");
+            ShowError(Loc.T("login.enter_credentials"));
             return;
         }
 
@@ -102,7 +102,7 @@ public class LoginSceneController : MonoBehaviour
 
         if (!success)
         {
-            ShowError(string.IsNullOrEmpty(errorBody) ? "Неверный логин или пароль." : TruncateError(errorBody));
+            ShowError(string.IsNullOrEmpty(errorBody) ? Loc.T("login.invalid_credentials") : TruncateError(errorBody));
             yield break;
         }
 

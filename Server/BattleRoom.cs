@@ -81,7 +81,8 @@ public partial class BattleRoom
 
     /// <summary>Текущее состояние каждого игрока (позиция, ОД, штраф). Обновляется после каждого раунда.</summary>
     public Dictionary<string, PlayerBattleState> CurrentState { get; } = new();
-    public Dictionary<string, (int maxHp, int maxAp, string weaponCode, int weaponDamage, int weaponRange, int weaponAttackApCost, int accuracy, double weaponSpreadPenalty, int weaponTrajectoryHeight)> PlayerCombatProfiles { get; } = new();
+    /// <summary>Кортеж: … weaponDamageMin, weaponDamageMax, weaponRange, attackApCost, accuracy, spread, traj, sniper.</summary>
+    public Dictionary<string, (int maxHp, int maxAp, string weaponCode, int weaponDamageMin, int weaponDamageMax, int weaponRange, int weaponAttackApCost, int accuracy, double weaponSpreadPenalty, int weaponTrajectoryHeight, bool weaponIsSniper)> PlayerCombatProfiles { get; } = new();
 
     /// <summary>Порядок отправки хода в текущем раунде (кто раньше отправил — выше приоритет на клетку).</summary>
     public List<string> SubmissionOrder { get; } = new();
@@ -108,14 +109,19 @@ public partial class BattleRoom
     private readonly Random _rng;
     private readonly BattleWeaponDatabase? _weaponDb;
     private readonly BattleObstacleBalanceDatabase? _obstacleDb;
+    private readonly BattleBodyPartDatabase? _bodyPartDb;
 
-    public BattleRoom(string battleId, BattleWeaponDatabase? weaponDb = null, BattleObstacleBalanceDatabase? obstacleDb = null)
+    public BattleRoom(string battleId, BattleWeaponDatabase? weaponDb = null, BattleObstacleBalanceDatabase? obstacleDb = null, BattleBodyPartDatabase? bodyPartDb = null)
     {
         BattleId = battleId;
         _rng = new Random(Guid.NewGuid().GetHashCode());
         _weaponDb = weaponDb;
         _obstacleDb = obstacleDb;
+        _bodyPartDb = bodyPartDb;
     }
+
+    private int NormalizeBodyPartId(int raw) =>
+        _bodyPartDb != null ? _bodyPartDb.NormalizeBodyPartId(raw) : (raw is >= 1 and <= 5 ? raw : 0);
 
     /// <summary>Вызывается в конце CloseRound — пуш по WebSocket.</summary>
     public static event Action<BattleRoom>? RoundClosedForPush;

@@ -35,12 +35,20 @@ public class SubmitTurnPayloadDto
     public QueuedBattleActionDto[]? Actions { get; set; }
 }
 
+/// <summary>One row from <c>body_parts</c> (id + stable English code).</summary>
+public class BattleBodyPartRowDto
+{
+    public int Id { get; set; }
+    public string Code { get; set; } = "";
+}
+
 public class QueuedBattleActionDto
 {
     public string ActionType { get; set; } = "";
     public HexPositionDto? TargetPosition { get; set; }
     public string? TargetUnitId { get; set; }
-    public string? BodyPart { get; set; }
+    /// <summary>FK to <c>body_parts.id</c>; 0 = not specified.</summary>
+    public int BodyPart { get; set; }
     public string? Posture { get; set; }
     public int Cost { get; set; } = 1;
     /// <summary>Для EquipWeapon: код оружия из БД.</summary>
@@ -72,9 +80,12 @@ public class BattleWeaponBrowseRowDto
     public long Id { get; set; }
     public string Code { get; set; } = "";
     public string Name { get; set; } = "";
-    public int Damage { get; set; }
+    /// <summary>Диапазон урона в бою (случайное целое inclusive).</summary>
+    public int DamageMin { get; set; } = 1;
+    public int DamageMax { get; set; } = 1;
     public int Range { get; set; }
     public string IconKey { get; set; } = "";
+    /// <summary>Одиночный выстрел: стоимость в ОД.</summary>
     public int AttackApCost { get; set; } = 1;
     /// <summary>Штраф кучности (0…1), вычитается из p попадания после дистанции и укрытий.</summary>
     public double SpreadPenalty { get; set; }
@@ -84,6 +95,65 @@ public class BattleWeaponBrowseRowDto
     public int Quality { get; set; } = 100;
     /// <summary>Только БД; в бой пока не входит. Колонка <c>weapon_condition</c>.</summary>
     public int WeaponCondition { get; set; } = 100;
+    /// <summary>Ослабленный штраф к p за дистанцию за пределами <see cref="Range"/> (кривая «снайпер»).</summary>
+    public bool IsSniper { get; set; }
+    public double Mass { get; set; }
+    public string Caliber { get; set; } = "";
+    public int ArmorPierce { get; set; }
+    public int MagazineSize { get; set; }
+    /// <summary>Перезарядка (ОД).</summary>
+    public int ReloadApCost { get; set; }
+    public string Category { get; set; } = "cold";
+    /// <summary>Мин. уровень персонажа (= уровень оружия).</summary>
+    public int ReqLevel { get; set; } = 1;
+    public int ReqStrength { get; set; }
+    public int ReqEndurance { get; set; }
+    public int ReqAccuracy { get; set; }
+    /// <summary>Владение по категории (ключ навыка).</summary>
+    public string ReqMasteryCategory { get; set; } = "";
+    /// <summary>Дельты к характеристикам (негативные эффекты оружия).</summary>
+    public int StatEffectStrength { get; set; }
+    public int StatEffectEndurance { get; set; }
+    public int StatEffectAccuracy { get; set; }
+    public string DamageType { get; set; } = "physical";
+    /// <summary>Очередь: число пуль за один режим (0 — режим не задан).</summary>
+    public int BurstRounds { get; set; }
+    /// <summary>Очередь: стоимость в ОД.</summary>
+    public int BurstApCost { get; set; }
+}
+
+/// <summary>Полная запись для upsert в <c>weapons</c>.</summary>
+public sealed class BattleWeaponUpsertDto
+{
+    public string Code { get; set; } = "";
+    public string Name { get; set; } = "";
+    public int DamageMin { get; set; } = 1;
+    public int DamageMax { get; set; } = 1;
+    public int Range { get; set; }
+    public string IconKey { get; set; } = "";
+    public int AttackApCost { get; set; } = 1;
+    public double SpreadPenalty { get; set; }
+    public int TrajectoryHeight { get; set; } = 1;
+    public int Quality { get; set; } = 100;
+    public int WeaponCondition { get; set; } = 100;
+    public bool IsSniper { get; set; }
+    public double Mass { get; set; }
+    public string Caliber { get; set; } = "";
+    public int ArmorPierce { get; set; }
+    public int MagazineSize { get; set; }
+    public int ReloadApCost { get; set; }
+    public string Category { get; set; } = "cold";
+    public int ReqLevel { get; set; } = 1;
+    public int ReqStrength { get; set; }
+    public int ReqEndurance { get; set; }
+    public int ReqAccuracy { get; set; }
+    public string ReqMasteryCategory { get; set; } = "";
+    public int StatEffectStrength { get; set; }
+    public int StatEffectEndurance { get; set; }
+    public int StatEffectAccuracy { get; set; }
+    public string DamageType { get; set; } = "physical";
+    public int BurstRounds { get; set; }
+    public int BurstApCost { get; set; }
 }
 
 public class ExecutedBattleActionDto
@@ -96,7 +166,8 @@ public class ExecutedBattleActionDto
     public HexPositionDto? FromPosition { get; set; }
     public HexPositionDto? ToPosition { get; set; }
     public string? TargetUnitId { get; set; }
-    public string? BodyPart { get; set; }
+    /// <summary>FK to <c>body_parts.id</c>; 0 = not specified.</summary>
+    public int BodyPart { get; set; }
     public string? Posture { get; set; }
     public int Damage { get; set; }
     public bool TargetDied { get; set; }
@@ -123,6 +194,7 @@ public class UnitStateDto
     public int MaxHp { get; set; }
     public int CurrentHp { get; set; }
     public string WeaponCode { get; set; } = "fist";
+    public int WeaponDamageMin { get; set; } = 1;
     public int WeaponDamage { get; set; } = 1;
     public int WeaponRange { get; set; } = 1;
     /// <summary>Стоимость атаки (ОД), фиксированная логикой боя.</summary>
@@ -133,6 +205,8 @@ public class UnitStateDto
     public double WeaponSpreadPenalty { get; set; }
     /// <summary>Высота траектории выстрела для ЛС и стен (0 низкая, 1 обычная, 2 высокая).</summary>
     public int WeaponTrajectoryHeight { get; set; } = 1;
+    /// <summary>Снайперское оружие: иная кривая p по дистанции за пределами дальности (урон без изменений).</summary>
+    public bool WeaponIsSniper { get; set; }
     public string Posture { get; set; } = "walk";
 }
 
@@ -156,12 +230,14 @@ public class PlayerTurnResultDto
     public int DamageDealt { get; set; }
     public string CurrentPosture { get; set; } = "walk";
     public string WeaponCode { get; set; } = "fist";
+    public int WeaponDamageMin { get; set; } = 1;
     public int WeaponDamage { get; set; } = 1;
     public int WeaponRange { get; set; } = 1;
     /// <summary>Стоимость атаки (ОД), фиксированная логикой боя.</summary>
     public int WeaponAttackApCost { get; set; } = 1;
     public double WeaponSpreadPenalty { get; set; }
     public int WeaponTrajectoryHeight { get; set; } = 1;
+    public bool WeaponIsSniper { get; set; }
     public ExecutedBattleActionDto[]? ExecutedActions { get; set; }
 }
 
@@ -231,10 +307,13 @@ public class BattleStartedPayloadDto
     public string[]? SpawnCurrentPostures { get; set; }
     public string[]? SpawnWeaponCodes { get; set; }
     public int[]? SpawnWeaponDamages { get; set; }
+    /// <summary>Параллельно <see cref="SpawnWeaponDamages"/> (макс.); мин. урон для отображения/логики клиента.</summary>
+    public int[]? SpawnWeaponDamageMins { get; set; }
     public int[]? SpawnWeaponRanges { get; set; }
     public int[]? SpawnWeaponAttackApCosts { get; set; }
     public double[]? SpawnWeaponSpreadPenalties { get; set; }
     public int[]? SpawnWeaponTrajectoryHeights { get; set; }
+    public bool[]? SpawnWeaponIsSnipers { get; set; }
     public string[]? SpawnDisplayNames { get; set; }
     public int[]? SpawnLevels { get; set; }
     public int[]? ObstacleCols { get; set; }

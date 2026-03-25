@@ -13,15 +13,15 @@ public class GamePhaseViewController : MonoBehaviour
 {
     public static GamePhaseViewController Instance { get; private set; }
 
-    [Tooltip("Если пусто — ищется через UiHierarchyFind по UiHierarchyNames.ModeButton.")]
+    [Tooltip("If empty, resolved via UiHierarchyFind by UiHierarchyNames.ModeButton.")]
     [SerializeField] private Button _modeButton;
-    [Tooltip("Необязательно: отдельный текст; иначе берётся TMP/Legacy Text на дочерних ModeButton.")]
+    [Tooltip("Optional separate label; otherwise TMP/Legacy Text on ModeButton children is used.")]
     [SerializeField] private TextMeshProUGUI _modeLabel;
 
-    [Header("Мигание ModeButton после анимации просмотра")]
-    [Tooltip("Минимальная альфа при пульсации (0…1).")]
+    [Header("ModeButton pulse after replay animation")]
+    [Tooltip("Minimum alpha while pulsing (0…1).")]
     [SerializeField] [Range(0.05f, 1f)] private float _modeButtonPulseMinAlpha = 0.35f;
-    [Tooltip("Скорость плавного пульса (чем больше — быстрее «мигание»).")]
+    [Tooltip("Pulse speed (higher = faster blink).")]
     [SerializeField] private float _modeButtonPulseSpeed = 1.35f;
 
     private Text _legacyModeLabel;

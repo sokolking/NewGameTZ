@@ -20,16 +20,16 @@ public class HoldTargetIndicator : MonoBehaviour
         RightHand = 5
     }
 
-    [Tooltip("Если не задан — Resources/hold_indicator (Sprite или Texture2D).")]
+    [Tooltip("If unset: Resources/hold_indicator (Sprite or Texture2D).")]
     [SerializeField] private Sprite _spriteOverride;
     [SerializeField] private Color _partBaseColor = new Color(1, 1, 1, 0.55f);
     [SerializeField] private Color _partHighlightColor = new Color(1f, 0f, 0f, 0.55f);
     [SerializeField] private Rect _headUvRect = new Rect(0.25f, 0.8f, 0.5f, 0.2f);
     [SerializeField] private Rect _torsoUvRect = new Rect(0.25f, 0.45f, 0.5f, 0.35f);
     [SerializeField] private Rect _legsUvRect = new Rect(0.25f, 0f, 0.5f, 0.45f);
-    [Tooltip("UV зона левой руки (вид со стороны силуэта). Проверяется раньше корпуса.")]
+    [Tooltip("UV zone left arm (silhouette-facing). Tested before torso.")]
     [SerializeField] private Rect _leftHandUvRect = new Rect(0.02f, 0.42f, 0.2f, 0.36f);
-    [Tooltip("UV зона правой руки. Проверяется раньше корпуса.")]
+    [Tooltip("UV zone right arm. Tested before torso.")]
     [SerializeField] private Rect _rightHandUvRect = new Rect(0.78f, 0.42f, 0.2f, 0.36f);
 
     private SpriteRenderer _baseRenderer;

@@ -7,6 +7,7 @@ namespace BattleServer;
 /// <list type="bullet">
 /// <item><description>2.5 — метательное и гранаты: то же действие <see cref="BattleRoom.ActionAttack"/> и тот же гексовый прицел, без отдельного типа хода.</description></item>
 /// <item><description>2.6 — граната: три броска слота силуэта <b>с возвращением</b> (один слот может выпасть несколько раз).</description></item>
+/// <item><description>5.13 — флаг <c>is_sniper</c> у оружия (<see cref="UnitStateDto.WeaponIsSniper"/>): ослабленный штраф к <c>p_дистанция</c> за гексы за пределами дальности (0.65^N вместо 0.5^N); урон за пределами дальности без изменений.</description></item>
 /// <item><description>5.15 — шанс попадания: <c>p = clamp01(p_дистанция × множители_укрытия + бонус_меткости − штраф_кучности)</c>.</description></item>
 /// <item><description>7.20 — ЛС по стенам: <see cref="UnitStateDto.WeaponTrajectoryHeight"/> (0…2) и тег стены <c>wall</c>/<c>wall_low</c>; выстрел блокируется, если высота преграды по ЛС не ниже траектории (реализация в <c>BattleRoom.LineOfFire.cs</c>).</description></item>
 /// </list>

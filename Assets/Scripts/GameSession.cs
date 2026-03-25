@@ -44,45 +44,45 @@ public class GameSession : MonoBehaviour
     /// <summary>Итог боя: true = победа, false = поражение.</summary>
     public static System.Action<bool> OnBattleFinished;
 
-    [Header("Режим и идентификаторы")]
-    [Tooltip("Включить отправку хода на сервер при завершении хода.")]
+    [Header("Mode & IDs")]
+    [Tooltip("Send turn to server when the local turn ends.")]
     [SerializeField] private bool _isOnlineMode;
     [SerializeField] private string _battleId = "battle-1";
     [SerializeField] private string _playerId = "P1";
 
-    [Header("Сервер (Этап 2)")]
+    [Header("Server")]
     [SerializeField] private BattleServerConnection _serverConnection;
 
-    [Header("Локальный юнит")]
-    [Tooltip("Юнит локального игрока (для применения TurnResult и синхронизации раунда). Если не задан — ищется в сцене.")]
+    [Header("Local unit")]
+    [Tooltip("Local player unit for TurnResult / round sync. If unset, found in scene.")]
     [SerializeField] private Player _localPlayer;
 
-    [Header("Визуализация раунда")]
-    [Tooltip("Пауза после атакующего действия, чтобы было видно ритм тиков и разницу в ОД.")]
+    [Header("Round playback")]
+    [Tooltip("Pause after attack actions so tick rhythm and AP changes read clearly.")]
     [SerializeField] private float _attackActionPauseSeconds = 0.08f;
-    [Tooltip("Короткая пауза между тиками action journal.")]
+    [Tooltip("Short pause between action journal ticks.")]
     [SerializeField] private float _tickPauseSeconds = 0.03f;
 
-    [Header("Дальний бой: пуля")]
-    [Tooltip("Базовая длительность полёта пули (сек); масштабируется по числу гексов.")]
+    [Header("Ranged: bullet")]
+    [Tooltip("Base bullet travel time (sec); scaled by hex count.")]
     [SerializeField] private float _bulletFlightSeconds = 0.14f;
-    [Tooltip("Запасная высота старта линии, если у атакующего нет Humanoid RightHand (мир).")]
+    [Tooltip("Fallback line start height if attacker has no Humanoid RightHand (world).")]
     [SerializeField] private float _bulletHeightAboveGround = 0.28f;
-    [Tooltip("Смещение конца линии по Y от «дна» гекса (центр клетки на полу). 0 = ровно пол последнего гекса.")]
+    [Tooltip("Line end Y offset from hex floor center. 0 = floor of last hex.")]
     [SerializeField] private float _bulletHexEndYOffset = 0f;
-    [Tooltip("Макс. время ожидания разворота модели к направлению выстрела перед линией пули.")]
+    [Tooltip("Max wait for model to face shot direction before drawing bullet line.")]
     [SerializeField] private float _rangedFaceTurnMaxSeconds = 0.35f;
-    [Tooltip("Считаем разворот завершённым, если угол до цели меньше этого (градусы).")]
+    [Tooltip("Treat rotation as done when angle to target is below this (degrees).")]
     [SerializeField] private float _rangedFaceAngleThresholdDeg = 4f;
-    [Tooltip("Необязательно: материал линии выстрела (иначе Sprites/Default, жёлтый).")]
+    [Tooltip("Optional shot line material (else Sprites/Default, yellow).")]
     [SerializeField] private Material _bulletMaterial;
 
     [Header("Debug")]
-    [Tooltip("Для отладки: заспавнить моба рядом с локальным игроком на соседнем гексе.")]
+    [Tooltip("Debug: spawn mob on a neighbor hex near local player.")]
     [SerializeField] private bool _debugSpawnMobNearLocalPlayer = false;
-    [Tooltip("Идентификатор debug-моба (должен начинаться с MOB_, чтобы считался мобом).")]
+    [Tooltip("Debug mob id (must start with MOB_).")]
     [SerializeField] private string _debugMobId = "MOB_DEBUG";
-    [Tooltip("Предпочтительное направление соседа (0..5). Если занято/вне поля — берётся следующий по кругу.")]
+    [Tooltip("Preferred neighbor direction (0..5). If blocked, next direction is used.")]
     [SerializeField] private int _debugNeighborDirection = 0;
 
     // Ключ: идентификатор сущности в сети (для игроков — playerId, для мобов — unitId сервера).
@@ -310,7 +310,7 @@ public class GameSession : MonoBehaviour
         if (IsInBattleWithServer())
         {
             if (!pl.QueueEquipWeaponAction(weaponCode, null, atk, weaponDamageFromDb, weaponRangeFromDb))
-                OnNetworkMessage?.Invoke("Недостаточно ОД");
+                OnNetworkMessage?.Invoke(Loc.T("ui.not_enough_ap"));
         }
         else
             ApplyLocalWeaponOnly(weaponCode, atk, weaponDamageFromDb, weaponRangeFromDb);
@@ -368,7 +368,7 @@ public class GameSession : MonoBehaviour
     }
 
     /// <param name="shiftRepeat">Зажат Shift: поставить в очередь атак столько раз, сколько <c>текущие ОД / стоимость атаки</c> (целочисленно).</param>
-    public bool TryPerformSilhouetteAttack(RemoteBattleUnitView target, string bodyPartLabel, bool shiftRepeat = false)
+    public bool TryPerformSilhouetteAttack(RemoteBattleUnitView target, int bodyPartId, bool shiftRepeat = false)
     {
         if (_battleFinished || target == null) return false;
         var local = LocalPlayer;
@@ -379,28 +379,29 @@ public class GameSession : MonoBehaviour
         int repeatCount = shiftRepeat ? apBefore / attackCost : 1;
         if (repeatCount <= 0)
         {
-            OnNetworkMessage?.Invoke("Недостаточно ОД");
+            OnNetworkMessage?.Invoke(Loc.T("ui.not_enough_ap"));
             return false;
         }
 
         int queued = 0;
         for (int i = 0; i < repeatCount; i++)
         {
-            if (!local.QueueAttackAction(target.NetworkPlayerId, bodyPartLabel, attackCost))
+            if (!local.QueueAttackAction(target.NetworkPlayerId, bodyPartId, attackCost))
                 break;
             queued++;
         }
 
         if (queued <= 0)
         {
-            OnNetworkMessage?.Invoke("Недостаточно ОД");
+            OnNetworkMessage?.Invoke(Loc.T("ui.not_enough_ap"));
             return false;
         }
 
+        string partName = BodyPartIds.DisplayName(bodyPartId);
         if (queued > 1)
-            OnNetworkMessage?.Invoke($"Атака x{queued} в очередь ({bodyPartLabel})");
+            OnNetworkMessage?.Invoke(Loc.Tf("combat.attack_queued_multi", queued, partName));
         else
-            OnNetworkMessage?.Invoke($"Атака в очередь: {bodyPartLabel}");
+            OnNetworkMessage?.Invoke(Loc.Tf("combat.attack_queued_single", partName));
         return true;
     }
 
@@ -416,14 +417,14 @@ public class GameSession : MonoBehaviour
         int d = HexGrid.GetDistance(pc, pr, col, row);
         if (d == 0)
         {
-            OnNetworkMessage?.Invoke("Выберите другой гекс");
+            OnNetworkMessage?.Invoke(Loc.T("ui.pick_different_hex"));
             return false;
         }
 
         int weaponRange = Mathf.Max(0, local.WeaponRangeHexes);
         if (weaponRange <= 0)
         {
-            OnNetworkMessage?.Invoke("Гекс вне дальности оружия");
+            OnNetworkMessage?.Invoke(Loc.T("ui.hex_out_of_weapon_range"));
             return false;
         }
 
@@ -435,7 +436,7 @@ public class GameSession : MonoBehaviour
         int repeatCount = shiftRepeat ? apBefore / attackCost : 1;
         if (repeatCount <= 0)
         {
-            OnNetworkMessage?.Invoke("Недостаточно ОД");
+            OnNetworkMessage?.Invoke(Loc.T("ui.not_enough_ap"));
             return false;
         }
 
@@ -449,14 +450,14 @@ public class GameSession : MonoBehaviour
 
         if (queued <= 0)
         {
-            OnNetworkMessage?.Invoke("Недостаточно ОД");
+            OnNetworkMessage?.Invoke(Loc.T("ui.not_enough_ap"));
             return false;
         }
 
         if (queued > 1)
-            OnNetworkMessage?.Invoke($"Выстрел по гексу x{queued} в очередь");
+            OnNetworkMessage?.Invoke(Loc.Tf("combat.hex_shot_queued_multi", queued));
         else
-            OnNetworkMessage?.Invoke("Выстрел по гексу в очередь (Ctrl+клик)");
+            OnNetworkMessage?.Invoke(Loc.T("combat.hex_shot_queued_single"));
 
         ApplyLocalPlayerRangedFacingTowardTargetHex(aimCol, aimRow);
         return true;
@@ -585,7 +586,7 @@ public class GameSession : MonoBehaviour
             if (sock == null || !sock.IsSocketReady)
             {
                 CancelWaitingForServerRoundResolve();
-                OnNetworkMessage?.Invoke("Нет сокета к бою");
+                OnNetworkMessage?.Invoke(Loc.T("ui.no_battle_socket"));
                 return;
             }
 
@@ -594,7 +595,7 @@ public class GameSession : MonoBehaviour
                 if (!success)
                 {
                     CancelWaitingForServerRoundResolve();
-                    OnNetworkMessage?.Invoke(errorMessage ?? "Ошибка отправки хода");
+                    OnNetworkMessage?.Invoke(string.IsNullOrEmpty(errorMessage) ? Loc.T("ui.submit_turn_failed") : errorMessage);
                 }
                 else if (_waitingForServerRoundResolve)
                     OnSubmitTurnDeliveredToServer?.Invoke();
@@ -662,14 +663,15 @@ public class GameSession : MonoBehaviour
                 if (!r.accepted && !string.IsNullOrEmpty(r.rejectedReason))
                     OnNetworkMessage?.Invoke(r.rejectedReason);
                 else if (!r.accepted)
-                    OnNetworkMessage?.Invoke("Клетка занята");
+                    OnNetworkMessage?.Invoke(Loc.T("ui.cell_occupied"));
 
                 local.ApplyServerTurnResult(r.finalPosition, r.actualPath, r.currentAp, r.penaltyFraction, r.currentPosture, prepareForAnimation, applyLocomotionPosture: !deferLocomotionPosture);
                 local.SetHealth(r.currentHp, r.maxHp > 0 ? r.maxHp : local.MaxHp);
                 if (!string.IsNullOrEmpty(r.weaponCode))
                 {
                     int wAtk = r.weaponAttackApCost > 0 ? r.weaponAttackApCost : 1;
-                    local.SetEquippedWeapon(r.weaponCode, r.weaponDamage, r.weaponRange, wAtk);
+                    int wMin = r.weaponDamageMin > 0 ? r.weaponDamageMin : r.weaponDamage;
+                    local.SetEquippedWeapon(r.weaponCode, r.weaponDamage, r.weaponRange, wAtk, wMin);
                 }
                 if (prepareForAnimation)
                     animJobs.Add((local, true, r.actualPath));
@@ -1548,7 +1550,7 @@ public class GameSession : MonoBehaviour
         var spawnList = BuildSpawnListFromPayload(payload);
         if (spawnList == null || spawnList.Count == 0)
         {
-            Debug.LogWarning("[GameSession] ApplyBattleStarted: нет данных спавна в payload; юниты появятся из первого TurnResult по сокету.");
+            Debug.LogWarning("[GameSession] ApplyBattleStarted: no spawn data in payload; units will appear from first TurnResult over socket.");
             return;
         }
 
@@ -1569,9 +1571,12 @@ public class GameSession : MonoBehaviour
                     local.SetHealth(currentHp, maxHp);
                     string wCode = GetSpawnString(payload.spawnWeaponCodes, spawnIndex, WeaponCatalog.DefaultWeaponCode);
                     int wDmg = GetSpawnInt(payload.spawnWeaponDamages, spawnIndex, 1);
+                    int wDmgMin = (payload.spawnWeaponDamageMins != null && spawnIndex >= 0 && spawnIndex < payload.spawnWeaponDamageMins.Length)
+                        ? payload.spawnWeaponDamageMins[spawnIndex]
+                        : wDmg;
                     int wRng = GetSpawnInt(payload.spawnWeaponRanges, spawnIndex, 1);
                     int wAtk = GetSpawnInt(payload.spawnWeaponAttackApCosts, spawnIndex, 1);
-                    local.SetEquippedWeapon(wCode, wDmg, wRng, wAtk);
+                    local.SetEquippedWeapon(wCode, wDmg, wRng, wAtk, wDmgMin);
                     int dispLevel = GetSpawnInt(payload.spawnLevels, spawnIndex, 1);
                     string dispName = GetSpawnString(payload.spawnDisplayNames, spawnIndex, "");
                     if (string.IsNullOrEmpty(dispName))
@@ -2109,7 +2114,7 @@ public class GameSession : MonoBehaviour
     {
         if (_battleFinished) yield break;
         _battleFinished = true;
-        OnNetworkMessage?.Invoke("Бой проигран");
+        OnNetworkMessage?.Invoke(Loc.T("ui.battle_lost"));
         OnBattleFinished?.Invoke(false);
         _waitingForServerRoundResolve = false;
         var p = LocalPlayer;
@@ -2182,7 +2187,7 @@ public class GameSession : MonoBehaviour
             var p = LocalPlayer;
             p?.SetTurnTimerPaused(true);
             OnBattleFinished?.Invoke(true);
-            OnNetworkMessage?.Invoke("Бой выигран");
+            OnNetworkMessage?.Invoke(Loc.T("ui.battle_won"));
         }
     }
 
@@ -2205,11 +2210,13 @@ public class GameSession : MonoBehaviour
                 {
                     if (action.succeeded)
                     {
-                        string targetLabel = string.IsNullOrEmpty(action.targetUnitId) ? "цель" : action.targetUnitId;
-                        string bodyPart = string.IsNullOrEmpty(action.bodyPart) ? "корпус" : action.bodyPart;
-                        OnNetworkMessage?.Invoke($"[{action.unitId}] удар в {bodyPart}: {targetLabel} -{action.damage} HP");
+                        string targetLabel = string.IsNullOrEmpty(action.targetUnitId)
+                            ? Loc.T("combat.target_fallback")
+                            : action.targetUnitId;
+                        string bodyPartName = BodyPartIds.DisplayName(action.bodyPart);
+                        OnNetworkMessage?.Invoke(Loc.Tf("combat.hit_log", action.unitId, bodyPartName, targetLabel, action.damage));
                         if (action.targetDied)
-                            OnNetworkMessage?.Invoke($"{targetLabel} погиб");
+                            OnNetworkMessage?.Invoke(Loc.Tf("combat.target_died", targetLabel));
                     }
                 }
             }

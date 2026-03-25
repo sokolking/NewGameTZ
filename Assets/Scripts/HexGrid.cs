@@ -19,23 +19,23 @@ public class HexGrid : MonoBehaviour
     private bool _boundsCacheDirty = true;
     private float _cachedMinX, _cachedMaxX, _cachedMinZ, _cachedMaxZ;
 
-    [Header("Размер поля (25×40 = 1000 гексов)")]
+    [Header("Field size (25×40 = 1000 hexes)")]
     [SerializeField] private int _width = 25;
     [SerializeField] private int _length = 40;
-    [Tooltip("Если выключено — сетку нужно сгенерировать кнопкой в инспекторе до запуска.")]
+    [Tooltip("If off, generate the grid with the inspector button before play.")]
     [SerializeField] private bool _generateOnPlay = false;
 
-    [Header("Гекс")]
+    [Header("Hex")]
     [SerializeField] private float _hexSize = 1f;
-    [Tooltip("Отступ от каждой грани (world units). ~0.05 ≈ 5 px при 100 ppu.")]
+    [Tooltip("Inset from each edge (world units). ~0.05 ≈ 5 px at 100 ppu.")]
     [SerializeField] private float _edgeInset = 0.05f;
 
-    [Header("Внешний вид")]
+    [Header("Appearance")]
     [SerializeField] private Material _hexMaterial;
-    [Tooltip("Цвет заливки (RGB). Непрозрачность задаётся ползунком «Прозрачность».")]
+    [Tooltip("Fill color (RGB). Opacity is controlled by the Transparency slider.")]
     [SerializeField] private Color _hexColor = new Color(0.4f, 0.6f, 0.9f, 1f);
     [SerializeField, Range(0f, 100f)]
-    [Tooltip("Прозрачность заливки гекса, %. 100 — максимум прозрачности (α→0), 0 — непрозрачно. ~85% ≈ α 0.15 у заливки.")]
+    [Tooltip("Hex fill transparency %. 100 = most transparent (α→0), 0 = opaque. ~85% ≈ α 0.15 for fill.")]
     private float _hexTransparencyPercent = 85f;
 
     public int Width => _width;
@@ -87,7 +87,7 @@ public class HexGrid : MonoBehaviour
     }
 
     /// <summary>Создаёт ровно Width×Length дочерних объектов (гексов). Вызывать кнопкой в инспекторе или при _generateOnPlay.</summary>
-    [ContextMenu("Сгенерировать сетку")]
+    [ContextMenu("Generate grid")]
     public void GenerateGrid()
     {
         ClearGrid();
@@ -220,7 +220,7 @@ public class HexGrid : MonoBehaviour
             mat.SetColor("_Color", white);
     }
 
-    [ContextMenu("Очистить сетку")]
+    [ContextMenu("Clear grid")]
     public void ClearGrid()
     {
         _cellCache = null;

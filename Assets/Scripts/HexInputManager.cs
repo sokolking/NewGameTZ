@@ -19,8 +19,8 @@ public class HexInputManager : MonoBehaviour
     [SerializeField] private HexGrid _grid;
     [SerializeField] private Player _player;
     [SerializeField] private LayerMask _hexLayer = -1;
-    [Header("ЛКМ по другому юниту/мобу")]
-    [Tooltip("Префаб с компонентом HoldTargetIndicator (меню Tools/UI/Create Hold Target Indicator Prefab).")]
+    [Header("Click other unit / mob")]
+    [Tooltip("Prefab with HoldTargetIndicator (Tools/UI/Create Hold Target Indicator Prefab).")]
     [SerializeField] private HoldTargetIndicator _holdIndicatorPrefab;
     [SerializeField] private Vector3 _holdIndicatorWorldOffset = new Vector3(0.8f, 1.5f, 0f);
 
@@ -364,7 +364,7 @@ public class HexInputManager : MonoBehaviour
 
         if (!_player.EnsureMovablePostureForMovement())
         {
-            GameSession.OnNetworkMessage?.Invoke("Недостаточно ОД для выхода из укрытия");
+            GameSession.OnNetworkMessage?.Invoke(Loc.T("ui.not_enough_ap_unhide"));
             return;
         }
 
@@ -627,31 +627,13 @@ public class HexInputManager : MonoBehaviour
         if (target == null || part == HoldTargetIndicator.BodyPartKind.None)
             return;
 
-        string label = "корпус";
-        switch (part)
-        {
-            case HoldTargetIndicator.BodyPartKind.Head:
-                label = "голова";
-                break;
-            case HoldTargetIndicator.BodyPartKind.Torso:
-                label = "корпус";
-                break;
-            case HoldTargetIndicator.BodyPartKind.Legs:
-                label = "ноги";
-                break;
-            case HoldTargetIndicator.BodyPartKind.LeftHand:
-                label = "левая рука";
-                break;
-            case HoldTargetIndicator.BodyPartKind.RightHand:
-                label = "правая рука";
-                break;
-        }
+        int bodyPartId = BodyPartIds.FromHoldTargetPart(part);
 
         bool shiftRepeat = kb != null &&
             (kb.leftShiftKey.isPressed || kb.rightShiftKey.isPressed);
         bool applied = GameSession.Active != null &&
-            GameSession.Active.TryPerformSilhouetteAttack(target, label, shiftRepeat);
+            GameSession.Active.TryPerformSilhouetteAttack(target, bodyPartId, shiftRepeat);
         if (!applied)
-            GameSession.OnNetworkMessage?.Invoke("Атака не применена");
+            GameSession.OnNetworkMessage?.Invoke(Loc.T("ui.attack_not_applied"));
     }
 }

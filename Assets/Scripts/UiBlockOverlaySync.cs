@@ -11,10 +11,10 @@ using UnityEngine.UI;
 [DisallowMultipleComponent]
 public sealed class UiBlockOverlaySync : MonoBehaviour
 {
-    [Tooltip("Если пусто — ищется объект с именем BlockOverlay под этим Canvas; при отсутствии создаётся автоматически.")]
+    [Tooltip("If empty, finds BlockOverlay under this Canvas; creates one if missing.")]
     [SerializeField] private GameObject _blockOverlay;
 
-    [Tooltip("Прозрачность затемнения (0 = только raycast, без видимой заливки).")]
+    [Tooltip("Dim alpha (0 = raycast only, no visible fill).")]
     [Range(0f, 1f)]
     [SerializeField] private float _dimAlpha = 0.35f;
 

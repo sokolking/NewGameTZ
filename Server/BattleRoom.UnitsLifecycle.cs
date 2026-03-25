@@ -19,7 +19,7 @@ public partial class BattleRoom
             var unitId = playerId + "_UNIT";
             var profile = PlayerCombatProfiles.TryGetValue(playerId, out var p)
                 ? p
-                : (DefaultPlayerMaxHp, MaxAp, DefaultWeaponCode, DefaultWeaponDamage, DefaultWeaponRange, GetWeaponAttackApCostFromDb(DefaultWeaponCode), 10, 0.0, 1);
+                : (DefaultPlayerMaxHp, MaxAp, DefaultWeaponCode, DefaultWeaponDamage, DefaultWeaponDamage, DefaultWeaponRange, GetWeaponAttackApCostFromDb(DefaultWeaponCode), 10, 0.0, 1, false);
             PlayerToUnitId[playerId] = unitId;
             Units[unitId] = new UnitStateDto
             {
@@ -33,12 +33,14 @@ public partial class BattleRoom
                 MaxHp = profile.Item1,
                 CurrentHp = profile.Item1,
                 WeaponCode = profile.Item3,
-                WeaponDamage = profile.Item4,
-                WeaponRange = profile.Item5,
-                WeaponAttackApCost = Math.Max(1, profile.Item6),
-                Accuracy = profile.Item7,
-                WeaponSpreadPenalty = profile.Item8,
-                WeaponTrajectoryHeight = profile.Item9,
+                WeaponDamageMin = profile.Item4,
+                WeaponDamage = profile.Item5,
+                WeaponRange = profile.Item6,
+                WeaponAttackApCost = Math.Max(1, profile.Item7),
+                Accuracy = profile.Item8,
+                WeaponSpreadPenalty = profile.Item9,
+                WeaponTrajectoryHeight = profile.Item10,
+                WeaponIsSniper = profile.Item11,
                 Posture = PostureWalk
             };
         }
@@ -97,12 +99,14 @@ public partial class BattleRoom
                     MaxHp = mobMaxHp,
                     CurrentHp = mobCurHp,
                     WeaponCode = DefaultWeaponCode,
+                    WeaponDamageMin = DefaultWeaponDamage,
                     WeaponDamage = DefaultWeaponDamage,
                     WeaponRange = DefaultWeaponRange,
                     WeaponAttackApCost = GetWeaponAttackApCostFromDb(DefaultWeaponCode),
                     Accuracy = 10,
                     WeaponSpreadPenalty = 0,
                     WeaponTrajectoryHeight = 1,
+                    WeaponIsSniper = false,
                     Posture = PostureWalk
                 };
             }
