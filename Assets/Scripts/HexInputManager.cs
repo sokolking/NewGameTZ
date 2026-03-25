@@ -22,7 +22,6 @@ public class HexInputManager : MonoBehaviour
     [Header("Click other unit / mob")]
     [Tooltip("Prefab with HoldTargetIndicator (Tools/UI/Create Hold Target Indicator Prefab).")]
     [SerializeField] private HoldTargetIndicator _holdIndicatorPrefab;
-    [SerializeField] private Vector3 _holdIndicatorWorldOffset = new Vector3(0.8f, 1.5f, 0f);
 
     private float _lastClickTime;
     private Vector2 _lastClickPosition;
@@ -31,7 +30,7 @@ public class HexInputManager : MonoBehaviour
     private MovementPosture _lastHoverPosture = MovementPosture.Walk;
     private HoldTargetIndicator _holdIndicator;
     private RemoteBattleUnitView _heldRemoteTarget;
-    private Vector3 _holdIndicatorAnchorWorld;
+    private Vector2 _holdIndicatorAnchorScreen;
     private bool _hasHoldIndicatorAnchor;
 
     private static readonly RaycastHit[] _hexRaycastHits = new RaycastHit[1];
@@ -487,7 +486,9 @@ public class HexInputManager : MonoBehaviour
         if (remote != null)
         {
             _heldRemoteTarget = remote;
-            _holdIndicatorAnchorWorld = remoteHitPoint;
+            // Вариант A: anchor в пикселях экрана — ровно там, куда кликнул курсор.
+            // Не зависит от угла камеры, глубины, угла обзора.
+            _holdIndicatorAnchorScreen = mouse.position.ReadValue();
             _hasHoldIndicatorAnchor = true;
             if (mouse.leftButton.wasPressedThisFrame)
                 GameSession.Active?.ApplyLocalPlayerRangedFacingTowardTargetHex(remote.CurrentCol, remote.CurrentRow);
@@ -508,14 +509,11 @@ public class HexInputManager : MonoBehaviour
         if (_holdIndicator == null || !_holdIndicator.HasValidVisuals)
             return;
 
-        Vector3 pos = _hasHoldIndicatorAnchor
-            ? _holdIndicatorAnchorWorld
-            : _heldRemoteTarget.transform.position + _holdIndicatorWorldOffset;
-        Quaternion rot = _cameraTransform != null
-            ? Quaternion.LookRotation(-_cameraTransform.forward, _cameraTransform.up)
-            : Quaternion.identity;
-        _holdIndicator.SetWorldPose(pos, rot);
-        _holdIndicator.UpdateBodyPartHighlight(_camera, mouse.position.ReadValue(), mouse.leftButton.wasPressedThisFrame);
+        Vector2 screenCenter = _hasHoldIndicatorAnchor
+            ? _holdIndicatorAnchorScreen
+            : mouse.position.ReadValue();
+        _holdIndicator.SetScreenCenter(screenCenter);
+        _holdIndicator.UpdateBodyPartHighlight(mouse.position.ReadValue(), mouse.leftButton.wasPressedThisFrame);
         _holdIndicator.SetVisible(true);
         if (_hexGridCamera != null)
             _hexGridCamera.ClearThirdPersonOrbitLmbDragThisPress();
