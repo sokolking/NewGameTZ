@@ -77,5 +77,19 @@
   "scene.hud_move_animation": "Анимация хода",
   "scene.hud_end_turn": "Закончить ход",
   "scene.hud_undo_action": "Отменить действие",
-  "scene.hud_back_planning": "Назад к планированию"
+  "scene.hud_back_planning": "Назад к планированию",
+  "esc.settings.title": "Настройки",
+  "esc.settings.menu.audio": "Аудио",
+  "esc.settings.menu.video": "Видео",
+  "esc.settings.menu.language": "Язык",
+  "esc.settings.close": "Закрыть",
+  "esc.settings.language_heading": "Язык интерфейса",
+  "esc.settings.lang_english": "Английский",
+  "esc.settings.lang_russian": "Русский",
+  "esc.settings.resolution_label": "Разрешение",
+  "esc.settings.apply": "Применить",
+  "esc.menu.resume": "Продолжить",
+  "esc.menu.surrender_battle": "Сдаться",
+  "esc.menu.exit_game": "Выйти из игры",
+  "esc.menu.settings": "Настройки"
 }

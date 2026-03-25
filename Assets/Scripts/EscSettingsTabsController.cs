@@ -2,16 +2,20 @@ using UnityEngine;
 using UnityEngine.UI;
 
 /// <summary>
-/// Вкладки «Аудио» / «Видео» в SettingsPanel (EscScene). Имена дочерних объектов см. меню Tools → Esc Scene → Setup Settings Panel Tabs, либо задайте ссылки в инспекторе.
+/// Вкладки «Аудио» / «Видео» / «Язык» в SettingsPanel (EscScene). Язык: <see cref="EscLanguagePickerUI"/> на LanguagePage
+/// (создаётся через Tools → Esc Scene → Setup Language Page + Esc UI localization).
 /// </summary>
 public sealed class EscSettingsTabsController : MonoBehaviour
 {
     [SerializeField] private GameObject _videoPage;
     [SerializeField] private GameObject _audioPage;
+    [SerializeField] private GameObject _languagePage;
     [SerializeField] private Button _tabVideoButton;
     [SerializeField] private Button _tabAudioButton;
+    [SerializeField] private Button _tabLanguageButton;
     [SerializeField] private Slider _masterVolumeSlider;
     [SerializeField] private Toggle _muteToggle;
+    [SerializeField] private EscLanguagePickerUI _languagePicker;
 
     private void Start()
     {
@@ -38,14 +42,26 @@ public sealed class EscSettingsTabsController : MonoBehaviour
                 _audioPage = t.gameObject;
         }
 
+        if (_languagePage == null)
+        {
+            var t = FindDeep(root, "LanguagePage");
+            if (t != null)
+                _languagePage = t.gameObject;
+        }
+
         if (_tabVideoButton == null)
             _tabVideoButton = FindDeep<Button>(root, "Button_TabVideo");
         if (_tabAudioButton == null)
             _tabAudioButton = FindDeep<Button>(root, "Button_TabAudio");
+        if (_tabLanguageButton == null)
+            _tabLanguageButton = FindDeep<Button>(root, "Button_TabLanguage");
         if (_masterVolumeSlider == null)
             _masterVolumeSlider = FindDeep<Slider>(root, "Slider_MasterVolume");
         if (_muteToggle == null)
             _muteToggle = FindDeep<Toggle>(root, "Toggle_MuteAudio");
+        if (_languagePicker == null && _languagePage != null)
+            _languagePicker = _languagePage.GetComponent<EscLanguagePickerUI>()
+                               ?? _languagePage.GetComponentInChildren<EscLanguagePickerUI>(true);
     }
 
     private void WireTabs()
@@ -60,6 +76,12 @@ public sealed class EscSettingsTabsController : MonoBehaviour
         {
             _tabAudioButton.onClick.RemoveListener(ShowAudioTab);
             _tabAudioButton.onClick.AddListener(ShowAudioTab);
+        }
+
+        if (_tabLanguageButton != null)
+        {
+            _tabLanguageButton.onClick.RemoveListener(ShowLanguageTab);
+            _tabLanguageButton.onClick.AddListener(ShowLanguageTab);
         }
     }
 
@@ -125,6 +147,8 @@ public sealed class EscSettingsTabsController : MonoBehaviour
             _videoPage.SetActive(true);
         if (_audioPage != null)
             _audioPage.SetActive(false);
+        if (_languagePage != null)
+            _languagePage.SetActive(false);
     }
 
     public void ShowAudioTab()
@@ -133,6 +157,20 @@ public sealed class EscSettingsTabsController : MonoBehaviour
             _videoPage.SetActive(false);
         if (_audioPage != null)
             _audioPage.SetActive(true);
+        if (_languagePage != null)
+            _languagePage.SetActive(false);
+    }
+
+    public void ShowLanguageTab()
+    {
+        if (_videoPage != null)
+            _videoPage.SetActive(false);
+        if (_audioPage != null)
+            _audioPage.SetActive(false);
+        if (_languagePage != null)
+            _languagePage.SetActive(true);
+        if (_languagePicker != null)
+            _languagePicker.SyncFromLoc();
     }
 
     private static Transform FindDeep(Transform root, string objectName)

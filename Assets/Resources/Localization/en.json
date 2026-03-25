@@ -77,5 +77,19 @@
   "scene.hud_move_animation": "Move animation",
   "scene.hud_end_turn": "End turn",
   "scene.hud_undo_action": "Undo action",
-  "scene.hud_back_planning": "Back to planning"
+  "scene.hud_back_planning": "Back to planning",
+  "esc.settings.title": "Settings",
+  "esc.settings.menu.audio": "Audio",
+  "esc.settings.menu.video": "Video",
+  "esc.settings.menu.language": "Language",
+  "esc.settings.close": "Close",
+  "esc.settings.language_heading": "Interface language",
+  "esc.settings.lang_english": "English",
+  "esc.settings.lang_russian": "Russian",
+  "esc.settings.resolution_label": "Resolution",
+  "esc.settings.apply": "Apply",
+  "esc.menu.resume": "Resume",
+  "esc.menu.surrender_battle": "Surrender battle",
+  "esc.menu.exit_game": "Exit game",
+  "esc.menu.settings": "Settings"
 }

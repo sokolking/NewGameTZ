@@ -10,12 +10,40 @@ using UnityEngine;
 /// </summary>
 public static class Loc
 {
+    public const string LanguagePrefsKey = "Hope.GameLanguage";
+
     static Dictionary<string, string> _en = new();
     static Dictionary<string, string> _ru = new();
     static bool _loaded;
 
-    /// <summary>Active UI language. TODO: persist from settings menu.</summary>
+    /// <summary>Active UI language; persisted via <see cref="SetLanguage"/> / PlayerPrefs.</summary>
     public static GameLanguage Current { get; set; } = GameLanguage.English;
+
+    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
+    static void ApplySavedLanguageEarly()
+    {
+        LoadSavedLanguage();
+    }
+
+    /// <summary>Apply <see cref="LanguagePrefsKey"/> if present (0 = English, 1 = Russian).</summary>
+    public static void LoadSavedLanguage()
+    {
+        if (!PlayerPrefs.HasKey(LanguagePrefsKey))
+            return;
+        int v = PlayerPrefs.GetInt(LanguagePrefsKey, 0);
+        if (v < 0 || v > (int)GameLanguage.Russian)
+            v = 0;
+        Current = (GameLanguage)v;
+    }
+
+    /// <summary>Switch language, save preference, refresh all <see cref="LocalizedText"/> in loaded scenes.</summary>
+    public static void SetLanguage(GameLanguage lang)
+    {
+        Current = lang;
+        PlayerPrefs.SetInt(LanguagePrefsKey, (int)lang);
+        PlayerPrefs.Save();
+        LocalizedText.RefreshAll();
+    }
 
     static void EnsureLoaded()
     {

@@ -25,4 +25,14 @@ public class LocalizedText : MonoBehaviour
             return;
         _text.text = Loc.T(_localizationKey);
     }
+
+    /// <summary>Re-apply keys after <see cref="Loc.SetLanguage"/> (includes inactive objects).</summary>
+    public static void RefreshAll()
+    {
+        foreach (var lt in Object.FindObjectsByType<LocalizedText>(FindObjectsInactive.Include, FindObjectsSortMode.None))
+        {
+            if (lt != null)
+                lt.Apply();
+        }
+    }
 }
