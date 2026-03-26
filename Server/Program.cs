@@ -327,31 +327,46 @@ app.Map("/ws/battle", async (HttpContext ctx, BattleRoomStore store) =>
             var msgType = BattleWsProtocol.ReadMessageType(text);
             if (msgType == BattleWsProtocol.TypeSubmitTurn)
             {
-                SubmitTurnPayloadDto? payload;
                 try
                 {
-                    payload = JsonSerializer.Deserialize<SubmitTurnPayloadDto>(text, jsonOpt);
-                }
-                catch
-                {
-                    payload = null;
-                }
-                if (payload == null)
-                {
-                    await BattleWsProtocol.SendJsonAsync(ws, new { type = BattleWsProtocol.TypeSubmitAck, ok = false, error = "Invalid submitTurn body" }, jsonOpt, ctx.RequestAborted);
-                    continue;
-                }
-                payload.BattleId = battleId;
+                    SubmitTurnPayloadDto? payload;
+                    try
+                    {
+                        payload = JsonSerializer.Deserialize<SubmitTurnPayloadDto>(text, jsonOpt);
+                    }
+                    catch
+                    {
+                        payload = null;
+                    }
+                    if (payload == null)
+                    {
+                        await BattleWsProtocol.SendJsonAsync(ws, new { type = BattleWsProtocol.TypeSubmitAck, ok = false, error = "Invalid submitTurn body" }, jsonOpt, ctx.RequestAborted);
+                        continue;
+                    }
+                    payload.BattleId = battleId;
 
-                var submit = store.SubmitTurnLocked(battleId, payload);
-                if (submit.NotFound)
-                    await BattleWsProtocol.SendJsonAsync(ws, new { type = BattleWsProtocol.TypeSubmitAck, ok = false, error = "Battle not found" }, jsonOpt, ctx.RequestAborted);
-                else if (submit.UnknownPlayer)
-                    await BattleWsProtocol.SendJsonAsync(ws, new { type = BattleWsProtocol.TypeSubmitAck, ok = false, error = "Unknown player" }, jsonOpt, ctx.RequestAborted);
-                else if (submit.WrongRound)
-                    await BattleWsProtocol.SendJsonAsync(ws, new { type = BattleWsProtocol.TypeSubmitAck, ok = false, error = "Wrong round", expectedRound = submit.ExpectedRound }, jsonOpt, ctx.RequestAborted);
-                else
-                    await BattleWsProtocol.SendJsonAsync(ws, new { type = BattleWsProtocol.TypeSubmitAck, ok = true }, jsonOpt, ctx.RequestAborted);
+                    var submit = store.SubmitTurnLocked(battleId, payload);
+                    if (submit.NotFound)
+                        await BattleWsProtocol.SendJsonAsync(ws, new { type = BattleWsProtocol.TypeSubmitAck, ok = false, error = "Battle not found" }, jsonOpt, ctx.RequestAborted);
+                    else if (submit.UnknownPlayer)
+                        await BattleWsProtocol.SendJsonAsync(ws, new { type = BattleWsProtocol.TypeSubmitAck, ok = false, error = "Unknown player" }, jsonOpt, ctx.RequestAborted);
+                    else if (submit.WrongRound)
+                        await BattleWsProtocol.SendJsonAsync(ws, new { type = BattleWsProtocol.TypeSubmitAck, ok = false, error = "Wrong round", expectedRound = submit.ExpectedRound }, jsonOpt, ctx.RequestAborted);
+                    else
+                        await BattleWsProtocol.SendJsonAsync(ws, new { type = BattleWsProtocol.TypeSubmitAck, ok = true }, jsonOpt, ctx.RequestAborted);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[BattleWS] submit error: connId={connId}, battleId={battleId}, playerId={playerId}, err={ex}");
+                    try
+                    {
+                        await BattleWsProtocol.SendJsonAsync(ws, new { type = BattleWsProtocol.TypeSubmitAck, ok = false, error = "Server submit error" }, jsonOpt, ctx.RequestAborted);
+                    }
+                    catch
+                    {
+                        // socket could already be closed
+                    }
+                }
             }
             else if (msgType == BattleWsProtocol.TypeLeave)
             {
@@ -542,6 +557,32 @@ app.MapPut("/api/db/users/{userId:long}/ammo", async (long userId, BattleUserDat
     if (body?.Items == null)
         return Results.Json(new { error = "items array required" }, jsonOpt, statusCode: 400);
     if (!users.TryReplaceUserAmmoPacks(userId, body.Items, out var err))
+        return Results.Json(new { error = err ?? "replace failed" }, jsonOpt, statusCode: 400);
+    return Results.Ok(new { ok = true });
+});
+
+app.MapGet("/api/db/users/{userId:long}/items", (long userId, BattleUserDatabase users) =>
+{
+    if (!users.TryGetUserItemsForAdmin(userId, out var items, out var error))
+        return Results.Json(new { error = error ?? "not found" }, jsonOpt, statusCode: 404);
+    return Results.Json(new { items }, jsonOpt);
+});
+
+app.MapPut("/api/db/users/{userId:long}/items", async (long userId, BattleUserDatabase users, HttpContext ctx) =>
+{
+    UserItemsReplaceHttpBody? body;
+    try
+    {
+        body = await JsonSerializer.DeserializeAsync<UserItemsReplaceHttpBody>(ctx.Request.Body, jsonOpt);
+    }
+    catch
+    {
+        return Results.Json(new { error = "invalid JSON" }, jsonOpt, statusCode: 400);
+    }
+
+    if (body?.Items == null || body.Items.Count == 0)
+        return Results.Json(new { error = "items array required" }, jsonOpt, statusCode: 400);
+    if (!users.TryReplaceUserItems(userId, body.Items, out var err))
         return Results.Json(new { error = err ?? "replace failed" }, jsonOpt, statusCode: 400);
     return Results.Ok(new { ok = true });
 });
@@ -744,6 +785,12 @@ app.MapGet("/weapons", async (HttpContext ctx) =>
     ctx.Response.Headers.CacheControl = "no-store, max-age=0, must-revalidate";
     ctx.Response.ContentType = "text/html; charset=utf-8";
     await ctx.Response.WriteAsync(BattleWeaponsDashboardPage.Html);
+});
+app.MapGet("/ammo", async (HttpContext ctx) =>
+{
+    ctx.Response.Headers.CacheControl = "no-store, max-age=0, must-revalidate";
+    ctx.Response.ContentType = "text/html; charset=utf-8";
+    await ctx.Response.WriteAsync(BattleAmmoDashboardPage.Html);
 });
 app.MapGet("/obstacle-balance", () => Results.Content(BattleObstacleBalanceDashboardPage.Html, "text/html; charset=utf-8"));
 app.MapGet("/hit_formula.html", (IWebHostEnvironment env) =>

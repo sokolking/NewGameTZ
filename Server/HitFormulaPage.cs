@@ -31,6 +31,7 @@ public static class HitFormulaPage
       <a href="/db">Battles</a>
       <a href="/users">Users</a>
       <a href="/weapons">Weapons</a>
+      <a href="/ammo">Ammo</a>
       <a href="/obstacle-balance">Obstacle balance</a>
       <a href="/hit_formula.html">Hit formula</a>
     </div>

@@ -31,6 +31,7 @@ public static class BattleObstacleBalanceDashboardPage
       <a href="/db">Battles</a>
       <a href="/users">Users</a>
       <a href="/weapons">Weapons</a>
+      <a href="/ammo">Ammo</a>
       <a href="/obstacle-balance">Obstacle balance</a>
     </div>
     <h1>battle_obstacle_balance</h1>

@@ -94,6 +94,7 @@ public static class UiHierarchyNames
     /// <summary>Attack AP cost label; scene GameObject is still named with legacy typo <c>ItemAtionPointsCost</c>.</summary>
     public const string ItemActionPointsCost = "ItemAtionPointsCost";
     public const string InventoryCellImage = "InventoryCellImage";
+    public const string InventoryCellCount = "InventoryCellCount";
 
     /// <summary>Ячейки: InventoryCell1 … InventoryCell12.</summary>
     public static string InventoryCellName(int index1Based) => $"InventoryCell{index1Based}";

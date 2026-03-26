@@ -193,6 +193,7 @@ public static class BattleDbDashboardPage
         <a href="/db" class="active">Battles</a>
         <a href="/users">Users</a>
         <a href="/weapons">Weapons</a>
+        <a href="/ammo">Ammo</a>
         <a href="/obstacle-balance">Obstacle balance</a>
       </div>
       <input id="battleSearch" type="search" placeholder="Search battleId">

@@ -20,6 +20,8 @@ public sealed class InventoryUI : MonoBehaviour
     [SerializeField] private Transform _inventoryRoot;
     [SerializeField] private Image[] _cellImages = new Image[12];
     [SerializeField] private Button[] _cellButtons = new Button[12];
+    [SerializeField] private TextMeshProUGUI[] _cellCountTmps = new TextMeshProUGUI[12];
+    [SerializeField] private Text[] _cellCountLegacies = new Text[12];
     [SerializeField] private Image _activeWeaponImage;
     [Tooltip("Text for AP:X attack cost with current weapon. Wire object named ItemAtionPointsCost in scene (legacy typo).")]
     [SerializeField] private TextMeshProUGUI _itemActionPointsCostTmp;
@@ -27,10 +29,15 @@ public sealed class InventoryUI : MonoBehaviour
     [Header("Active item ammo donut")]
     [SerializeField] private Graphic _activeItemAmmoDonutImage;
     [SerializeField] private Text _activeItemAmmoText;
+    [Header("Debug")]
+    [SerializeField] private bool _debugAmmoLogs = false;
 
     private UserInventorySlotPayload[] _slots = new UserInventorySlotPayload[12];
     private readonly Dictionary<string, WeaponDbRowPayload> _weaponRowsByCode = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, UserAmmoPackPayload> _ammoByCaliber = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, int> _localAmmoRoundsByCaliber = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, int> _localMagazineRoundsByWeapon = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, int> _serverChamberRoundsByWeapon = new(StringComparer.OrdinalIgnoreCase);
     private string _ammoWeaponCodeApplied = "";
     private int _ammoMagazineCapacity;
     private int _ammoReserveRounds;
@@ -41,6 +48,7 @@ public sealed class InventoryUI : MonoBehaviour
     private int _lastAmmoActionCount = -1;
     private int _lastAmmoAp = int.MinValue;
     private int _lastKnownReloadApCost = 1;
+    private string _lastAmmoLogLine;
 
     private void Awake()
     {
@@ -98,6 +106,9 @@ public sealed class InventoryUI : MonoBehaviour
         _lastAmmoActionCount = actionCount;
         _lastAmmoAp = ap;
         RefreshActiveItemAmmoUi();
+        SyncLocalAmmoFromCurrentWeaponState();
+        SyncLocalMagazineFromCurrentWeaponState();
+        ApplySlotsToCells();
     }
 
     /// <summary>
@@ -144,7 +155,7 @@ public sealed class InventoryUI : MonoBehaviour
             for (int i = 0; i < 12; i++)
             {
                 int n = i + 1;
-                bool needResolve = _cellImages[i] == null || _cellButtons[i] == null;
+                bool needResolve = _cellImages[i] == null || _cellButtons[i] == null || (_cellCountTmps[i] == null && _cellCountLegacies[i] == null);
 
                 if (needResolve)
                 {
@@ -161,6 +172,17 @@ public sealed class InventoryUI : MonoBehaviour
                                     ?? FindChildRecursive(cell, UiHierarchyNames.InventoryCellImage);
                         if (imgTr != null)
                             _cellImages[i] = imgTr.GetComponent<Image>();
+                    }
+                    if (_cellCountTmps[i] == null && _cellCountLegacies[i] == null)
+                    {
+                        var countTr = cell.Find(UiHierarchyNames.InventoryCellCount)
+                                      ?? FindChildRecursive(cell, UiHierarchyNames.InventoryCellCount);
+                        if (countTr != null)
+                        {
+                            _cellCountTmps[i] = countTr.GetComponent<TextMeshProUGUI>() ?? countTr.GetComponentInChildren<TextMeshProUGUI>(true);
+                            if (_cellCountTmps[i] == null)
+                                _cellCountLegacies[i] = countTr.GetComponent<Text>() ?? countTr.GetComponentInChildren<Text>(true);
+                        }
                     }
                 }
 
@@ -342,6 +364,20 @@ public sealed class InventoryUI : MonoBehaviour
                     _slots[s.slotIndex] = s;
             }
 
+            _serverChamberRoundsByWeapon.Clear();
+            foreach (var s in _slots)
+            {
+                if (s == null || s.continuation || string.IsNullOrWhiteSpace(s.weaponCode))
+                    continue;
+                string code = WeaponCatalog.NormalizeWeaponCode(s.weaponCode);
+                if (string.IsNullOrEmpty(code))
+                    continue;
+                if (_serverChamberRoundsByWeapon.ContainsKey(code))
+                    continue;
+                _serverChamberRoundsByWeapon[code] = Mathf.Max(0, s.chamberRounds);
+                AmmoLog($"[InventorySync] slot weapon={code}, slotIndex={s.slotIndex}, chamberRounds={s.chamberRounds}, equipped={s.equipped}, stackable={s.stackable}");
+            }
+
             ApplySlotsToCells();
             yield return LoadAmmoAndWeaponsCoroutine(baseUrl, user, pass);
             OnPlayerEquippedWeaponChanged();
@@ -385,6 +421,8 @@ public sealed class InventoryUI : MonoBehaviour
         }
 
         _ammoByCaliber.Clear();
+        _localAmmoRoundsByCaliber.Clear();
+        _localMagazineRoundsByWeapon.Clear();
         if (string.IsNullOrEmpty(ammoErr) && !string.IsNullOrEmpty(ammoText))
         {
             UserAmmoPacksPayload payload = null;
@@ -396,12 +434,16 @@ public sealed class InventoryUI : MonoBehaviour
                     var it = payload.items[i];
                     if (it == null || string.IsNullOrWhiteSpace(it.caliber))
                         continue;
-                    _ammoByCaliber[it.caliber.Trim().ToLowerInvariant()] = it;
+                    string cal = it.caliber.Trim().ToLowerInvariant();
+                    int rounds = Mathf.Max(0, it.roundsCount > 0 ? it.roundsCount : it.totalRounds);
+                    _ammoByCaliber[cal] = it;
+                    _localAmmoRoundsByCaliber[cal] = rounds;
                 }
             }
         }
 
         RefreshActiveItemAmmoUi(forceResetOnWeaponChange: true);
+        ApplySlotsToCells();
     }
 
     private void FillFallbackLocalIcons()
@@ -423,20 +465,18 @@ public sealed class InventoryUI : MonoBehaviour
                 SetImageIcon(_cellImages[i], null, CellIconSize);
                 if (_cellImages[i] != null)
                     _cellImages[i].color = Color.white;
+                SetCellCountVisible(i, false, "");
                 continue;
             }
 
-            string key = null;
-            if (!string.IsNullOrWhiteSpace(s.iconKey))
-                key = s.iconKey.Trim();
-            else if (!string.IsNullOrWhiteSpace(s.weaponCode))
-                key = s.weaponCode.Trim();
+            string key = ResolveItemIconKey(s);
 
             if (string.IsNullOrWhiteSpace(key))
             {
                 SetImageIcon(_cellImages[i], null, CellIconSize);
                 if (_cellImages[i] != null)
                     _cellImages[i].color = Color.white;
+                SetCellCountVisible(i, false, "");
                 continue;
             }
 
@@ -447,6 +487,104 @@ public sealed class InventoryUI : MonoBehaviour
                 bool dim = s.continuation;
                 _cellImages[i].color = dim ? new Color(1f, 1f, 1f, 0.55f) : Color.white;
             }
+            int displayQty = GetDisplayedItemQuantity(s);
+            bool showCount = s.stackable && !s.continuation && displayQty > 0;
+            SetCellCountVisible(i, showCount, showCount ? FormatStackCount(displayQty) : "");
+        }
+    }
+
+    private int GetDisplayedItemQuantity(UserInventorySlotPayload slot)
+    {
+        if (slot == null || !slot.stackable)
+            return 0;
+
+        int serverQty = Mathf.Max(0, slot.quantity);
+        string slotCode = (slot.weaponCode ?? string.Empty).Trim().ToLowerInvariant();
+        if (string.IsNullOrEmpty(slotCode))
+            return serverQty;
+        if (_localAmmoRoundsByCaliber.TryGetValue(slotCode, out int localQty))
+            return Mathf.Max(0, localQty);
+        return serverQty;
+    }
+
+    private void SyncLocalAmmoFromCurrentWeaponState()
+    {
+        if (_player == null)
+            return;
+        string weaponCode = WeaponCatalog.NormalizeWeaponCode(_player.WeaponCode);
+        if (!_weaponRowsByCode.TryGetValue(weaponCode, out var w) || w == null)
+            return;
+        string cal = (w.caliber ?? string.Empty).Trim().ToLowerInvariant();
+        if (string.IsNullOrEmpty(cal))
+            return;
+        _localAmmoRoundsByCaliber[cal] = Mathf.Max(0, _player.ReserveAmmoRounds);
+    }
+
+    private void SyncLocalMagazineFromCurrentWeaponState()
+    {
+        if (_player == null)
+            return;
+        string weaponCode = WeaponCatalog.NormalizeWeaponCode(_player.WeaponCode);
+        if (string.IsNullOrEmpty(weaponCode))
+            return;
+        int cap = Mathf.Max(0, _player.MagazineCapacity);
+        if (cap <= 0)
+            return;
+        _localMagazineRoundsByWeapon[weaponCode] = Mathf.Clamp(_player.CurrentMagazineRounds, 0, cap);
+    }
+
+    private static string ResolveItemIconKey(UserInventorySlotPayload slot)
+    {
+        if (slot == null)
+            return null;
+        if (!string.IsNullOrWhiteSpace(slot.iconKey))
+            return slot.iconKey.Trim();
+        if (!string.IsNullOrWhiteSpace(slot.weaponCode))
+            return slot.weaponCode.Trim();
+        if (!string.IsNullOrWhiteSpace(slot.weaponName))
+            return slot.weaponName.Trim();
+        return null;
+    }
+
+    private static string FormatStackCount(int value)
+    {
+        int n = Math.Max(0, value);
+        if (n <= 999)
+            return n.ToString();
+
+        float k = n / 1000f;
+        if (k < 10f)
+        {
+            // Truncate to 1 decimal: 1.248 -> 1.2k, 9.478 -> 9.4k
+            float oneDecimal = Mathf.Floor(k * 10f) / 10f;
+            // Keep integer form for exact thousands: 1.0k -> 1k
+            if (Mathf.Approximately(oneDecimal, Mathf.Floor(oneDecimal)))
+                return $"{Mathf.FloorToInt(oneDecimal)}k";
+            return $"{oneDecimal:0.0}k";
+        }
+
+        return $"{Mathf.FloorToInt(k)}k";
+    }
+
+    private void SetCellCountVisible(int index, bool visible, string text)
+    {
+        if (index < 0 || index >= 12)
+            return;
+        var tmp = _cellCountTmps[index];
+        if (tmp != null)
+        {
+            tmp.text = visible ? text : "";
+            tmp.enabled = visible;
+            if (tmp.gameObject.activeSelf != visible)
+                tmp.gameObject.SetActive(visible);
+        }
+        var legacy = _cellCountLegacies[index];
+        if (legacy != null)
+        {
+            legacy.text = visible ? text : "";
+            legacy.enabled = visible;
+            if (legacy.gameObject.activeSelf != visible)
+                legacy.gameObject.SetActive(visible);
         }
     }
 
@@ -556,7 +694,13 @@ public sealed class InventoryUI : MonoBehaviour
         if (_player == null)
             _player = FindFirstObjectByType<Player>();
         string weaponCode = _player != null ? WeaponCatalog.NormalizeWeaponCode(_player.WeaponCode) : WeaponCatalog.DefaultWeaponCode;
+        string previousWeaponCode = _ammoWeaponCodeApplied;
         bool weaponChanged = !string.Equals(_ammoWeaponCodeApplied, weaponCode, StringComparison.OrdinalIgnoreCase);
+        if (weaponChanged && _player != null && !string.IsNullOrEmpty(previousWeaponCode) && _player.MagazineCapacity > 0)
+        {
+            _localMagazineRoundsByWeapon[previousWeaponCode] = Mathf.Clamp(_player.CurrentMagazineRounds, 0, _player.MagazineCapacity);
+            AmmoLog($"[WeaponSwitch] save prev weapon={previousWeaponCode}, mag={_player.CurrentMagazineRounds}/{_player.MagazineCapacity}");
+        }
         if (weaponChanged)
             _ammoWeaponCodeApplied = weaponCode;
 
@@ -578,16 +722,56 @@ public sealed class InventoryUI : MonoBehaviour
         string cal = (w.caliber ?? string.Empty).Trim().ToLowerInvariant();
         if (!string.IsNullOrEmpty(cal) && _ammoByCaliber.TryGetValue(cal, out var ammo))
         {
-            int reserve = Mathf.Max(0, ammo.roundsCount > 0 ? ammo.roundsCount : ammo.totalRounds);
+            int serverReserve = Mathf.Max(0, ammo.roundsCount > 0 ? ammo.roundsCount : ammo.totalRounds);
+            bool hasLocal = _localAmmoRoundsByCaliber.TryGetValue(cal, out int localReserve);
+            int reserve = hasLocal ? Mathf.Max(0, localReserve) : serverReserve;
+            _localAmmoRoundsByCaliber[cal] = reserve;
             _ammoReserveRounds = reserve;
-            _player?.SetReserveAmmoRounds(reserve, notify: false);
+            // Do not overwrite local in-turn ammo on every frame.
+            // Push into Player only on weapon switch / explicit server refresh, or when local value not initialized yet.
+            if (_player != null && (weaponChanged || forceResetOnWeaponChange || !hasLocal))
+                _player.SetReserveAmmoRounds(reserve, notify: false);
         }
-        int currentRounds = _player != null ? _player.CurrentMagazineRounds : _ammoMagazineCapacity;
-        // Initialize full magazine only once when local magazine state is not initialized yet.
-        if (_player != null && _player.MagazineCapacity <= 0 && currentRounds <= 0)
-            currentRounds = _ammoMagazineCapacity;
+        int currentRounds = _ammoMagazineCapacity;
+        string roundsSource = "default_mag_capacity";
+        if (forceResetOnWeaponChange)
+        {
+            if (_serverChamberRoundsByWeapon.TryGetValue(weaponCode, out int srv))
+            {
+                currentRounds = srv;
+                roundsSource = "server_slot_chamber_force";
+            }
+            else if (_player != null)
+            {
+                currentRounds = _player.CurrentMagazineRounds;
+                roundsSource = "player_current_force_fallback";
+            }
+        }
+        else if (!weaponChanged && _player != null)
+        {
+            // While staying on the same weapon, Player state is the freshest (shot/reload just updated it).
+            currentRounds = _player.CurrentMagazineRounds;
+            roundsSource = "player_current_same_weapon";
+        }
+        else if (_localMagazineRoundsByWeapon.TryGetValue(weaponCode, out int savedRounds))
+        {
+            currentRounds = savedRounds;
+            roundsSource = "local_mag_cache";
+        }
+        else if (_serverChamberRoundsByWeapon.TryGetValue(weaponCode, out int serverChamber))
+        {
+            currentRounds = serverChamber;
+            roundsSource = "server_slot_chamber";
+        }
+        else if (!forceResetOnWeaponChange && _player != null && _player.MagazineCapacity == _ammoMagazineCapacity)
+        {
+            currentRounds = _player.CurrentMagazineRounds;
+            roundsSource = "player_current_same_capacity";
+        }
         currentRounds = Mathf.Clamp(currentRounds, 0, _ammoMagazineCapacity);
         _player?.SetMagazineState(_ammoMagazineCapacity, currentRounds, notify: false);
+        _localMagazineRoundsByWeapon[weaponCode] = currentRounds;
+        AmmoLog($"[AmmoUi] weapon={weaponCode}, weaponChanged={weaponChanged}, source={roundsSource}, currentRounds={currentRounds}, magCap={_ammoMagazineCapacity}, forceReset={forceResetOnWeaponChange}");
 
         int spent = Mathf.Max(0, _ammoMagazineCapacity - currentRounds);
         float fill = _ammoMagazineCapacity > 0 ? (float)spent / _ammoMagazineCapacity : 0f;
@@ -621,9 +805,22 @@ public sealed class InventoryUI : MonoBehaviour
         int shotsUsed = Mathf.Clamp(Mathf.RoundToInt(value01 * _ammoMagazineCapacity), 0, _ammoMagazineCapacity);
         int currentRounds = Mathf.Max(0, _ammoMagazineCapacity - shotsUsed);
         _player?.SetMagazineState(_ammoMagazineCapacity, currentRounds, notify: false);
+        if (!string.IsNullOrEmpty(_ammoWeaponCodeApplied))
+            _localMagazineRoundsByWeapon[_ammoWeaponCodeApplied] = currentRounds;
+        AmmoLog($"[AmmoDonut] weapon={_ammoWeaponCodeApplied}, value01={value01:0.###}, currentRounds={currentRounds}, magCap={_ammoMagazineCapacity}");
         float fill = _ammoMagazineCapacity > 0 ? (float)shotsUsed / _ammoMagazineCapacity : 0f;
         if (_activeItemAmmoText != null && _weaponRowsByCode.TryGetValue(_ammoWeaponCodeApplied, out var row))
             _activeItemAmmoText.text = $"{Mathf.Max(1, row.reloadApCost)} AP";
+    }
+
+    private void AmmoLog(string message)
+    {
+        if (!_debugAmmoLogs)
+            return;
+        if (string.Equals(_lastAmmoLogLine, message, StringComparison.Ordinal))
+            return;
+        _lastAmmoLogLine = message;
+        Debug.Log("[InventoryUI] " + message);
     }
 
     private void SetAmmoUiVisible(bool visible)
@@ -694,7 +891,6 @@ public sealed class InventoryUI : MonoBehaviour
             : FindFirstObjectByType<GameSession>();
         int atk = s.attackApCost > 0 ? s.attackApCost : 1;
         session?.RequestEquipWeapon(s.weaponCode, atk, s.damage, s.range);
-        OnPlayerEquippedWeaponChanged();
     }
 
     [System.Serializable]

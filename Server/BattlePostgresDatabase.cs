@@ -35,10 +35,13 @@ CREATE TABLE IF NOT EXISTS user_inventory_items (
     start_slot SMALLINT NOT NULL,
     weapon_code TEXT NOT NULL,
     slot_width SMALLINT NOT NULL DEFAULT 1,
+    chamber_rounds INT NOT NULL DEFAULT 0,
     is_equipped BOOLEAN NOT NULL DEFAULT FALSE,
     CONSTRAINT chk_user_inv_start_slot CHECK (start_slot >= 0 AND start_slot < 12),
     CONSTRAINT chk_user_inv_slot_width CHECK (slot_width IN (1, 2))
 );
+ALTER TABLE user_inventory_items ADD COLUMN IF NOT EXISTS chamber_rounds INT NOT NULL DEFAULT 0;
+UPDATE user_inventory_items SET chamber_rounds = 0 WHERE chamber_rounds < 0;
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_user_inventory_one_equipped
     ON user_inventory_items (user_id) WHERE is_equipped;
@@ -52,10 +55,12 @@ CREATE TABLE IF NOT EXISTS ammo_types (
     id BIGSERIAL PRIMARY KEY,
     caliber TEXT NOT NULL UNIQUE,
     unit_weight DOUBLE PRECISION NOT NULL DEFAULT 0,
+    icon_key TEXT NOT NULL DEFAULT '',
     rounds_per_pack INT NOT NULL DEFAULT 1,
     CONSTRAINT chk_ammo_types_unit_weight CHECK (unit_weight >= 0),
     CONSTRAINT chk_ammo_types_rounds_per_pack CHECK (rounds_per_pack > 0)
 );
+ALTER TABLE ammo_types ADD COLUMN IF NOT EXISTS icon_key TEXT NOT NULL DEFAULT '';
 
 CREATE TABLE IF NOT EXISTS battles (
     battle_id TEXT PRIMARY KEY,
@@ -106,6 +111,7 @@ CREATE TABLE IF NOT EXISTS user_ammo_packs (
     id BIGSERIAL PRIMARY KEY,
     user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     ammo_type_id BIGINT NOT NULL REFERENCES ammo_types(id) ON DELETE RESTRICT,
+    start_slot INT NOT NULL DEFAULT 0,
     packs_count INT NOT NULL DEFAULT 0,
     rounds_count INT NOT NULL DEFAULT 0,
     CONSTRAINT chk_user_ammo_packs_count CHECK (packs_count >= 0),
@@ -114,6 +120,8 @@ CREATE TABLE IF NOT EXISTS user_ammo_packs (
 
 CREATE INDEX IF NOT EXISTS ix_user_ammo_packs_user_id ON user_ammo_packs (user_id);
 ALTER TABLE user_ammo_packs ADD COLUMN IF NOT EXISTS rounds_count INT NOT NULL DEFAULT 0;
+ALTER TABLE user_ammo_packs ADD COLUMN IF NOT EXISTS start_slot INT NOT NULL DEFAULT 0;
+UPDATE user_ammo_packs SET start_slot = 0 WHERE start_slot < 0 OR start_slot > 11;
 UPDATE user_ammo_packs uap
 SET rounds_count = GREATEST(0, uap.packs_count) * GREATEST(0, at.rounds_per_pack)
 FROM ammo_types at
@@ -229,8 +237,8 @@ VALUES ('fist', 'Fist', 1, 1, 'fist', 3, 1.0, 1, 100, 100, FALSE,
     0, '', 0, 0, 0, 'cold', 1, 'physical', 1, 1)
 ON CONFLICT (code) DO NOTHING;
 
-INSERT INTO ammo_types (caliber, unit_weight, rounds_per_pack)
-SELECT DISTINCT LOWER(TRIM(w.caliber)), 0.02, 30
+INSERT INTO ammo_types (caliber, unit_weight, icon_key, rounds_per_pack)
+SELECT DISTINCT LOWER(TRIM(w.caliber)), 0.02, '', 30
 FROM weapons w
 WHERE TRIM(w.caliber) <> ''
 ON CONFLICT (caliber) DO NOTHING;

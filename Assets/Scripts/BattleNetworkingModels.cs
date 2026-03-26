@@ -332,7 +332,6 @@ public class UserAmmoPackPayload
     public long ammoTypeId;
     public string caliber;
     public double unitWeight;
-    public int roundsPerPack;
     public int roundsCount;
     public int packsCount;
     public int totalRounds;
@@ -367,6 +366,9 @@ public class UserInventorySlotPayload
     public bool equipped;
     /// <summary>Second cell of a 2-slot weapon; not clickable.</summary>
     public bool continuation;
+    public bool stackable;
+    public int quantity;
+    public int chamberRounds;
 }
 
 /// <summary>Newtonsoft + Unity: надёжный разбор <c>double?</c> из Integer/Float/String.</summary>

@@ -96,12 +96,21 @@ public partial class BattleRoom
         var runNormalHexCount = new Dictionary<string, int>();
         var runPenaltyHexCount = new Dictionary<string, int>();
         var apSpentByUnit = new Dictionary<string, int>();
-        var shotsByPlayerAndCaliber = new Dictionary<string, Dictionary<string, int>>(StringComparer.OrdinalIgnoreCase);
+        var reloadedByPlayerAndCaliber = new Dictionary<string, Dictionary<string, int>>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var uid in order)
         {
             if (!Units.TryGetValue(uid, out var us))
                 continue;
+
+            if (us.UnitType == UnitType.Player)
+            {
+                string pid = PlayerToUnitId.FirstOrDefault(kv => kv.Value == uid).Key ?? uid;
+                string username = PlayerDisplayNames.GetValueOrDefault(pid, pid);
+                if (_userDb != null && _userDb.TryGetUserWeaponChamberRounds(username, us.WeaponCode ?? DefaultWeaponCode, out int dbChamber))
+                    us.CurrentMagazineRounds = Math.Max(0, dbChamber);
+                Units[uid] = us;
+            }
 
             positions[uid] = (us.Col, us.Row);
             alive[uid] = us.CurrentHp > 0;
@@ -640,22 +649,6 @@ public partial class BattleRoom
                         {
                             unit.CurrentMagazineRounds = Math.Max(0, unit.CurrentMagazineRounds - 1);
                             Units[uid] = unit;
-                            if (unit.UnitType == UnitType.Player)
-                            {
-                                string pid = PlayerToUnitId.FirstOrDefault(kv => kv.Value == uid).Key ?? uid;
-                                string caliber = "";
-                                if (_weaponDb != null && _weaponDb.TryGetWeaponByCode(unit.WeaponCode ?? DefaultWeaponCode, out var shotWeapon))
-                                    caliber = (shotWeapon.Caliber ?? "").Trim().ToLowerInvariant();
-                                if (!string.IsNullOrWhiteSpace(caliber))
-                                {
-                                    if (!shotsByPlayerAndCaliber.TryGetValue(pid, out var byCaliber))
-                                    {
-                                        byCaliber = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-                                        shotsByPlayerAndCaliber[pid] = byCaliber;
-                                    }
-                                    byCaliber[caliber] = byCaliber.GetValueOrDefault(caliber) + 1;
-                                }
-                            }
                         }
                     }
                     else if (string.Equals(actionType, ActionChangePosture, StringComparison.OrdinalIgnoreCase))
@@ -673,8 +666,27 @@ public partial class BattleRoom
                     {
                         executed.Succeeded = true;
                         int magazineSize = GetWeaponMagazineSizeFromDb(unit.WeaponCode);
-                        unit.CurrentMagazineRounds = Math.Max(0, magazineSize);
+                        int before = Math.Max(0, unit.CurrentMagazineRounds);
+                        int after = Math.Max(0, magazineSize);
+                        int loaded = Math.Max(0, after - before);
+                        unit.CurrentMagazineRounds = after;
                         Units[uid] = unit;
+                        if (loaded > 0 && unit.UnitType == UnitType.Player)
+                        {
+                            string pid = PlayerToUnitId.FirstOrDefault(kv => kv.Value == uid).Key ?? uid;
+                            string caliber = "";
+                            if (_weaponDb != null && _weaponDb.TryGetWeaponByCode(unit.WeaponCode ?? DefaultWeaponCode, out var reloadWeapon))
+                                caliber = (reloadWeapon.Caliber ?? "").Trim().ToLowerInvariant();
+                            if (!string.IsNullOrWhiteSpace(caliber))
+                            {
+                                if (!reloadedByPlayerAndCaliber.TryGetValue(pid, out var byCaliber))
+                                {
+                                    byCaliber = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                                    reloadedByPlayerAndCaliber[pid] = byCaliber;
+                                }
+                                byCaliber[caliber] = byCaliber.GetValueOrDefault(caliber) + loaded;
+                            }
+                        }
                     }
                     else if (string.Equals(actionType, ActionEquipWeapon, StringComparison.OrdinalIgnoreCase))
                     {
@@ -778,7 +790,11 @@ public partial class BattleRoom
             if (us.UnitType == UnitType.Player)
             {
                 string username = PlayerDisplayNames.GetValueOrDefault(playerId, playerId);
-                if (shotsByPlayerAndCaliber.TryGetValue(playerId, out var byCaliber))
+                int chamberRounds = Math.Max(0, us.CurrentMagazineRounds);
+                if (Submissions.TryGetValue(playerId, out var submitted) && submitted != null)
+                    chamberRounds = Math.Max(0, submitted.CurrentMagazineRounds);
+                _userDb?.TrySetUserWeaponChamberRounds(username, us.WeaponCode ?? DefaultWeaponCode, chamberRounds, out _);
+                if (reloadedByPlayerAndCaliber.TryGetValue(playerId, out var byCaliber))
                 {
                     foreach (var kv in byCaliber)
                     {

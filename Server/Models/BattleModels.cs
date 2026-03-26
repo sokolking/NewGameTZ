@@ -487,6 +487,12 @@ public class UserInventorySlotDto
     public bool Equipped { get; set; }
     /// <summary>Second cell of a 2-slot weapon.</summary>
     public bool Continuation { get; set; }
+    /// <summary>True for countable stack items (for example ammo).</summary>
+    public bool Stackable { get; set; }
+    /// <summary>Stack amount for <see cref="Stackable"/> items.</summary>
+    public int Quantity { get; set; }
+    /// <summary>Rounds currently loaded in weapon chamber/magazine for this inventory item.</summary>
+    public int ChamberRounds { get; set; }
 }
 
 /// <summary>Row in <c>user_inventory_items</c> for admin GET/PUT.</summary>
@@ -496,6 +502,7 @@ public sealed class UserInventoryItemAdminDto
     public int StartSlot { get; set; }
     public string WeaponCode { get; set; } = "";
     public int SlotWidth { get; set; } = 1;
+    public int ChamberRounds { get; set; }
     public bool IsEquipped { get; set; }
 }
 
@@ -506,6 +513,7 @@ public sealed class UserInventoryItemReplaceDto
     public string WeaponCode { get; set; } = "";
     /// <summary>Ignored on save: width comes from <c>weapons.inventory_slot_width</c>.</summary>
     public int SlotWidth { get; set; } = 1;
+    public int ChamberRounds { get; set; }
     public bool IsEquipped { get; set; }
 }
 
@@ -520,14 +528,14 @@ public sealed class AmmoTypeDto
     public long Id { get; set; }
     public string Caliber { get; set; } = "";
     public double UnitWeight { get; set; }
-    public int RoundsPerPack { get; set; } = 1;
+    public string IconKey { get; set; } = "";
 }
 
 public sealed class AmmoTypeUpsertRequest
 {
     public string Caliber { get; set; } = "";
     public double UnitWeight { get; set; }
-    public int RoundsPerPack { get; set; } = 1;
+    public string? IconKey { get; set; }
 }
 
 public sealed class UserAmmoPackAdminDto
@@ -536,7 +544,8 @@ public sealed class UserAmmoPackAdminDto
     public long AmmoTypeId { get; set; }
     public string Caliber { get; set; } = "";
     public double UnitWeight { get; set; }
-    public int RoundsPerPack { get; set; }
+    public string IconKey { get; set; } = "";
+    public int StartSlot { get; set; }
     public int RoundsCount { get; set; }
     public int PacksCount { get; set; }
     public int TotalRounds { get; set; }
@@ -545,6 +554,7 @@ public sealed class UserAmmoPackAdminDto
 public sealed class UserAmmoPackReplaceDto
 {
     public string Caliber { get; set; } = "";
+    public int StartSlot { get; set; }
     public int RoundsCount { get; set; }
     public int PacksCount { get; set; }
     public int TotalRounds { get; set; }
@@ -553,4 +563,31 @@ public sealed class UserAmmoPackReplaceDto
 public sealed class UserAmmoReplaceHttpBody
 {
     public List<UserAmmoPackReplaceDto> Items { get; set; } = new();
+}
+
+public sealed class UserItemAdminDto
+{
+    public string ItemType { get; set; } = "";
+    public string Code { get; set; } = "";
+    public int Quantity { get; set; }
+    public int ChamberRounds { get; set; }
+    public int StartSlot { get; set; } = -1;
+    public bool IsEquipped { get; set; }
+    public bool IsStackable { get; set; }
+    public int SlotWidth { get; set; }
+}
+
+public sealed class UserItemReplaceDto
+{
+    public string ItemType { get; set; } = "";
+    public string Code { get; set; } = "";
+    public int Quantity { get; set; }
+    public int ChamberRounds { get; set; }
+    public int StartSlot { get; set; } = -1;
+    public bool IsEquipped { get; set; }
+}
+
+public sealed class UserItemsReplaceHttpBody
+{
+    public List<UserItemReplaceDto> Items { get; set; } = new();
 }

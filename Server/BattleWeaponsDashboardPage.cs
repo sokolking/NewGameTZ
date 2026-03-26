@@ -38,6 +38,7 @@ public static class BattleWeaponsDashboardPage
       <a href="/db">Battles</a>
       <a href="/users">Users</a>
       <a href="/weapons">Weapons</a>
+      <a href="/ammo">Ammo</a>
       <a href="/obstacle-balance">Obstacle balance</a>
     </div>
     <div class="panel">
@@ -99,7 +100,7 @@ public static class BattleWeaponsDashboardPage
       { k: 'quality', label: 'qual', title: 'Quality' },
       { k: 'weaponCondition', label: 'cond', title: 'Condition' },
       { k: 'mass', label: 'mass', title: 'Mass', float: true, step: 0.01 },
-      { k: 'caliber', label: 'cal', type: 'text', wide: true },
+      { k: 'caliber', label: 'cal', type: 'selectMeta', metaList: 'calibers', wide: true },
       { k: 'armorPierce', label: 'AP', title: 'Armor pierce' },
       { k: 'magazineSize', label: 'mag', title: 'Magazine size' },
       { k: 'reloadApCost', label: 'reload', title: 'Reload AP cost' },
@@ -156,18 +157,29 @@ public static class BattleWeaponsDashboardPage
 
     let metaDamageTypes = [];
     let metaCategories = [];
+    let metaCalibers = [];
 
     async function refreshMeta() {
-      const resp = await fetch('/api/db/weapons/meta', { cache: 'no-store' });
-      const m = await resp.json();
+      const [weaponsMetaResp, ammoResp] = await Promise.all([
+        fetch('/api/db/weapons/meta', { cache: 'no-store' }),
+        fetch('/api/db/ammo?take=500', { cache: 'no-store' })
+      ]);
+      const m = await weaponsMetaResp.json();
+      const ammoList = await ammoResp.json().catch(() => []);
       metaDamageTypes = Array.isArray(m.damageTypes) ? m.damageTypes : [];
       metaCategories = Array.isArray(m.categories) ? m.categories : [];
+      metaCalibers = Array.isArray(ammoList)
+        ? ammoList.map(x => String(x?.caliber || '').trim()).filter(Boolean)
+        : [];
     }
 
     function optionsForMeta(metaList, current) {
-      const base = metaList === 'damageTypes' ? metaDamageTypes : metaCategories;
+      const base = metaList === 'damageTypes'
+        ? metaDamageTypes
+        : (metaList === 'categories' ? metaCategories : metaCalibers);
       const set = new Set(base.map(String));
       if (current != null && String(current) !== '') set.add(String(current));
+      if (metaList === 'calibers') set.add('');
       return [...set].sort((a, b) => a.localeCompare(b));
     }
 
@@ -208,7 +220,11 @@ public static class BattleWeaponsDashboardPage
         if (readOnly || c.ro) sel.disabled = true;
         if (c.wide) sel.className = 'w-wide';
         sel.title = c.title || '';
-        fillSelect(sel, c.metaList, value != null && value !== '' ? value : (c.k === 'damageType' ? 'physical' : 'cold'));
+        fillSelect(
+          sel,
+          c.metaList,
+          value != null && value !== '' ? value : (c.k === 'damageType' ? 'physical' : (c.k === 'category' ? 'cold' : ''))
+        );
         td.appendChild(sel);
         return td;
       }
@@ -300,7 +316,7 @@ public static class BattleWeaponsDashboardPage
           sel.setAttribute('data-field', c.k);
           sel.dataset.paramKey = c.k;
           if (c.title) sel.title = c.title;
-          const def = c.k === 'damageType' ? 'physical' : 'cold';
+          const def = c.k === 'damageType' ? 'physical' : (c.k === 'category' ? 'cold' : '');
           fillSelect(sel, c.metaList, def, c.optionLabels);
           sel.style.width = c.wide ? '100px' : '72px';
           lab.appendChild(sel);

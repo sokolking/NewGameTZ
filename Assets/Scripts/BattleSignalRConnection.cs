@@ -272,10 +272,13 @@ public class BattleSignalRConnection : MonoBehaviour
             }
             catch (Exception ex)
             {
-                EnqueueLogWarn("ReceiveLoop: " + ex.Message);
+                string details = $"state={ws.State}, closeStatus={ws.CloseStatus}, closeDesc={ws.CloseStatusDescription}";
+                EnqueueLogWarn("ReceiveLoop: " + ex.Message + " (" + details + ")");
                 break;
             }
         }
+
+        EnqueueLog($"ReceiveLoop exit: state={ws.State}, closeStatus={ws.CloseStatus}, closeDesc={ws.CloseStatusDescription}");
     }
 
     private void DispatchIncomingJson(string json, int msgIndex)

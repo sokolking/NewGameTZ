@@ -241,7 +241,7 @@ LIMIT 1;
             return false;
         }
 
-        var normalized = new List<(int start, string code, int width, bool eq)>();
+        var normalized = new List<(int start, string code, int width, int chamber, bool eq)>();
         int equippedCount = 0;
         bool hasFist = false;
         foreach (UserInventoryItemReplaceDto row in rawItems)
@@ -278,7 +278,12 @@ LIMIT 1;
                 equippedCount++;
             if (wpn.Code == "fist")
                 hasFist = true;
-            normalized.Add((start, wpn.Code, width, eq));
+            int chamber = Math.Max(0, row.ChamberRounds);
+            if (wpn.MagazineSize <= 0 || string.IsNullOrWhiteSpace(wpn.Caliber))
+                chamber = 0;
+            else
+                chamber = Math.Clamp(chamber, 0, Math.Max(0, wpn.MagazineSize));
+            normalized.Add((start, wpn.Code, width, chamber, eq));
         }
 
         if (!hasFist)
@@ -294,7 +299,7 @@ LIMIT 1;
         }
 
         var occupied = new bool[12];
-        foreach (var (start, _, width, _) in normalized)
+        foreach (var (start, _, width, _, _) in normalized)
         {
             for (int i = 0; i < width; i++)
             {
@@ -310,7 +315,7 @@ LIMIT 1;
         }
 
         var codesSeen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var (_, code, _, _) in normalized)
+        foreach (var (_, code, _, _, _) in normalized)
         {
             if (!codesSeen.Add(code))
             {
@@ -335,18 +340,19 @@ LIMIT 1;
             del.ExecuteNonQuery();
         }
 
-        foreach (var (start, code, width, eq) in normalized)
+        foreach (var (start, code, width, chamber, eq) in normalized)
         {
             using var ins = connection.CreateCommand();
             ins.Transaction = tx;
             ins.CommandText = """
-INSERT INTO user_inventory_items (user_id, start_slot, weapon_code, slot_width, is_equipped)
-VALUES (@uid, @start, @code, @width, @eq);
+INSERT INTO user_inventory_items (user_id, start_slot, weapon_code, slot_width, chamber_rounds, is_equipped)
+VALUES (@uid, @start, @code, @width, @chamber, @eq);
 """;
             ins.Parameters.AddWithValue("uid", userId);
             ins.Parameters.AddWithValue("start", start);
             ins.Parameters.AddWithValue("code", code);
             ins.Parameters.AddWithValue("width", width);
+            ins.Parameters.AddWithValue("chamber", chamber);
             ins.Parameters.AddWithValue("eq", eq);
             ins.ExecuteNonQuery();
         }
@@ -376,6 +382,166 @@ VALUES (@uid, @start, @code, @width, @eq);
         return true;
     }
 
+    public bool TryGetUserItemsForAdmin(long userId, out List<UserItemAdminDto> items, out string? error)
+    {
+        items = new List<UserItemAdminDto>();
+        error = null;
+        if (userId <= 0)
+        {
+            error = "invalid user id";
+            return false;
+        }
+
+        using var connection = _database.DataSource.OpenConnection();
+        if (!UserExists(connection, userId))
+        {
+            error = "user not found";
+            return false;
+        }
+
+        EnsureUserInventoryBaseline(connection, userId);
+        var inv = LoadInventoryItems(connection, userId);
+        foreach (var x in inv)
+        {
+            items.Add(new UserItemAdminDto
+            {
+                ItemType = "weapon",
+                Code = x.WeaponCode,
+                Quantity = 1,
+                ChamberRounds = Math.Max(0, x.ChamberRounds),
+                StartSlot = x.StartSlot,
+                IsEquipped = x.IsEquipped,
+                IsStackable = false,
+                SlotWidth = x.SlotWidth >= 2 ? 2 : 1
+            });
+        }
+
+        var ammo = LoadAmmoPacks(connection, userId);
+        foreach (var x in ammo)
+        {
+            items.Add(new UserItemAdminDto
+            {
+                ItemType = "ammo",
+                Code = x.Caliber,
+                Quantity = Math.Max(0, x.RoundsCount),
+                ChamberRounds = 0,
+                StartSlot = Math.Clamp(x.StartSlot, 0, 11),
+                IsEquipped = false,
+                IsStackable = true,
+                SlotWidth = 0
+            });
+        }
+
+        return true;
+    }
+
+    public bool TryReplaceUserItems(long userId, IReadOnlyList<UserItemReplaceDto> rawItems, out string? error)
+    {
+        error = null;
+        if (userId <= 0)
+        {
+            error = "invalid user id";
+            return false;
+        }
+
+        if (rawItems == null || rawItems.Count == 0)
+        {
+            error = "items array required";
+            return false;
+        }
+
+        var weaponRows = new List<UserInventoryItemReplaceDto>();
+        var ammoRows = new List<UserAmmoPackReplaceDto>();
+        foreach (var row in rawItems)
+        {
+            string type = (row.ItemType ?? "").Trim().ToLowerInvariant();
+            if (type == "weapon")
+            {
+                weaponRows.Add(new UserInventoryItemReplaceDto
+                {
+                    StartSlot = row.StartSlot,
+                    WeaponCode = row.Code ?? "",
+                    SlotWidth = 1,
+                    ChamberRounds = Math.Max(0, row.ChamberRounds),
+                    IsEquipped = row.IsEquipped
+                });
+                continue;
+            }
+
+            if (type == "ammo")
+            {
+                ammoRows.Add(new UserAmmoPackReplaceDto
+                {
+                    Caliber = row.Code ?? "",
+                    StartSlot = row.StartSlot,
+                    RoundsCount = Math.Max(0, row.Quantity),
+                    PacksCount = 0,
+                    TotalRounds = Math.Max(0, row.Quantity)
+                });
+                continue;
+            }
+
+            error = "unknown itemType: " + type;
+            return false;
+        }
+
+        if (weaponRows.Count == 0)
+        {
+            error = "at least one weapon item is required";
+            return false;
+        }
+
+        var occupied = new bool[12];
+        foreach (var row in weaponRows)
+        {
+            string code = (row.WeaponCode ?? "").Trim().ToLowerInvariant();
+            if (!_weapons.TryGetWeaponByCode(code, out var wpn))
+            {
+                error = "unknown weapon: " + code;
+                return false;
+            }
+            int width = wpn.InventorySlotWidth >= 2 ? 2 : 1;
+            if (row.StartSlot < 0 || row.StartSlot > 11 || row.StartSlot + width > 12)
+            {
+                error = "weapon startSlot invalid";
+                return false;
+            }
+            for (int i = 0; i < width; i++)
+            {
+                int idx = row.StartSlot + i;
+                if (occupied[idx])
+                {
+                    error = "overlapping item slots";
+                    return false;
+                }
+                occupied[idx] = true;
+            }
+        }
+        foreach (var row in ammoRows)
+        {
+            int rounds = row.RoundsCount > 0 ? row.RoundsCount : row.TotalRounds;
+            if (rounds <= 0)
+                continue;
+            if (row.StartSlot < 0 || row.StartSlot > 11)
+            {
+                error = "ammo startSlot must be 0..11";
+                return false;
+            }
+            if (occupied[row.StartSlot])
+            {
+                error = "overlapping item slots";
+                return false;
+            }
+            occupied[row.StartSlot] = true;
+        }
+
+        if (!TryReplaceUserInventory(userId, weaponRows, out error))
+            return false;
+        if (!TryReplaceUserAmmoPacks(userId, ammoRows, out error))
+            return false;
+        return true;
+    }
+
     public bool TryReplaceUserAmmoPacks(long userId, IReadOnlyList<UserAmmoPackReplaceDto> rawItems, out string? error)
     {
         error = null;
@@ -391,7 +557,8 @@ VALUES (@uid, @start, @code, @width, @eq);
             return false;
         }
 
-        var normalized = new List<(long ammoTypeId, int rounds)>();
+        var normalized = new List<(long ammoTypeId, int startSlot, int rounds)>();
+        var slotsSeen = new HashSet<int>();
         var calibersSeen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var row in rawItems)
         {
@@ -406,6 +573,17 @@ VALUES (@uid, @start, @code, @width, @eq);
                 error = "duplicate caliber: " + caliber;
                 return false;
             }
+            int startSlot = row.StartSlot;
+            if (startSlot < 0 || startSlot > 11)
+            {
+                error = "ammo startSlot must be 0..11";
+                return false;
+            }
+            if (!slotsSeen.Add(startSlot))
+            {
+                error = "duplicate ammo startSlot: " + startSlot;
+                return false;
+            }
             if (!_ammo.TryGetAmmoTypeByCaliber(caliber, out var ammo))
             {
                 error = "unknown caliber: " + caliber;
@@ -414,7 +592,7 @@ VALUES (@uid, @start, @code, @width, @eq);
             int rounds = Math.Max(0, row.RoundsCount > 0 ? row.RoundsCount : row.TotalRounds);
             if (rounds == 0)
                 continue;
-            normalized.Add((ammo.Id, rounds));
+            normalized.Add((ammo.Id, startSlot, rounds));
         }
 
         using var connection = _database.DataSource.OpenConnection();
@@ -433,16 +611,17 @@ VALUES (@uid, @start, @code, @width, @eq);
             del.ExecuteNonQuery();
         }
 
-        foreach (var (ammoTypeId, rounds) in normalized)
+        foreach (var (ammoTypeId, startSlot, rounds) in normalized)
         {
             using var ins = connection.CreateCommand();
             ins.Transaction = tx;
             ins.CommandText = """
-INSERT INTO user_ammo_packs (user_id, ammo_type_id, packs_count, rounds_count)
-VALUES (@uid, @ammoTypeId, 0, @rounds);
+INSERT INTO user_ammo_packs (user_id, ammo_type_id, start_slot, packs_count, rounds_count)
+VALUES (@uid, @ammoTypeId, @startSlot, 0, @rounds);
 """;
             ins.Parameters.AddWithValue("uid", userId);
             ins.Parameters.AddWithValue("ammoTypeId", ammoTypeId);
+            ins.Parameters.AddWithValue("startSlot", startSlot);
             ins.Parameters.AddWithValue("rounds", rounds);
             ins.ExecuteNonQuery();
         }
@@ -510,8 +689,8 @@ LIMIT 1;
         using var connection = _database.DataSource.OpenConnection();
         using var cmd = connection.CreateCommand();
         cmd.CommandText = """
-INSERT INTO user_ammo_packs (user_id, ammo_type_id, packs_count, rounds_count)
-VALUES (@uid, @aid, 0, @rounds)
+INSERT INTO user_ammo_packs (user_id, ammo_type_id, start_slot, packs_count, rounds_count)
+VALUES (@uid, @aid, 0, 0, @rounds)
 ON CONFLICT (user_id, ammo_type_id) DO UPDATE SET
     rounds_count = EXCLUDED.rounds_count,
     packs_count = 0;
@@ -569,15 +748,27 @@ LIMIT 1;
             return;
 
         using var connection = _database.DataSource.OpenConnection();
-        using var command = connection.CreateCommand();
-        command.CommandText = """
+        using var tx = connection.BeginTransaction();
+        using (var clear = connection.CreateCommand())
+        {
+            clear.Transaction = tx;
+            clear.CommandText = "UPDATE user_inventory_items SET is_equipped = FALSE WHERE user_id = @uid;";
+            clear.Parameters.AddWithValue("uid", userId);
+            clear.ExecuteNonQuery();
+        }
+        using (var equip = connection.CreateCommand())
+        {
+            equip.Transaction = tx;
+            equip.CommandText = """
 UPDATE user_inventory_items
-SET is_equipped = (LOWER(weapon_code) = LOWER(@code))
-WHERE user_id = @uid;
+SET is_equipped = TRUE
+WHERE user_id = @uid AND LOWER(weapon_code) = LOWER(@code);
 """;
-        command.Parameters.AddWithValue("uid", userId);
-        command.Parameters.AddWithValue("code", code);
-        command.ExecuteNonQuery();
+            equip.Parameters.AddWithValue("uid", userId);
+            equip.Parameters.AddWithValue("code", code);
+            equip.ExecuteNonQuery();
+        }
+        tx.Commit();
 
         using var verify = connection.CreateCommand();
         verify.CommandText = """
@@ -604,6 +795,65 @@ WHERE user_id = @uid AND LOWER(weapon_code) = 'fist';
             fist.Parameters.AddWithValue("uid", userId);
             fist.ExecuteNonQuery();
         }
+    }
+
+    public bool TrySetUserWeaponChamberRounds(string username, string weaponCode, int chamberRounds, out string? error)
+    {
+        error = null;
+        if (string.IsNullOrWhiteSpace(username))
+        {
+            error = "username required";
+            return false;
+        }
+
+        string code = (weaponCode ?? "").Trim().ToLowerInvariant();
+        if (string.IsNullOrEmpty(code))
+            return true;
+
+        if (!TryGetUserId(username.Trim(), out long userId))
+        {
+            error = "user not found";
+            return false;
+        }
+
+        int rounds = Math.Max(0, chamberRounds);
+        using var connection = _database.DataSource.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+UPDATE user_inventory_items
+SET chamber_rounds = @rounds
+WHERE user_id = @uid AND LOWER(weapon_code) = LOWER(@code);
+""";
+        command.Parameters.AddWithValue("uid", userId);
+        command.Parameters.AddWithValue("code", code);
+        command.Parameters.AddWithValue("rounds", rounds);
+        command.ExecuteNonQuery();
+        return true;
+    }
+
+    public bool TryGetUserWeaponChamberRounds(string username, string weaponCode, out int chamberRounds)
+    {
+        chamberRounds = 0;
+        if (string.IsNullOrWhiteSpace(username) || string.IsNullOrWhiteSpace(weaponCode))
+            return false;
+        if (!TryGetUserId(username.Trim(), out long userId))
+            return false;
+
+        using var connection = _database.DataSource.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+SELECT COALESCE(chamber_rounds, 0)
+FROM user_inventory_items
+WHERE user_id = @uid AND LOWER(weapon_code) = LOWER(@code)
+LIMIT 1;
+""";
+        command.Parameters.AddWithValue("uid", userId);
+        command.Parameters.AddWithValue("code", weaponCode.Trim());
+        object? scalar = command.ExecuteScalar();
+        if (scalar == null)
+            return false;
+        chamberRounds = Math.Max(0, Convert.ToInt32(scalar));
+        return true;
     }
 
     public bool TryGetEquippedWeaponCodeForUser(string username, out string weaponCode)
@@ -677,8 +927,8 @@ LIMIT 1;
 
         using var ins = connection.CreateCommand();
         ins.CommandText = """
-INSERT INTO user_inventory_items (user_id, start_slot, weapon_code, slot_width, is_equipped)
-VALUES (@uid, 0, 'fist', 1, TRUE);
+INSERT INTO user_inventory_items (user_id, start_slot, weapon_code, slot_width, chamber_rounds, is_equipped)
+VALUES (@uid, 0, 'fist', 1, 0, TRUE);
 """;
         ins.Parameters.AddWithValue("uid", userId);
         try
@@ -696,7 +946,7 @@ VALUES (@uid, 0, 'fist', 1, TRUE);
         var list = new List<UserInventoryItemAdminDto>();
         using var command = connection.CreateCommand();
         command.CommandText = """
-SELECT id, start_slot, weapon_code, slot_width, is_equipped
+SELECT id, start_slot, weapon_code, slot_width, COALESCE(chamber_rounds, 0), is_equipped
 FROM user_inventory_items
 WHERE user_id = @uid
 ORDER BY start_slot, id;
@@ -711,7 +961,8 @@ ORDER BY start_slot, id;
                 StartSlot = reader.GetInt32(1),
                 WeaponCode = reader.GetString(2),
                 SlotWidth = reader.GetInt32(3),
-                IsEquipped = reader.GetBoolean(4)
+                ChamberRounds = Math.Max(0, reader.GetInt32(4)),
+                IsEquipped = reader.GetBoolean(5)
             });
         }
 
@@ -723,7 +974,7 @@ ORDER BY start_slot, id;
         var list = new List<UserAmmoPackAdminDto>();
         using var command = connection.CreateCommand();
         command.CommandText = """
-SELECT uap.id, uap.ammo_type_id, at.caliber, at.unit_weight, at.rounds_per_pack, uap.packs_count, COALESCE(uap.rounds_count, 0)
+SELECT uap.id, uap.ammo_type_id, at.caliber, at.unit_weight, at.icon_key, COALESCE(uap.start_slot, 0), uap.packs_count, COALESCE(uap.rounds_count, 0)
 FROM user_ammo_packs uap
 JOIN ammo_types at ON at.id = uap.ammo_type_id
 WHERE uap.user_id = @uid
@@ -733,16 +984,17 @@ ORDER BY LOWER(at.caliber), uap.id;
         using var reader = command.ExecuteReader();
         while (reader.Read())
         {
-            int roundsPerPack = reader.GetInt32(4);
-            int packsCount = reader.GetInt32(5);
-            int roundsCount = reader.GetInt32(6);
+            int startSlot = reader.GetInt32(5);
+            int packsCount = reader.GetInt32(6);
+            int roundsCount = reader.GetInt32(7);
             list.Add(new UserAmmoPackAdminDto
             {
                 Id = reader.GetInt64(0),
                 AmmoTypeId = reader.GetInt64(1),
                 Caliber = reader.GetString(2),
                 UnitWeight = reader.GetDouble(3),
-                RoundsPerPack = roundsPerPack,
+                IconKey = reader.IsDBNull(4) ? "" : reader.GetString(4),
+                StartSlot = Math.Clamp(startSlot, 0, 11),
                 PacksCount = 0,
                 RoundsCount = Math.Max(0, roundsCount),
                 TotalRounds = Math.Max(0, roundsCount)
@@ -756,7 +1008,9 @@ ORDER BY LOWER(at.caliber), uap.id;
     {
         using var connection = _database.DataSource.OpenConnection();
         var items = LoadInventoryItems(connection, userId);
+        var ammoItems = LoadAmmoPacks(connection, userId);
         var slots = new List<UserInventorySlotDto>(12);
+        var occupied = new bool[12];
         for (int i = 0; i < 12; i++)
         {
             slots.Add(new UserInventorySlotDto
@@ -789,9 +1043,44 @@ ORDER BY LOWER(at.caliber), uap.id;
                     AttackApCost = w.AttackApCost,
                     SlotSpan = primary ? width : 0,
                     Equipped = primary && item.IsEquipped,
-                    Continuation = !primary
+                    Continuation = !primary,
+                    Stackable = false,
+                    Quantity = 1,
+                    ChamberRounds = primary ? Math.Clamp(item.ChamberRounds, 0, Math.Max(0, w.MagazineSize)) : 0
                 };
+                occupied[idx] = true;
             }
+        }
+
+        foreach (UserAmmoPackAdminDto ammo in ammoItems)
+        {
+            if (ammo == null)
+                continue;
+            int count = Math.Max(0, ammo.RoundsCount);
+            if (count <= 0)
+                continue;
+            int idx = Math.Clamp(ammo.StartSlot, 0, 11);
+            if (occupied[idx])
+                continue;
+            string iconKey = !string.IsNullOrWhiteSpace(ammo.IconKey) ? ammo.IconKey : ammo.Caliber;
+            slots[idx] = new UserInventorySlotDto
+            {
+                SlotIndex = idx,
+                WeaponId = null,
+                WeaponCode = ammo.Caliber,
+                WeaponName = $"{ammo.Caliber} ammo",
+                Damage = 0,
+                Range = 0,
+                IconKey = iconKey ?? "",
+                AttackApCost = 0,
+                SlotSpan = 1,
+                Equipped = false,
+                Continuation = false,
+                Stackable = true,
+                Quantity = count,
+                ChamberRounds = 0
+            };
+            occupied[idx] = true;
         }
 
         return slots;

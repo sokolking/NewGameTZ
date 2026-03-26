@@ -210,6 +210,7 @@ public static class BattleUsersDashboardPage
         <a href="/db">Battles</a>
         <a href="/users" class="active">Users</a>
         <a href="/weapons">Weapons</a>
+        <a href="/ammo">Ammo</a>
         <a href="/obstacle-balance">Obstacle balance</a>
       </div>
       <input id="userSearch" type="search" placeholder="Search username">
@@ -255,34 +256,19 @@ public static class BattleUsersDashboardPage
     </form>
   </dialog>
 
-  <dialog id="invEditor">
-    <h3>User inventory</h3>
+  <dialog id="itemsEditor">
+    <h3>User items</h3>
     <p class="hint" style="margin:0 0 10px;font-size:12px;line-height:1.4;">
-      Grid 12 cells (0–11). Each weapon uses <strong>inventory slot width</strong> from the weapons table (1 or 2).
-      Include <code>fist</code>. Exactly <strong>one</strong> row must be equipped (in hands). No overlapping slots.
+      Single list of entities: <strong>weapon</strong> and <strong>ammo</strong>. Ammo is stackable (<code>quantity</code>), weapon is non-stackable.
+      For weapons: keep exactly one equipped and include <code>fist</code>. Weapon slot uses inventory grid 0..11.
     </p>
-    <div id="invRows" style="display:flex;flex-direction:column;gap:8px;max-height:320px;overflow:auto;"></div>
+    <div id="itemsRows" style="display:flex;flex-direction:column;gap:8px;max-height:360px;overflow:auto;"></div>
     <div class="edit-actions" style="margin-top:10px;">
-      <button type="button" id="invAddRow">Add row</button>
+      <button type="button" id="itemsAddRow">Add row</button>
     </div>
     <div class="edit-actions">
-      <button type="button" id="invCancel">Cancel</button>
-      <button type="button" id="invSave">Save inventory</button>
-    </div>
-  </dialog>
-
-  <dialog id="ammoEditor">
-    <h3>User ammo rounds</h3>
-    <p class="hint" style="margin:0 0 10px;font-size:12px;line-height:1.4;">
-      Configure ammo amount by caliber. Server stores only <strong>roundsCount</strong>.
-    </p>
-    <div id="ammoRows" style="display:flex;flex-direction:column;gap:8px;max-height:320px;overflow:auto;"></div>
-    <div class="edit-actions" style="margin-top:10px;">
-      <button type="button" id="ammoAddRow">Add row</button>
-    </div>
-    <div class="edit-actions">
-      <button type="button" id="ammoCancel">Cancel</button>
-      <button type="button" id="ammoSave">Save ammo</button>
+      <button type="button" id="itemsCancel">Cancel</button>
+      <button type="button" id="itemsSave">Save items</button>
     </div>
   </dialog>
 
@@ -301,21 +287,15 @@ public static class BattleUsersDashboardPage
     const editEnduranceEl = document.getElementById('editEndurance');
     const editAccuracyEl = document.getElementById('editAccuracy');
     const editCancelBtn = document.getElementById('editCancel');
-    const invDialog = document.getElementById('invEditor');
-    const invRowsEl = document.getElementById('invRows');
-    const invAddRowBtn = document.getElementById('invAddRow');
-    const invCancelBtn = document.getElementById('invCancel');
-    const invSaveBtn = document.getElementById('invSave');
-    const ammoDialog = document.getElementById('ammoEditor');
-    const ammoRowsEl = document.getElementById('ammoRows');
-    const ammoAddRowBtn = document.getElementById('ammoAddRow');
-    const ammoCancelBtn = document.getElementById('ammoCancel');
-    const ammoSaveBtn = document.getElementById('ammoSave');
+    const itemsDialog = document.getElementById('itemsEditor');
+    const itemsRowsEl = document.getElementById('itemsRows');
+    const itemsAddRowBtn = document.getElementById('itemsAddRow');
+    const itemsCancelBtn = document.getElementById('itemsCancel');
+    const itemsSaveBtn = document.getElementById('itemsSave');
     let users = [];
     let weaponList = [];
     let ammoTypeList = [];
-    let invUserId = null;
-    let ammoUserId = null;
+    let itemsUserId = null;
 
     function setStatus(text) {
       statusEl.textContent = text;
@@ -357,12 +337,10 @@ public static class BattleUsersDashboardPage
             </div>
           </div>
           <button type="button" class="edit-btn">Edit</button>
-          <button type="button" class="edit-btn" data-act="inv">Inventory</button>
-          <button type="button" class="edit-btn" data-act="ammo">Ammo</button>
+          <button type="button" class="edit-btn" data-act="items">Items</button>
         `;
         row.querySelector('.edit-btn').addEventListener('click', () => openEdit(user));
-        row.querySelector('[data-act="inv"]').addEventListener('click', () => openInventoryEditor(user));
-        row.querySelector('[data-act="ammo"]').addEventListener('click', () => openAmmoEditor(user));
+        row.querySelector('[data-act="items"]').addEventListener('click', () => openItemsEditor(user));
         userListEl.appendChild(row);
       }
     }
@@ -371,6 +349,16 @@ public static class BattleUsersDashboardPage
       const w = weaponList.find(x => x.code === code);
       const n = w && w.inventorySlotWidth != null ? Number(w.inventorySlotWidth) : 1;
       return n >= 2 ? 2 : 1;
+    }
+
+    function weaponMagazineSize(code) {
+      const w = weaponList.find(x => x.code === code);
+      return w && w.magazineSize != null ? Math.max(0, Number(w.magazineSize) || 0) : 0;
+    }
+
+    function weaponHasCaliber(code) {
+      const w = weaponList.find(x => x.code === code);
+      return !!(w && String(w.caliber || '').trim());
     }
 
     function openEdit(user) {
@@ -384,250 +372,209 @@ public static class BattleUsersDashboardPage
       editDialog.showModal();
     }
 
-    function openInventoryEditor(user) {
-      invUserId = user.id;
-      loadInventoryForUser(user.id);
+    function openItemsEditor(user) {
+      itemsUserId = user.id;
+      loadItemsForUser(user.id);
     }
 
-    function openAmmoEditor(user) {
-      ammoUserId = user.id;
-      loadAmmoForUser(user.id);
-    }
-
-    async function loadInventoryForUser(id) {
-      setStatus('loading inventory…');
-      const resp = await fetch('/api/db/users/' + id + '/inventory');
-      const data = await resp.json().catch(() => ({}));
-      if (!resp.ok) {
-        setStatus('inventory load failed: ' + (data.error || resp.status));
-        return;
+    function addWeaponOptions(sel, code) {
+      for (const w of weaponList) {
+        const opt = document.createElement('option');
+        opt.value = w.code;
+        opt.textContent = w.code + ' - ' + w.name;
+        sel.appendChild(opt);
       }
-      const items = Array.isArray(data.items) ? data.items : [];
-      renderInvRows(items.length ? items : [{ id: 0, startSlot: 0, weaponCode: 'fist', slotWidth: 1, isEquipped: true }]);
-      invDialog.showModal();
-      setStatus('inventory loaded');
+      const wc = (code || 'fist').toLowerCase();
+      if (![...sel.options].some(o => o.value === wc)) {
+        const opt = document.createElement('option');
+        opt.value = wc;
+        opt.textContent = wc + ' (missing in weapons list)';
+        sel.appendChild(opt);
+      }
+      sel.value = wc;
     }
 
-    function renderInvRows(items) {
-      invRowsEl.innerHTML = '';
+    function addAmmoOptions(sel, caliber) {
+      for (const a of ammoTypeList) {
+        const opt = document.createElement('option');
+        opt.value = a.caliber;
+        opt.textContent = a.caliber;
+        sel.appendChild(opt);
+      }
+      const cal = (caliber || '').trim();
+      if (cal && ![...sel.options].some(o => o.value === cal)) {
+        const opt = document.createElement('option');
+        opt.value = cal;
+        opt.textContent = cal + ' (missing in ammo list)';
+        sel.appendChild(opt);
+      }
+      if (sel.options.length && !cal) sel.value = sel.options[0].value;
+      else sel.value = cal;
+    }
+
+    function renderItemsRows(items) {
+      itemsRowsEl.innerHTML = '';
       for (const it of items) {
-        const wrap = document.createElement('div');
-        wrap.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;align-items:center;border:1px solid var(--border);border-radius:8px;padding:8px;';
-        const start = document.createElement('input');
-        start.type = 'number';
-        start.min = 0;
-        start.max = 11;
-        start.value = String(it.startSlot ?? 0);
-        start.title = 'start slot 0–11';
-        start.style.width = '52px';
-        const sel = document.createElement('select');
-        for (const w of weaponList) {
-          const opt = document.createElement('option');
-          opt.value = w.code;
-          opt.textContent = w.code + ' — ' + w.name;
-          sel.appendChild(opt);
-        }
-        const wc = (it.weaponCode || 'fist').toLowerCase();
-        if (![...sel.options].some(o => o.value === wc)) {
-          const opt = document.createElement('option');
-          opt.value = wc;
-          opt.textContent = wc + ' (missing in weapons list)';
-          sel.appendChild(opt);
-        }
-        sel.value = wc;
-        const span = document.createElement('span');
-        span.className = 'hint';
-        span.style.fontSize = '11px';
-        const updSpan = () => { span.textContent = 'uses ' + weaponSlotWidth(sel.value) + ' cell(s)'; };
-        sel.addEventListener('change', updSpan);
-        updSpan();
-        const eq = document.createElement('label');
-        eq.style.cssText = 'display:inline-flex;align-items:center;gap:4px;font-size:12px;';
-        const cb = document.createElement('input');
-        cb.type = 'checkbox';
-        cb.checked = !!it.isEquipped;
-        cb.addEventListener('change', () => {
-          if (cb.checked) {
-            invRowsEl.querySelectorAll('input[type=checkbox]').forEach(x => { if (x !== cb) x.checked = false; });
-          }
-        });
-        eq.appendChild(cb);
-        eq.appendChild(document.createTextNode(' equipped'));
-        const rm = document.createElement('button');
-        rm.type = 'button';
-        rm.textContent = 'Remove';
-        rm.addEventListener('click', () => wrap.remove());
-        wrap.appendChild(document.createTextNode('slot '));
-        wrap.appendChild(start);
-        wrap.appendChild(sel);
-        wrap.appendChild(span);
-        wrap.appendChild(eq);
-        wrap.appendChild(rm);
-        invRowsEl.appendChild(wrap);
-      }
-    }
+        const row = document.createElement('div');
+        row.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;align-items:center;border:1px solid var(--border);border-radius:8px;padding:8px;';
 
-    invAddRowBtn.addEventListener('click', () => {
-      const cur = collectInvRowsFromDom();
-      const firstCode = weaponList.length ? weaponList[0].code : 'fist';
-      cur.push({ startSlot: 0, weaponCode: firstCode, isEquipped: false });
-      renderInvRows(cur);
-    });
+        const type = document.createElement('select');
+        type.innerHTML = '<option value="weapon">weapon</option><option value="ammo">ammo</option>';
+        type.value = (it.itemType || 'weapon').toLowerCase() === 'ammo' ? 'ammo' : 'weapon';
 
-    function collectInvRowsFromDom() {
-      const out = [];
-      for (const wrap of invRowsEl.children) {
-        const inputs = wrap.querySelectorAll('input');
-        const start = wrap.querySelector('input[type=number]');
-        const sel = wrap.querySelector('select');
-        const cb = wrap.querySelector('input[type=checkbox]');
-        if (!start || !sel || !cb) continue;
-        out.push({
-          startSlot: Number(start.value) || 0,
-          weaponCode: sel.value,
-          isEquipped: cb.checked
-        });
-      }
-      return out;
-    }
-
-    invCancelBtn.addEventListener('click', () => invDialog.close());
-
-    invSaveBtn.addEventListener('click', async () => {
-      if (invUserId == null) return;
-      const rows = collectInvRowsFromDom();
-      const payload = { items: rows.map(r => ({
-        startSlot: r.startSlot,
-        weaponCode: r.weaponCode,
-        slotWidth: 1,
-        isEquipped: r.isEquipped
-      })) };
-      setStatus('saving inventory…');
-      const resp = await fetch('/api/db/users/' + invUserId + '/inventory', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      const data = await resp.json().catch(() => ({}));
-      if (!resp.ok) {
-        setStatus('inventory save failed: ' + (data.error || resp.status));
-        return;
-      }
-      invDialog.close();
-      setStatus('inventory saved');
-      await loadUsers();
-    });
-
-    function renderAmmoRows(items) {
-      ammoRowsEl.innerHTML = '';
-      for (const it of items) {
-        const wrap = document.createElement('div');
-        wrap.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;align-items:center;border:1px solid var(--border);border-radius:8px;padding:8px;';
-        const sel = document.createElement('select');
-        for (const a of ammoTypeList) {
-          const opt = document.createElement('option');
-          opt.value = a.caliber;
-          opt.textContent = a.caliber;
-          sel.appendChild(opt);
-        }
-        const cal = (it.caliber || '').trim();
-        if (cal && ![...sel.options].some(o => o.value === cal)) {
-          const opt = document.createElement('option');
-          opt.value = cal;
-          opt.textContent = cal + ' (missing in ammo list)';
-          sel.appendChild(opt);
-        }
-        if (sel.options.length && !cal)
-          sel.value = sel.options[0].value;
-        else
-          sel.value = cal;
-
-        const rounds = document.createElement('input');
-        rounds.type = 'number';
-        rounds.min = 0;
-        rounds.step = 1;
-        rounds.value = String(Math.max(0, Number(it.roundsCount || it.totalRounds || 0)));
-        rounds.style.width = '92px';
-        rounds.title = 'rounds count';
-
+        const code = document.createElement('select');
+        const slot = document.createElement('input');
+        slot.type = 'number'; slot.min = 0; slot.max = 11; slot.step = 1; slot.style.width = '58px';
+        const qty = document.createElement('input');
+        qty.type = 'number'; qty.min = 0; qty.step = 1; qty.style.width = '92px';
+        const chamber = document.createElement('input');
+        chamber.type = 'number'; chamber.min = 0; chamber.step = 1; chamber.style.width = '82px';
+        const eqLab = document.createElement('label');
+        eqLab.style.cssText = 'display:inline-flex;align-items:center;gap:4px;font-size:12px;';
+        const eq = document.createElement('input');
+        eq.type = 'checkbox';
+        eqLab.appendChild(eq);
+        eqLab.appendChild(document.createTextNode('equipped'));
         const info = document.createElement('span');
         info.className = 'hint';
         info.style.fontSize = '11px';
-        const updInfo = () => {
-          const r = Math.max(0, Number(rounds.value || 0));
-          info.textContent = r + ' rounds';
-        };
-        sel.addEventListener('change', updInfo);
-        rounds.addEventListener('input', updInfo);
-        updInfo();
-
         const rm = document.createElement('button');
         rm.type = 'button';
         rm.textContent = 'Remove';
-        rm.addEventListener('click', () => wrap.remove());
+        rm.addEventListener('click', () => row.remove());
 
-        wrap.appendChild(document.createTextNode('caliber '));
-        wrap.appendChild(sel);
-        wrap.appendChild(document.createTextNode('rounds '));
-        wrap.appendChild(rounds);
-        wrap.appendChild(info);
-        wrap.appendChild(rm);
-        ammoRowsEl.appendChild(wrap);
+        function syncUi() {
+          code.innerHTML = '';
+          if (type.value === 'weapon') {
+            addWeaponOptions(code, it.code || 'fist');
+            slot.disabled = false;
+            qty.disabled = true;
+            qty.value = '1';
+            const magSize = weaponMagazineSize(code.value);
+            const hasCal = weaponHasCaliber(code.value);
+            chamber.disabled = !(hasCal && magSize > 0);
+            chamber.max = String(Math.max(0, magSize));
+            if (chamber.disabled) chamber.value = '0';
+            else chamber.value = String(Math.min(Math.max(0, Number(it.chamberRounds || chamber.value || 0)), magSize));
+            eqLab.style.display = '';
+            info.textContent = 'uses ' + weaponSlotWidth(code.value) + ' cell(s), mag ' + magSize;
+          } else {
+            addAmmoOptions(code, it.code || '');
+            slot.disabled = false;
+            qty.disabled = false;
+            chamber.disabled = true;
+            chamber.value = '0';
+            eq.checked = false;
+            eqLab.style.display = 'none';
+            info.textContent = 'stackable item, 1 cell';
+          }
+        }
+
+        slot.value = String(it.startSlot != null ? it.startSlot : 0);
+        qty.value = String(Math.max(0, Number(it.quantity != null ? it.quantity : 1)));
+        chamber.value = String(Math.max(0, Number(it.chamberRounds != null ? it.chamberRounds : 0)));
+        eq.checked = !!it.isEquipped;
+        eq.addEventListener('change', () => {
+          if (!eq.checked || type.value !== 'weapon') return;
+          itemsRowsEl.querySelectorAll('div input[type="checkbox"]').forEach(x => { if (x !== eq) x.checked = false; });
+        });
+        type.addEventListener('change', syncUi);
+        code.addEventListener('change', () => {
+          if (type.value === 'weapon') {
+            const magSize = weaponMagazineSize(code.value);
+            const hasCal = weaponHasCaliber(code.value);
+            chamber.disabled = !(hasCal && magSize > 0);
+            chamber.max = String(Math.max(0, magSize));
+            if (chamber.disabled) chamber.value = '0';
+            else chamber.value = String(Math.min(Math.max(0, Number(chamber.value || 0)), magSize));
+            info.textContent = 'uses ' + weaponSlotWidth(code.value) + ' cell(s), mag ' + magSize;
+          } else {
+            info.textContent = 'stackable item, 1 cell';
+          }
+        });
+        syncUi();
+
+        row.appendChild(document.createTextNode('type'));
+        row.appendChild(type);
+        row.appendChild(document.createTextNode('code'));
+        row.appendChild(code);
+        row.appendChild(document.createTextNode('slot'));
+        row.appendChild(slot);
+        row.appendChild(document.createTextNode('qty'));
+        row.appendChild(qty);
+        row.appendChild(document.createTextNode('chamber'));
+        row.appendChild(chamber);
+        row.appendChild(eqLab);
+        row.appendChild(info);
+        row.appendChild(rm);
+        itemsRowsEl.appendChild(row);
       }
     }
 
-    function collectAmmoRowsFromDom() {
+    function collectItemsRowsFromDom() {
       const out = [];
-      for (const wrap of ammoRowsEl.children) {
-        const sel = wrap.querySelector('select');
-        const rounds = wrap.querySelector('input[type=number]');
-        if (!sel || !rounds) continue;
+      for (const row of itemsRowsEl.children) {
+        const selects = row.querySelectorAll('select');
+        const inputs = row.querySelectorAll('input');
+        const typeEl = selects[0];
+        const codeEl = selects[1];
+        const slotEl = inputs[0];
+        const qtyEl = inputs[1];
+        const chamberEl = inputs[2];
+        const eqEl = inputs[3];
+        if (!typeEl || !codeEl || !slotEl || !qtyEl || !chamberEl || !eqEl) continue;
         out.push({
-          caliber: (sel.value || '').trim(),
-          roundsCount: Math.max(0, Number(rounds.value || 0))
+          itemType: typeEl.value,
+          code: (codeEl.value || '').trim(),
+          quantity: Math.max(0, Number(qtyEl.value || 0)),
+          chamberRounds: Math.max(0, Number(chamberEl.value || 0)),
+          startSlot: Number(slotEl.value || -1),
+          isEquipped: !!eqEl.checked
         });
       }
       return out;
     }
 
-    async function loadAmmoForUser(id) {
-      setStatus('loading ammo…');
-      const resp = await fetch('/api/db/users/' + id + '/ammo');
+    async function loadItemsForUser(id) {
+      setStatus('loading items...');
+      const resp = await fetch('/api/db/users/' + id + '/items');
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) {
-        setStatus('ammo load failed: ' + (data.error || resp.status));
+        setStatus('items load failed: ' + (data.error || resp.status));
         return;
       }
       const items = Array.isArray(data.items) ? data.items : [];
-      renderAmmoRows(items.length ? items : [{ caliber: (ammoTypeList[0] && ammoTypeList[0].caliber) || '', roundsCount: 0 }]);
-      ammoDialog.showModal();
-      setStatus('ammo loaded');
+      const defaults = items.length ? items : [{ itemType: 'weapon', code: 'fist', quantity: 1, startSlot: 0, isEquipped: true }];
+      renderItemsRows(defaults);
+      itemsDialog.showModal();
+      setStatus('items loaded');
     }
 
-    ammoAddRowBtn.addEventListener('click', () => {
-      const cur = collectAmmoRowsFromDom();
-      cur.push({ caliber: (ammoTypeList[0] && ammoTypeList[0].caliber) || '', roundsCount: 0 });
-      renderAmmoRows(cur);
+    itemsAddRowBtn.addEventListener('click', () => {
+      const cur = collectItemsRowsFromDom();
+      cur.push({ itemType: 'weapon', code: 'fist', quantity: 1, startSlot: 0, isEquipped: false });
+      renderItemsRows(cur);
     });
 
-    ammoCancelBtn.addEventListener('click', () => ammoDialog.close());
+    itemsCancelBtn.addEventListener('click', () => itemsDialog.close());
 
-    ammoSaveBtn.addEventListener('click', async () => {
-      if (ammoUserId == null) return;
-      const payload = { items: collectAmmoRowsFromDom() };
-      setStatus('saving ammo…');
-      const resp = await fetch('/api/db/users/' + ammoUserId + '/ammo', {
+    itemsSaveBtn.addEventListener('click', async () => {
+      if (itemsUserId == null) return;
+      const payload = { items: collectItemsRowsFromDom() };
+      setStatus('saving items...');
+      const resp = await fetch('/api/db/users/' + itemsUserId + '/items', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) {
-        setStatus('ammo save failed: ' + (data.error || resp.status));
+        setStatus('items save failed: ' + (data.error || resp.status));
         return;
       }
-      ammoDialog.close();
-      setStatus('ammo saved');
+      itemsDialog.close();
+      setStatus('items saved');
+      await loadUsers();
     });
 
     editCancelBtn.addEventListener('click', () => editDialog.close());

@@ -3,7 +3,7 @@ using Npgsql;
 
 namespace BattleServer;
 
-/// <summary>Ammo dictionary table (caliber, unit weight, rounds per pack).</summary>
+/// <summary>Ammo dictionary table (caliber, unit weight, icon key).</summary>
 public sealed class BattleAmmoDatabase
 {
     private readonly BattlePostgresDatabase _database;
@@ -18,7 +18,7 @@ public sealed class BattleAmmoDatabase
         using var connection = _database.DataSource.OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = """
-SELECT id, caliber, unit_weight, rounds_per_pack
+SELECT id, caliber, unit_weight, icon_key
 FROM ammo_types
 ORDER BY id
 LIMIT @take;
@@ -34,7 +34,7 @@ LIMIT @take;
                 Id = reader.GetInt64(0),
                 Caliber = reader.GetString(1),
                 UnitWeight = reader.GetDouble(2),
-                RoundsPerPack = reader.GetInt32(3)
+                IconKey = reader.IsDBNull(3) ? "" : reader.GetString(3)
             });
         }
 
@@ -51,7 +51,7 @@ LIMIT @take;
         using var connection = _database.DataSource.OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = """
-SELECT id, caliber, unit_weight, rounds_per_pack
+SELECT id, caliber, unit_weight, icon_key
 FROM ammo_types
 WHERE LOWER(caliber) = LOWER(@caliber)
 LIMIT 1;
@@ -66,7 +66,7 @@ LIMIT 1;
             Id = reader.GetInt64(0),
             Caliber = reader.GetString(1),
             UnitWeight = reader.GetDouble(2),
-            RoundsPerPack = reader.GetInt32(3)
+            IconKey = reader.IsDBNull(3) ? "" : reader.GetString(3)
         };
         return true;
     }
@@ -81,21 +81,21 @@ LIMIT 1;
             return false;
         }
 
-        int rounds = Math.Clamp(req.RoundsPerPack, 1, 5000);
         double weight = Math.Max(0.0, req.UnitWeight);
+        string iconKey = (req.IconKey ?? "").Trim();
 
         using var connection = _database.DataSource.OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = """
-INSERT INTO ammo_types (caliber, unit_weight, rounds_per_pack)
-VALUES (@caliber, @unitWeight, @roundsPerPack)
+INSERT INTO ammo_types (caliber, unit_weight, icon_key)
+VALUES (@caliber, @unitWeight, @iconKey)
 ON CONFLICT (caliber) DO UPDATE SET
     unit_weight = EXCLUDED.unit_weight,
-    rounds_per_pack = EXCLUDED.rounds_per_pack;
+    icon_key = EXCLUDED.icon_key;
 """;
         command.Parameters.AddWithValue("caliber", caliber);
         command.Parameters.AddWithValue("unitWeight", weight);
-        command.Parameters.AddWithValue("roundsPerPack", rounds);
+        command.Parameters.AddWithValue("iconKey", iconKey);
         command.ExecuteNonQuery();
         return true;
     }
