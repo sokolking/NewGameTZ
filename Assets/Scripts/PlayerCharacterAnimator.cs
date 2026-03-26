@@ -273,6 +273,19 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
             || clip == ClipSitWalk || clip == ClipSitWalkPistol;
     }
 
+    /// <summary>
+    /// World position source for movement-facing delta.
+    /// Player/Remote root moves, while the visual child (this transform) can stay locally fixed.
+    /// </summary>
+    private Vector3 GetMovementWorldPosition()
+    {
+        if (_player != null)
+            return _player.transform.position;
+        if (_remoteBattleUnit != null)
+            return _remoteBattleUnit.transform.position;
+        return transform.position;
+    }
+
 #if UNITY_EDITOR
     private void OnValidate()
     {
@@ -475,11 +488,7 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
             _previousPostureTracked = _player.CurrentMovementPosture;
         }
 
-        _lastWorldPos = _rotatePlayerRoot && _player != null
-            ? _player.transform.position
-            : _rotatePlayerRoot && _remoteBattleUnit != null
-                ? _remoteBattleUnit.transform.position
-                : transform.position;
+        _lastWorldPos = GetMovementWorldPosition();
         _deathPlayed = false;
         _resolvedClipDirty = true;
         CacheClipReferences();
@@ -653,7 +662,7 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
         Transform pivot = _rotatePlayerRoot
             ? (_player != null ? _player.transform : _remoteBattleUnit != null ? _remoteBattleUnit.transform : transform)
             : transform;
-        Vector3 worldPos = pivot.position;
+        Vector3 worldPos = GetMovementWorldPosition();
 
         if (_horizontalFacingOverride.HasValue)
         {
