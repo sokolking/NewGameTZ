@@ -515,6 +515,72 @@ app.MapGet("/api/db/weapons", (BattleWeaponDatabase db, int? take) =>
     return Results.Json(db.ListWeapons(requested), jsonOpt);
 });
 
+app.MapGet("/api/db/weapons/meta", (BattleWeaponDatabase db) =>
+    Results.Json(db.GetWeaponMeta(), jsonOpt));
+
+app.MapDelete("/api/db/weapons/{code}", (string code, BattleWeaponDatabase db) =>
+{
+    if (!db.TryDeleteWeaponByCode(code, out var err))
+    {
+        int status = err is "weapon not found" ? 404 : 400;
+        return Results.Json(new { error = err }, jsonOpt, statusCode: status);
+    }
+
+    return Results.Ok(new { ok = true });
+});
+
+app.MapPut("/api/db/weapons/replace", async (HttpContext ctx, BattleWeaponDatabase db) =>
+{
+    WeaponUpsertRequest[]? arr;
+    try
+    {
+        arr = await JsonSerializer.DeserializeAsync<WeaponUpsertRequest[]>(ctx.Request.Body, jsonOpt);
+    }
+    catch
+    {
+        return Results.Json(new { error = "invalid JSON array" }, jsonOpt, statusCode: 400);
+    }
+
+    if (arr == null || arr.Length == 0)
+        return Results.Json(new { error = "non-empty JSON array required" }, jsonOpt, statusCode: 400);
+
+    try
+    {
+        var dtos = arr.Select(r => r.ToUpsertDto()).ToList();
+        db.ReplaceAllWeapons(dtos);
+    }
+    catch (Exception ex)
+    {
+        return Results.Json(new { error = ex.Message }, jsonOpt, statusCode: 400);
+    }
+
+    return Results.Ok(new { ok = true, count = arr.Length });
+});
+
+app.MapGet("/api/db/weapons/sql-export", (BattleWeaponDatabase db) =>
+{
+    string sql = db.BuildWeaponsSqlExportScript();
+    return Results.Text(sql, "text/plain; charset=utf-8");
+});
+
+app.MapPost("/api/db/weapons/sql-import", async (HttpContext ctx, BattleWeaponDatabase db) =>
+{
+    string sql;
+    using (var reader = new StreamReader(ctx.Request.Body, leaveOpen: true))
+        sql = await reader.ReadToEndAsync();
+
+    try
+    {
+        db.ImportWeaponsSqlScript(sql);
+    }
+    catch (Exception ex)
+    {
+        return Results.Json(new { error = ex.Message }, jsonOpt, statusCode: 400);
+    }
+
+    return Results.Ok(new { ok = true });
+});
+
 app.MapGet("/api/db/body-parts", (BattleBodyPartDatabase db) =>
     Results.Json(db.ListBodyParts(), jsonOpt));
 

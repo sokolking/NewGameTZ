@@ -25,7 +25,6 @@ public class RemoteBattleUnitView : MonoBehaviour
     private int _maxHp = 10;
     private int _currentHp = 10;
     private Animator _cachedAnimator;
-    private PlayerCharacterAnimator _characterAnimator;
     private string _displayName = "";
     private int _characterLevel = 1;
     private CharacterNameplateView _nameplateInstance;
@@ -146,8 +145,6 @@ public class RemoteBattleUnitView : MonoBehaviour
         }
 
         GameObject template = localPlayer.transform.GetChild(0).gameObject;
-        // Неактивный родитель: на клоне есть Player — иначе OnEnable у PlayerCharacterAnimator успевает
-        // подписаться на клонированный Player до Destroy, и остаётся «висячая» ссылка на локального Player.
         GameObject holder = new GameObject("_RemoteCloneHolder");
         holder.hideFlags = HideFlags.HideAndDontSave;
         holder.SetActive(false);
@@ -163,6 +160,12 @@ public class RemoteBattleUnitView : MonoBehaviour
         {
             if (p != null)
                 Destroy(p);
+        }
+
+        foreach (PlayerCharacterAnimator pca in clone.GetComponentsInChildren<PlayerCharacterAnimator>(true))
+        {
+            if (pca != null)
+                Destroy(pca);
         }
 
         Collider[] cols = clone.GetComponentsInChildren<Collider>(true);
@@ -184,7 +187,6 @@ public class RemoteBattleUnitView : MonoBehaviour
 
         Destroy(holder);
 
-        _characterAnimator = clone.GetComponent<PlayerCharacterAnimator>();
         _cachedAnimator = clone.GetComponentInChildren<Animator>();
 
         clone.SetActive(true);
@@ -301,26 +303,12 @@ public class RemoteBattleUnitView : MonoBehaviour
         _isMoving = true;
         transform.position = _grid.GetCellWorldPosition(path[0].col, path[0].row);
 
-        if (_characterAnimator == null)
-            _characterAnimator = GetComponentInChildren<PlayerCharacterAnimator>();
-        _characterAnimator?.ResetHexWalkPhaseForNewPath();
-
         for (int i = 1; i < path.Length; i++)
         {
             var step = path[i];
-            _characterAnimator?.NotifyHexStepStarted(_moveDurationPerHex);
-
             Vector3 target = _grid.GetCellWorldPosition(step.col, step.row);
-            Vector3 stepStart = transform.position;
-            float elapsed = 0f;
-            while (elapsed < _moveDurationPerHex)
-            {
-                elapsed += Time.deltaTime;
-                float t = Mathf.Clamp01(elapsed / _moveDurationPerHex);
-                transform.position = Vector3.Lerp(stepStart, target, t);
-                yield return null;
-            }
             transform.position = target;
+            yield return null;
         }
 
         _isMoving = false;

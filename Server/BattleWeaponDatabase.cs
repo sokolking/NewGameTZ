@@ -1,3 +1,5 @@
+using System.Globalization;
+using System.Text;
 using BattleServer.Models;
 using Npgsql;
 
@@ -6,6 +8,17 @@ namespace BattleServer;
 public sealed class BattleWeaponDatabase
 {
     private readonly BattlePostgresDatabase _database;
+
+    /// <summary>Canonical weapon <c>category</c> codes (DB + API). Order is stable for admin UI.</summary>
+    public static readonly string[] CanonicalWeaponCategories =
+    [
+        "cold",
+        "light",
+        "medium",
+        "heavy",
+        "throwing",
+        "medicine"
+    ];
 
     public BattleWeaponDatabase(BattlePostgresDatabase database)
     {
@@ -210,7 +223,7 @@ SET name = EXCLUDED.name,
         command.Parameters.AddWithValue("armorPierce", d.ArmorPierce);
         command.Parameters.AddWithValue("magazineSize", Math.Max(0, d.MagazineSize));
         command.Parameters.AddWithValue("reloadApCost", Math.Max(0, d.ReloadApCost));
-        command.Parameters.AddWithValue("category", string.IsNullOrWhiteSpace(d.Category) ? "cold" : d.Category.Trim());
+        command.Parameters.AddWithValue("category", NormalizeCategory(d.Category));
         command.Parameters.AddWithValue("reqLevel", Math.Max(0, d.ReqLevel));
         command.Parameters.AddWithValue("reqStrength", d.ReqStrength);
         command.Parameters.AddWithValue("reqEndurance", d.ReqEndurance);
@@ -224,6 +237,274 @@ SET name = EXCLUDED.name,
         command.Parameters.AddWithValue("damageMax", dMax);
         command.Parameters.AddWithValue("burstRounds", Math.Max(0, d.BurstRounds));
         command.Parameters.AddWithValue("burstApCost", Math.Max(0, d.BurstApCost));
+        command.ExecuteNonQuery();
+    }
+
+    public BattleWeaponMetaDto GetWeaponMeta()
+    {
+        using var connection = _database.DataSource.OpenConnection();
+        var fromDb = ListDistinctStrings(connection, "category");
+        return new BattleWeaponMetaDto
+        {
+            DamageTypes = ListDistinctStrings(connection, "damage_type"),
+            Categories = MergeCanonicalCategories(fromDb)
+        };
+    }
+
+    /// <summary>Canonical categories first (fixed order), then any other distinct values from DB.</summary>
+    private static List<string> MergeCanonicalCategories(IReadOnlyList<string> fromDb)
+    {
+        var list = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (string c in CanonicalWeaponCategories)
+        {
+            if (seen.Add(c))
+                list.Add(c);
+        }
+
+        foreach (string c in fromDb)
+        {
+            if (string.IsNullOrWhiteSpace(c))
+                continue;
+            if (seen.Add(c))
+                list.Add(c);
+        }
+
+        return list;
+    }
+
+    private static string NormalizeCategory(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+            return "cold";
+        string t = raw.Trim();
+        foreach (string c in CanonicalWeaponCategories)
+        {
+            if (c.Equals(t, StringComparison.OrdinalIgnoreCase))
+                return c;
+        }
+
+        return t;
+    }
+
+    private static IReadOnlyList<string> ListDistinctStrings(NpgsqlConnection connection, string column)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = $"""
+SELECT DISTINCT {column}
+FROM weapons
+ORDER BY 1;
+""";
+        using var reader = command.ExecuteReader();
+        var list = new List<string>();
+        while (reader.Read())
+        {
+            if (!reader.IsDBNull(0))
+                list.Add(reader.GetString(0));
+        }
+
+        return list;
+    }
+
+    /// <summary>Removes a weapon row. <c>fist</c> cannot be deleted.</summary>
+    public bool TryDeleteWeaponByCode(string code, out string? error)
+    {
+        error = null;
+        if (string.IsNullOrWhiteSpace(code))
+        {
+            error = "code required";
+            return false;
+        }
+
+        string c = code.Trim().ToLowerInvariant();
+        if (c == "fist")
+        {
+            error = "cannot delete default weapon fist";
+            return false;
+        }
+
+        using var connection = _database.DataSource.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = "DELETE FROM weapons WHERE code = @code;";
+        command.Parameters.AddWithValue("code", c);
+        int n = command.ExecuteNonQuery();
+        if (n == 0)
+        {
+            error = "weapon not found";
+            return false;
+        }
+
+        return true;
+    }
+
+    /// <summary>Truncates <c>weapons</c> and inserts the given rows (must include <c>fist</c>).</summary>
+    public void ReplaceAllWeapons(IReadOnlyList<BattleWeaponUpsertDto> items)
+    {
+        if (items == null || items.Count == 0)
+            throw new ArgumentException("At least one weapon is required.", nameof(items));
+
+        bool hasFist = false;
+        foreach (var i in items)
+        {
+            if (string.IsNullOrWhiteSpace(i.Code) || string.IsNullOrWhiteSpace(i.Name))
+                throw new ArgumentException("Each weapon must have code and name.", nameof(items));
+            if (string.Equals(i.Code.Trim(), "fist", StringComparison.OrdinalIgnoreCase))
+                hasFist = true;
+        }
+
+        if (!hasFist)
+            throw new InvalidOperationException("Replacement set must include weapon code \"fist\".");
+
+        using var connection = _database.DataSource.OpenConnection();
+        using var tx = connection.BeginTransaction();
+        using (var trunc = connection.CreateCommand())
+        {
+            trunc.Transaction = tx;
+            trunc.CommandText = "TRUNCATE TABLE weapons RESTART IDENTITY;";
+            trunc.ExecuteNonQuery();
+        }
+
+        foreach (var d in items)
+            InsertWeapon(connection, tx, d);
+
+        tx.Commit();
+    }
+
+    private static void InsertWeapon(NpgsqlConnection connection, NpgsqlTransaction tx, BattleWeaponUpsertDto d)
+    {
+        if (string.IsNullOrWhiteSpace(d.Code))
+            throw new ArgumentException("Weapon code is required.", nameof(d));
+        if (string.IsNullOrWhiteSpace(d.Name))
+            throw new ArgumentException("Weapon name is required.", nameof(d));
+
+        int dMin = Math.Max(0, d.DamageMin);
+        int dMax = Math.Max(0, d.DamageMax);
+        if (dMin > dMax)
+            (dMin, dMax) = (dMax, dMin);
+
+        string ik = string.IsNullOrWhiteSpace(d.IconKey) ? d.Code.Trim().ToLowerInvariant() : d.IconKey.Trim().ToLowerInvariant();
+        int ac = Math.Max(1, d.AttackApCost);
+        double sp = Math.Clamp(d.SpreadPenalty, 0.0, 1.0);
+        int th = Math.Clamp(d.TrajectoryHeight, 0, 3);
+        int legacyDamage = dMax;
+
+        using var command = connection.CreateCommand();
+        command.Transaction = tx;
+        command.CommandText = """
+INSERT INTO weapons (
+    code, name, damage, range, icon_key, attack_ap_cost, spread_penalty, trajectory_height, quality, weapon_condition, is_sniper,
+    mass, caliber, armor_pierce, magazine_size, reload_ap_cost, category,
+    req_level, req_strength, req_endurance, req_accuracy, req_mastery_category,
+    stat_effect_strength, stat_effect_endurance, stat_effect_accuracy,
+    damage_type, damage_min, damage_max, burst_rounds, burst_ap_cost)
+VALUES (
+    @code, @name, @damage, @range, @iconKey, @attackApCost, @spreadPenalty, @trajectoryHeight, @quality, @weaponCondition, @isSniper,
+    @mass, @caliber, @armorPierce, @magazineSize, @reloadApCost, @category,
+    @reqLevel, @reqStrength, @reqEndurance, @reqAccuracy, @reqMasteryCategory,
+    @statEffectStrength, @statEffectEndurance, @statEffectAccuracy,
+    @damageType, @damageMin, @damageMax, @burstRounds, @burstApCost);
+""";
+        command.Parameters.AddWithValue("code", d.Code.Trim().ToLowerInvariant());
+        command.Parameters.AddWithValue("name", d.Name.Trim());
+        command.Parameters.AddWithValue("damage", legacyDamage);
+        command.Parameters.AddWithValue("range", Math.Max(0, d.Range));
+        command.Parameters.AddWithValue("iconKey", ik);
+        command.Parameters.AddWithValue("attackApCost", ac);
+        command.Parameters.AddWithValue("spreadPenalty", sp);
+        command.Parameters.AddWithValue("trajectoryHeight", th);
+        command.Parameters.AddWithValue("quality", Math.Clamp(d.Quality, 0, 9999));
+        command.Parameters.AddWithValue("weaponCondition", Math.Clamp(d.WeaponCondition, 0, 9999));
+        command.Parameters.AddWithValue("isSniper", d.IsSniper);
+        command.Parameters.AddWithValue("mass", d.Mass);
+        command.Parameters.AddWithValue("caliber", d.Caliber ?? "");
+        command.Parameters.AddWithValue("armorPierce", d.ArmorPierce);
+        command.Parameters.AddWithValue("magazineSize", Math.Max(0, d.MagazineSize));
+        command.Parameters.AddWithValue("reloadApCost", Math.Max(0, d.ReloadApCost));
+        command.Parameters.AddWithValue("category", NormalizeCategory(d.Category));
+        command.Parameters.AddWithValue("reqLevel", Math.Max(0, d.ReqLevel));
+        command.Parameters.AddWithValue("reqStrength", d.ReqStrength);
+        command.Parameters.AddWithValue("reqEndurance", d.ReqEndurance);
+        command.Parameters.AddWithValue("reqAccuracy", d.ReqAccuracy);
+        command.Parameters.AddWithValue("reqMasteryCategory", d.ReqMasteryCategory ?? "");
+        command.Parameters.AddWithValue("statEffectStrength", d.StatEffectStrength);
+        command.Parameters.AddWithValue("statEffectEndurance", d.StatEffectEndurance);
+        command.Parameters.AddWithValue("statEffectAccuracy", d.StatEffectAccuracy);
+        command.Parameters.AddWithValue("damageType", string.IsNullOrWhiteSpace(d.DamageType) ? "physical" : d.DamageType.Trim());
+        command.Parameters.AddWithValue("damageMin", dMin);
+        command.Parameters.AddWithValue("damageMax", dMax);
+        command.Parameters.AddWithValue("burstRounds", Math.Max(0, d.BurstRounds));
+        command.Parameters.AddWithValue("burstApCost", Math.Max(0, d.BurstApCost));
+        command.ExecuteNonQuery();
+    }
+
+    /// <summary>SQL script: <c>BEGIN; TRUNCATE; INSERT...; COMMIT;</c> — same shape as <see cref="ImportWeaponsSqlScript"/> expects.</summary>
+    public string BuildWeaponsSqlExportScript()
+    {
+        var rows = ListWeapons(500);
+        var sb = new StringBuilder();
+        sb.AppendLine("-- Hope weapons table export (TRUNCATE + INSERT). Execute on the same schema.");
+        sb.AppendLine("BEGIN;");
+        sb.AppendLine("TRUNCATE TABLE weapons RESTART IDENTITY;");
+        foreach (var w in rows)
+        {
+            sb.Append("INSERT INTO weapons (");
+            sb.Append("code, name, damage, range, icon_key, attack_ap_cost, spread_penalty, trajectory_height, quality, weapon_condition, is_sniper, ");
+            sb.Append("mass, caliber, armor_pierce, magazine_size, reload_ap_cost, category, ");
+            sb.Append("req_level, req_strength, req_endurance, req_accuracy, req_mastery_category, ");
+            sb.Append("stat_effect_strength, stat_effect_endurance, stat_effect_accuracy, ");
+            sb.Append("damage_type, damage_min, damage_max, burst_rounds, burst_ap_cost) VALUES (");
+            sb.Append(SqlString(w.Code)).Append(", ");
+            sb.Append(SqlString(w.Name)).Append(", ");
+            sb.Append(w.DamageMax.ToString(CultureInfo.InvariantCulture)).Append(", ");
+            sb.Append(w.Range.ToString(CultureInfo.InvariantCulture)).Append(", ");
+            sb.Append(SqlString(w.IconKey)).Append(", ");
+            sb.Append(w.AttackApCost.ToString(CultureInfo.InvariantCulture)).Append(", ");
+            sb.Append(w.SpreadPenalty.ToString(CultureInfo.InvariantCulture)).Append(", ");
+            sb.Append(w.TrajectoryHeight.ToString(CultureInfo.InvariantCulture)).Append(", ");
+            sb.Append(w.Quality.ToString(CultureInfo.InvariantCulture)).Append(", ");
+            sb.Append(w.WeaponCondition.ToString(CultureInfo.InvariantCulture)).Append(", ");
+            sb.Append(w.IsSniper ? "TRUE" : "FALSE").Append(", ");
+            sb.Append(w.Mass.ToString(CultureInfo.InvariantCulture)).Append(", ");
+            sb.Append(SqlString(w.Caliber)).Append(", ");
+            sb.Append(w.ArmorPierce.ToString(CultureInfo.InvariantCulture)).Append(", ");
+            sb.Append(w.MagazineSize.ToString(CultureInfo.InvariantCulture)).Append(", ");
+            sb.Append(w.ReloadApCost.ToString(CultureInfo.InvariantCulture)).Append(", ");
+            sb.Append(SqlString(w.Category)).Append(", ");
+            sb.Append(w.ReqLevel.ToString(CultureInfo.InvariantCulture)).Append(", ");
+            sb.Append(w.ReqStrength.ToString(CultureInfo.InvariantCulture)).Append(", ");
+            sb.Append(w.ReqEndurance.ToString(CultureInfo.InvariantCulture)).Append(", ");
+            sb.Append(w.ReqAccuracy.ToString(CultureInfo.InvariantCulture)).Append(", ");
+            sb.Append(SqlString(w.ReqMasteryCategory)).Append(", ");
+            sb.Append(w.StatEffectStrength.ToString(CultureInfo.InvariantCulture)).Append(", ");
+            sb.Append(w.StatEffectEndurance.ToString(CultureInfo.InvariantCulture)).Append(", ");
+            sb.Append(w.StatEffectAccuracy.ToString(CultureInfo.InvariantCulture)).Append(", ");
+            sb.Append(SqlString(w.DamageType)).Append(", ");
+            sb.Append(w.DamageMin.ToString(CultureInfo.InvariantCulture)).Append(", ");
+            sb.Append(w.DamageMax.ToString(CultureInfo.InvariantCulture)).Append(", ");
+            sb.Append(w.BurstRounds.ToString(CultureInfo.InvariantCulture)).Append(", ");
+            sb.Append(w.BurstApCost.ToString(CultureInfo.InvariantCulture));
+            sb.AppendLine(");");
+        }
+
+        sb.AppendLine("COMMIT;");
+        return sb.ToString();
+    }
+
+    private static string SqlString(string? s)
+    {
+        string t = s ?? "";
+        return "'" + t.Replace("'", "''", StringComparison.Ordinal) + "'";
+    }
+
+    /// <summary>Runs a script produced by this admin UI / <see cref="BuildWeaponsSqlExportScript"/> (BEGIN … COMMIT).</summary>
+    public void ImportWeaponsSqlScript(string sql)
+    {
+        if (string.IsNullOrWhiteSpace(sql))
+            throw new ArgumentException("SQL script is empty.", nameof(sql));
+
+        using var connection = _database.DataSource.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = sql.Trim();
         command.ExecuteNonQuery();
     }
 }

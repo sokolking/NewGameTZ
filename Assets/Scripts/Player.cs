@@ -19,7 +19,6 @@ public class Player : MonoBehaviour
 
     [Header("Movement")]
     [SerializeField] private float _moveDurationPerHex = 0.2f;
-    private PlayerCharacterAnimator _characterAnimator;
     private Animator _animator;
     private HexGridCamera _hexGridCamera;
     private Renderer[] _cachedRenderers;
@@ -221,7 +220,6 @@ public class Player : MonoBehaviour
         _turnTimeExpired = false;
         _turnPath = new List<(int col, int row)>();
         _turnActions = new List<BattleQueuedAction>();
-        _characterAnimator = GetComponentInChildren<PlayerCharacterAnimator>();
         _animator = GetComponentInChildren<Animator>();
         _hexGridCamera = FindFirstObjectByType<HexGridCamera>();
     }
@@ -370,31 +368,11 @@ public class Player : MonoBehaviour
             if (step.col == _currentCol && step.row == _currentRow)
                 continue;
 
-            if (_characterAnimator == null)
-                _characterAnimator = GetComponentInChildren<PlayerCharacterAnimator>();
-            _characterAnimator?.NotifyHexStepStarted(_moveDurationPerHex);
-
             Vector3 target = _grid.GetCellWorldPosition(step.col, step.row);
-            Vector3 stepStart = transform.position;
-            float elapsed = 0f;
-
-            while (elapsed < _moveDurationPerHex)
-            {
-                if (interruptVersion != _movementInterruptVersion || IsDead || _isHidden)
-                {
-                    _isMoving = false;
-                    yield break;
-                }
-
-                elapsed += Time.deltaTime;
-                float t = Mathf.Clamp01(elapsed / _moveDurationPerHex);
-                transform.position = Vector3.Lerp(stepStart, target, t);
-                yield return null;
-            }
-
+            transform.position = target;
             _currentCol = step.col;
             _currentRow = step.row;
-            transform.position = target;
+            yield return null;
         }
 
         if (_grid != null)
@@ -925,9 +903,8 @@ public class Player : MonoBehaviour
 
     /// <summary>Проиграть анимацию движения по пути с сервера (actualPath). Запускать после ApplyServerTurnResult. Не меняет состояние.</summary>
     /// <param name="driveCamera">Если true — при старте включается слежение 3-го лица (только по явному вызову; <see cref="GameSession"/> для серверных анимаций передаёт false).</param>
-    /// <param name="resetHexWalkPhase">Если true — сбросить чередование фазы походки перед первым шагом (полный путь с сервера). False — следующий сегмент в журнале executedActions.</param>
-    /// <param name="clearMovementStateWhenDone">Если false — не сбрасывать <see cref="IsMoving"/> по завершении (следующий MoveStep того же юнита в журнале). Иначе аниматор на кадр уходит в idle и ломает плавность как при планировании.</param>
-    public IEnumerator PlayPathAnimation(HexPosition[] path, bool driveCamera = true, bool resetHexWalkPhase = true, bool clearMovementStateWhenDone = true)
+    /// <param name="clearMovementStateWhenDone">Если false — не сбрасывать <see cref="IsMoving"/> по завершении (следующий MoveStep того же юнита в журнале).</param>
+    public IEnumerator PlayPathAnimation(HexPosition[] path, bool driveCamera = true, bool clearMovementStateWhenDone = true)
     {
         if (_grid == null || path == null || path.Length < 2)
         {
@@ -952,10 +929,6 @@ public class Player : MonoBehaviour
         int interruptVersion = _movementInterruptVersion;
         _isMoving = true;
         transform.position = _grid.GetCellWorldPosition(path[0].col, path[0].row);
-        if (resetHexWalkPhase)
-        {
-            _characterAnimator?.ResetHexWalkPhaseForNewPath();
-        }
         bool enteredThirdPerson = false;
         if (driveCamera && hexCam != null)
         {
@@ -975,30 +948,15 @@ public class Player : MonoBehaviour
                 }
 
                 var step = path[i];
-                _characterAnimator?.NotifyHexStepStarted(_moveDurationPerHex);
-
                 Vector3 target = _grid.GetCellWorldPosition(step.col, step.row);
-                Vector3 stepStart = transform.position;
-                float elapsed = 0f;
-
-                while (elapsed < _moveDurationPerHex)
-                {
-                    if (interruptVersion != _movementInterruptVersion || IsDead || _isHidden)
-                    {
-                        interrupted = true;
-                        break;
-                    }
-
-                    elapsed += Time.deltaTime;
-                    float t = Mathf.Clamp01(elapsed / _moveDurationPerHex);
-                    transform.position = Vector3.Lerp(stepStart, target, t);
-                    yield return null;
-                }
-
-                if (interrupted)
-                    break;
-
                 transform.position = target;
+                yield return null;
+
+                if (interruptVersion != _movementInterruptVersion || IsDead || _isHidden)
+                {
+                    interrupted = true;
+                    break;
+                }
             }
         }
         finally
@@ -1030,28 +988,15 @@ public class Player : MonoBehaviour
         // Стартуем с исходной клетки хода.
         Vector3 startPos = _grid.GetCellWorldPosition(_turnPath[0].col, _turnPath[0].row);
         transform.position = startPos;
-        _characterAnimator?.ResetHexWalkPhaseForNewPath();
 
         try
         {
             for (int i = 1; i < _turnPath.Count; i++)
             {
                 var step = _turnPath[i];
-                _characterAnimator?.NotifyHexStepStarted(_moveDurationPerHex);
-
                 Vector3 target = _grid.GetCellWorldPosition(step.col, step.row);
-                Vector3 stepStart = transform.position;
-                float elapsed = 0f;
-
-                while (elapsed < _moveDurationPerHex)
-                {
-                    elapsed += Time.deltaTime;
-                    float t = Mathf.Clamp01(elapsed / _moveDurationPerHex);
-                    transform.position = Vector3.Lerp(stepStart, target, t);
-                    yield return null;
-                }
-
                 transform.position = target;
+                yield return null;
             }
 
             _isMoving = false;

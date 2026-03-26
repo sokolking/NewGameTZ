@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 
 namespace BattleServer.Models;
@@ -120,6 +121,13 @@ public class BattleWeaponBrowseRowDto
     public int BurstRounds { get; set; }
     /// <summary>Очередь: стоимость в ОД.</summary>
     public int BurstApCost { get; set; }
+}
+
+/// <summary>Distinct <c>damage_type</c> / <c>category</c> values for weapons admin UI.</summary>
+public sealed class BattleWeaponMetaDto
+{
+    public IReadOnlyList<string> DamageTypes { get; set; } = Array.Empty<string>();
+    public IReadOnlyList<string> Categories { get; set; } = Array.Empty<string>();
 }
 
 /// <summary>Полная запись для upsert в <c>weapons</c>.</summary>

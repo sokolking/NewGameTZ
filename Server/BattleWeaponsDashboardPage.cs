@@ -20,8 +20,8 @@ public static class BattleWeaponsDashboardPage
     table { border-collapse: collapse; margin-top: 10px; font-size: 11px; }
     th, td { border-bottom: 1px solid #2b3140; text-align: left; padding: 4px 5px; vertical-align: middle; white-space: nowrap; }
     th { position: sticky; top: 0; background: #171a22; z-index: 1; font-weight: 600; color: #b8c4d9; }
-    table input[type="text"], table input[type="number"] { min-width: 52px; max-width: 96px; width: 100%; box-sizing: border-box; }
-    table input.w-wide { max-width: 120px; }
+    table input[type="text"], table input[type="number"], table select { min-width: 52px; max-width: 96px; width: 100%; box-sizing: border-box; }
+    table input.w-wide, table select.w-wide { max-width: 140px; }
     .scroll { overflow-x: auto; max-width: 100%; }
     .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 8px; }
     .status { color: #9aa4b2; font-size: 13px; margin-top: 8px; }
@@ -39,12 +39,17 @@ public static class BattleWeaponsDashboardPage
     </div>
     <div class="panel">
       <h3>Create / update weapon</h3>
-      <p class="hint">PostgreSQL via <code>POST /api/db/weapons</code>. Legacy field <code>damage</code> maps from <code>damageMin</code>/<code>damageMax</code> when max is unset. Restart the server to apply <code>EnsureCreated</code> migrations.</p>
+      <p class="hint">Row <strong>Save</strong> uses <code>POST /api/db/weapons</code>. <strong>Save table to DB</strong> calls <code>PUT /api/db/weapons/replace</code> (truncates <code>weapons</code> and inserts all visible rows — the set must include <code>fist</code>). <strong>Download SQL</strong> / import: <code>GET/POST /api/db/weapons/sql-export|sql-import</code>. Damage type and category use dropdowns from distinct DB values (current cell value kept if not in list).</p>
       <div class="row" id="createBar">
         <input id="c_code" placeholder="code" />
         <input id="c_name" placeholder="name" />
         <button id="createSaveBtn" type="button">Save new</button>
         <button id="reloadBtn" type="button">Reload table</button>
+        <button id="saveAllBtn" type="button">Save table to DB</button>
+        <button id="exportSqlBtn" type="button">Download SQL</button>
+        <label class="hint" style="display:inline-flex;align-items:center;gap:6px;">Import SQL
+          <input id="importSqlInput" type="file" accept=".sql,text/plain,.txt" style="max-width:200px;" />
+        </label>
       </div>
       <div class="row" id="createFields" style="max-height:220px;overflow-y:auto;padding:4px;border:1px solid #2b3140;border-radius:8px;margin-top:8px;"></div>
     </div>
@@ -65,13 +70,22 @@ public static class BattleWeaponsDashboardPage
     const statusEl = document.getElementById('status');
     const createFields = document.getElementById('createFields');
 
+    const WEAPON_CATEGORY_LABELS = {
+      cold: 'Холодное',
+      light: 'Легкое',
+      medium: 'Среднее',
+      heavy: 'Тяжелое',
+      throwing: 'Метательное',
+      medicine: 'Медицина'
+    };
+
     const COLS = [
       { k: 'id', label: 'id', ro: true, type: 'text' },
       { k: 'code', label: 'code', ro: true, type: 'text' },
       { k: 'name', label: 'name', type: 'text', wide: true },
       { k: 'damageMin', label: 'dmg↓', title: 'Damage min' },
       { k: 'damageMax', label: 'dmg↑', title: 'Damage max' },
-      { k: 'damageType', label: 'dmg type', title: 'Damage type', type: 'text', wide: true },
+      { k: 'damageType', label: 'dmg type', title: 'Damage type', type: 'selectMeta', metaList: 'damageTypes', wide: true },
       { k: 'range', label: 'range', title: 'Range (hexes)' },
       { k: 'attackApCost', label: 'AP shot', title: 'Single shot AP cost' },
       { k: 'burstRounds', label: 'burst N', title: 'Burst: rounds per use' },
@@ -85,7 +99,7 @@ public static class BattleWeaponsDashboardPage
       { k: 'armorPierce', label: 'AP', title: 'Armor pierce' },
       { k: 'magazineSize', label: 'mag', title: 'Magazine size' },
       { k: 'reloadApCost', label: 'reload', title: 'Reload AP cost' },
-      { k: 'category', label: 'cat', title: 'Weapon category', type: 'text', wide: true },
+      { k: 'category', label: 'cat', title: 'Weapon category', type: 'selectMeta', metaList: 'categories', wide: true, optionLabels: WEAPON_CATEGORY_LABELS },
       { k: 'reqLevel', label: 'req Lv', title: 'Required level' },
       { k: 'reqStrength', label: 'req Str', title: 'Required strength' },
       { k: 'reqEndurance', label: 'req End', title: 'Required endurance' },
@@ -96,8 +110,37 @@ public static class BattleWeaponsDashboardPage
       { k: 'statEffectAccuracy', label: 'ΔAcc', title: 'Stat effect accuracy' },
       { k: 'isSniper', label: 'snp', title: 'Sniper range curve (p)', type: 'cb' },
       { k: 'iconKey', label: 'icon', title: 'icon_key', type: 'text' },
+      { k: '_del', label: '', type: 'del' },
       { k: '_save', label: '', type: 'btn' }
     ];
+
+    let metaDamageTypes = [];
+    let metaCategories = [];
+
+    async function refreshMeta() {
+      const resp = await fetch('/api/db/weapons/meta', { cache: 'no-store' });
+      const m = await resp.json();
+      metaDamageTypes = Array.isArray(m.damageTypes) ? m.damageTypes : [];
+      metaCategories = Array.isArray(m.categories) ? m.categories : [];
+    }
+
+    function optionsForMeta(metaList, current) {
+      const base = metaList === 'damageTypes' ? metaDamageTypes : metaCategories;
+      const set = new Set(base.map(String));
+      if (current != null && String(current) !== '') set.add(String(current));
+      return [...set].sort((a, b) => a.localeCompare(b));
+    }
+
+    function fillSelect(sel, metaList, current, optionLabels) {
+      sel.innerHTML = '';
+      for (const v of optionsForMeta(metaList, current)) {
+        const o = document.createElement('option');
+        o.value = v;
+        o.textContent = (optionLabels && optionLabels[v]) ? optionLabels[v] : v;
+        if (String(current) === v) o.selected = true;
+        sel.appendChild(o);
+      }
+    }
 
     function numOr(v, d) {
       const n = parseInt(v, 10);
@@ -116,6 +159,26 @@ public static class BattleWeaponsDashboardPage
     }
 
     function inputFor(c, value, readOnly) {
+      if (c.type === 'selectMeta') {
+        const td = document.createElement('td');
+        const sel = document.createElement('select');
+        sel.setAttribute('data-field', c.k);
+        if (readOnly || c.ro) sel.disabled = true;
+        if (c.wide) sel.className = 'w-wide';
+        sel.title = c.title || '';
+        fillSelect(sel, c.metaList, value != null && value !== '' ? value : (c.k === 'damageType' ? 'physical' : 'cold'));
+        td.appendChild(sel);
+        return td;
+      }
+      if (c.type === 'del') {
+        const td = document.createElement('td');
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.textContent = 'Delete';
+        b.addEventListener('click', (ev) => deleteRow(ev.currentTarget.closest('tr')));
+        td.appendChild(b);
+        return td;
+      }
       if (c.type === 'cb') {
         const td = document.createElement('td');
         const cb = document.createElement('input');
@@ -165,7 +228,7 @@ public static class BattleWeaponsDashboardPage
     function buildCreatePanel() {
       createFields.innerHTML = '';
       const frag = document.createDocumentFragment();
-      COLS.filter(c => !c.ro && c.k !== '_save').forEach(c => {
+      COLS.filter(c => !c.ro && c.k !== '_save' && c.k !== '_del').forEach(c => {
         const lab = document.createElement('label');
         lab.style.marginRight = '10px';
         lab.style.display = 'inline-flex';
@@ -180,6 +243,13 @@ public static class BattleWeaponsDashboardPage
           cb.type = 'checkbox';
           cb.setAttribute('data-field', c.k);
           lab.appendChild(cb);
+        } else if (c.type === 'selectMeta') {
+          const sel = document.createElement('select');
+          sel.setAttribute('data-field', c.k);
+          const def = c.k === 'damageType' ? 'physical' : 'cold';
+          fillSelect(sel, c.metaList, def, c.optionLabels);
+          sel.style.width = c.wide ? '100px' : '72px';
+          lab.appendChild(sel);
         } else {
           const i = document.createElement('input');
           i.type = c.type === 'text' ? 'text' : 'number';
@@ -203,7 +273,8 @@ public static class BattleWeaponsDashboardPage
       const o = {};
       root.querySelectorAll('[data-field]').forEach(el => {
         const k = el.getAttribute('data-field');
-        if (el.type === 'checkbox') o[k] = !!el.checked;
+        if (el.tagName === 'SELECT') o[k] = (el.value || '').trim();
+        else if (el.type === 'checkbox') o[k] = !!el.checked;
         else if (el.type === 'number') {
           if (k === 'spreadPenalty' || k === 'mass') o[k] = floatOr(el.value, 0);
           else o[k] = numOr(el.value, 0);
@@ -240,11 +311,69 @@ public static class BattleWeaponsDashboardPage
       await load();
     }
 
+    async function deleteRow(tr) {
+      if (!tr || !tr.dataset.code) return;
+      const code = tr.dataset.code;
+      if (!confirm('Delete weapon "' + code + '"?')) return;
+      statusEl.textContent = 'deleting ' + code + '...';
+      const resp = await fetch('/api/db/weapons/' + encodeURIComponent(code), { method: 'DELETE' });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        statusEl.textContent = 'delete failed: ' + (err.error || resp.status);
+        return;
+      }
+      statusEl.textContent = 'deleted: ' + code;
+      await load();
+    }
+
+    async function saveAllTable() {
+      const trs = [...rowsEl.querySelectorAll('tr')];
+      const payloads = trs.map(tr => weaponPayloadFromRow(tr));
+      if (!payloads.some(p => String(p.code || '').toLowerCase() === 'fist')) {
+        statusEl.textContent = 'Cannot replace: table must include weapon code "fist".';
+        return;
+      }
+      statusEl.textContent = 'replacing DB with ' + payloads.length + ' rows...';
+      const resp = await fetch('/api/db/weapons/replace', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payloads)
+      });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        statusEl.textContent = 'replace failed: ' + (err.error || resp.status);
+        return;
+      }
+      statusEl.textContent = 'table saved (' + payloads.length + ' weapons)';
+      await load();
+    }
+
+    async function exportSql() {
+      statusEl.textContent = 'downloading SQL...';
+      const resp = await fetch('/api/db/weapons/sql-export', { cache: 'no-store' });
+      if (!resp.ok) {
+        statusEl.textContent = 'export failed: ' + resp.status;
+        return;
+      }
+      const text = await resp.text();
+      const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'weapons-export.sql';
+      a.click();
+      URL.revokeObjectURL(a.href);
+      statusEl.textContent = 'SQL downloaded';
+    }
+
     function rowFromWeapon(w) {
       const tr = document.createElement('tr');
       tr.dataset.code = w.code;
       COLS.forEach(c => {
         if (c.k === '_save') {
+          tr.appendChild(inputFor(c, null, false));
+          return;
+        }
+        if (c.k === '_del') {
           tr.appendChild(inputFor(c, null, false));
           return;
         }
@@ -257,14 +386,38 @@ public static class BattleWeaponsDashboardPage
 
     async function load() {
       statusEl.textContent = 'loading...';
-      const resp = await fetch('/api/db/weapons?take=200', { cache: 'no-store' });
+      await refreshMeta();
+      buildCreatePanel();
+      const resp = await fetch('/api/db/weapons?take=500', { cache: 'no-store' });
       const list = await resp.json();
       rowsEl.innerHTML = '';
       for (const w of list) rowsEl.appendChild(rowFromWeapon(w));
-      statusEl.textContent = `loaded ${list.length} weapons`;
+      statusEl.textContent = 'loaded ' + list.length + ' weapons';
     }
 
     document.getElementById('reloadBtn').addEventListener('click', () => load());
+    document.getElementById('saveAllBtn').addEventListener('click', () => saveAllTable());
+    document.getElementById('exportSqlBtn').addEventListener('click', () => exportSql());
+    document.getElementById('importSqlInput').addEventListener('change', async (e) => {
+      const input = e.target;
+      const f = input.files && input.files[0];
+      if (!f) return;
+      const text = await f.text();
+      statusEl.textContent = 'importing SQL...';
+      const resp = await fetch('/api/db/weapons/sql-import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: text
+      });
+      input.value = '';
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        statusEl.textContent = 'import failed: ' + (err.error || resp.status);
+        return;
+      }
+      statusEl.textContent = 'SQL import OK';
+      await load();
+    });
 
     document.getElementById('createSaveBtn').addEventListener('click', async () => {
       const code = (document.getElementById('c_code').value || '').trim();
