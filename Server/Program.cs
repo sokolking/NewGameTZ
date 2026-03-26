@@ -106,9 +106,11 @@ builder.Services.AddSingleton<BattlePostgresDatabase>();
 builder.Services.AddSingleton<BattleHistoryDatabase>();
 builder.Services.AddSingleton<BattleTurnDatabase>();
 builder.Services.AddSingleton<BattleWeaponDatabase>();
+builder.Services.AddSingleton<BattleAmmoDatabase>();
 builder.Services.AddSingleton(sp => new BattleUserDatabase(
     sp.GetRequiredService<BattlePostgresDatabase>(),
-    sp.GetRequiredService<BattleWeaponDatabase>()));
+    sp.GetRequiredService<BattleWeaponDatabase>(),
+    sp.GetRequiredService<BattleAmmoDatabase>()));
 builder.Services.AddSingleton<BattleObstacleBalanceDatabase>();
 builder.Services.AddSingleton<BattleBodyPartDatabase>();
 builder.Services.AddSingleton<BattleRoomStore>(sp => new BattleRoomStore(
@@ -392,7 +394,7 @@ app.MapGet("/api/battle/{battleId}", (string battleId, BattleRoomStore s) =>
     if (room == null) return Results.Json(new { error = "Battle not found" }, statusCode: 404);
     var battleRecord = battleHistoryDb.GetBattle(battleId);
 
-    room.FillSpawnArrays(out var spawnIds, out var spawnCols, out var spawnRows, out var spawnCurrentAps, out var spawnMaxAps, out var spawnMaxHps, out var spawnCurrentHps, out var spawnCurrentPostures, out var spawnWeaponCodes, out var spawnWeaponDamageMins, out var spawnWeaponDamages, out var spawnWeaponRanges, out var spawnWeaponAttackApCosts, out var spawnWeaponTightnesses, out var spawnWeaponTrajectoryHeights, out var spawnWeaponIsSnipers, out var spawnDisplayNames, out var spawnLevels);
+    room.FillSpawnArrays(out var spawnIds, out var spawnCols, out var spawnRows, out var spawnCurrentAps, out var spawnMaxAps, out var spawnMaxHps, out var spawnCurrentHps, out var spawnCurrentPostures, out var spawnWeaponCodes, out var spawnWeaponDamageMins, out var spawnWeaponDamages, out var spawnWeaponRanges, out var spawnWeaponAttackApCosts, out var spawnCurrentMagazineRounds, out var spawnWeaponTightnesses, out var spawnWeaponTrajectoryHeights, out var spawnWeaponIsSnipers, out var spawnDisplayNames, out var spawnLevels);
     var response = new BattleStateResponse
     {
         RoundIndex = room.RoundIndex,
@@ -417,6 +419,7 @@ app.MapGet("/api/battle/{battleId}", (string battleId, BattleRoomStore s) =>
         SpawnWeaponDamages = spawnWeaponDamages,
         SpawnWeaponRanges = spawnWeaponRanges,
         SpawnWeaponAttackApCosts = spawnWeaponAttackApCosts,
+        SpawnCurrentMagazineRounds = spawnCurrentMagazineRounds,
         SpawnWeaponTightnesses = spawnWeaponTightnesses,
         SpawnWeaponTrajectoryHeights = spawnWeaponTrajectoryHeights,
         SpawnWeaponIsSnipers = spawnWeaponIsSnipers,
@@ -517,6 +520,32 @@ app.MapPut("/api/db/users/{userId:long}/inventory", async (long userId, BattleUs
     return Results.Ok(new { ok = true });
 });
 
+app.MapGet("/api/db/users/{userId:long}/ammo", (long userId, BattleUserDatabase users) =>
+{
+    if (!users.TryGetAmmoPacksForAdmin(userId, out var items, out var error))
+        return Results.Json(new { error = error ?? "not found" }, jsonOpt, statusCode: 404);
+    return Results.Json(new { items }, jsonOpt);
+});
+
+app.MapPut("/api/db/users/{userId:long}/ammo", async (long userId, BattleUserDatabase users, HttpContext ctx) =>
+{
+    UserAmmoReplaceHttpBody? body;
+    try
+    {
+        body = await JsonSerializer.DeserializeAsync<UserAmmoReplaceHttpBody>(ctx.Request.Body, jsonOpt);
+    }
+    catch
+    {
+        return Results.Json(new { error = "invalid JSON" }, jsonOpt, statusCode: 400);
+    }
+
+    if (body?.Items == null)
+        return Results.Json(new { error = "items array required" }, jsonOpt, statusCode: 400);
+    if (!users.TryReplaceUserAmmoPacks(userId, body.Items, out var err))
+        return Results.Json(new { error = err ?? "replace failed" }, jsonOpt, statusCode: 400);
+    return Results.Ok(new { ok = true });
+});
+
 app.MapPost("/api/db/user/inventory", (BattleUserDatabase users, UserInventoryAuthRequest? body) =>
 {
     if (body == null || string.IsNullOrWhiteSpace(body.username))
@@ -524,6 +553,15 @@ app.MapPost("/api/db/user/inventory", (BattleUserDatabase users, UserInventoryAu
     if (!users.TryGetInventory(body.username.Trim(), body.password ?? "", out var slots))
         return Results.Json(new { error = "Invalid credentials" }, jsonOpt, statusCode: 401);
     return Results.Json(new { slots }, jsonOpt);
+});
+
+app.MapPost("/api/db/user/ammo", (BattleUserDatabase users, UserInventoryAuthRequest? body) =>
+{
+    if (body == null || string.IsNullOrWhiteSpace(body.username))
+        return Results.Json(new { error = "username required" }, jsonOpt, statusCode: 400);
+    if (!users.TryGetAmmoPacks(body.username.Trim(), body.password ?? "", out var items))
+        return Results.Json(new { error = "Invalid credentials" }, jsonOpt, statusCode: 401);
+    return Results.Json(new { items }, jsonOpt);
 });
 
 app.MapPost("/api/db/user/profile", (BattleUserDatabase users, UserInventoryAuthRequest? body) =>
@@ -552,6 +590,21 @@ app.MapGet("/api/db/weapons", (BattleWeaponDatabase db, int? take) =>
 
 app.MapGet("/api/db/weapons/meta", (BattleWeaponDatabase db) =>
     Results.Json(db.GetWeaponMeta(), jsonOpt));
+
+app.MapGet("/api/db/ammo", (BattleAmmoDatabase db, int? take) =>
+{
+    int requested = take ?? 200;
+    return Results.Json(db.ListAmmoTypes(requested), jsonOpt);
+});
+
+app.MapPost("/api/db/ammo", (BattleAmmoDatabase db, AmmoTypeUpsertRequest? body) =>
+{
+    if (body == null)
+        return Results.Json(new { error = "request body required" }, jsonOpt, statusCode: 400);
+    if (!db.TryUpsertAmmoType(body, out var err))
+        return Results.Json(new { error = err ?? "upsert failed" }, jsonOpt, statusCode: 400);
+    return Results.Ok(new { ok = true });
+});
 
 app.MapDelete("/api/db/weapons/{code}", (string code, BattleWeaponDatabase db) =>
 {
@@ -772,6 +825,7 @@ public class BattleStateResponse
     public int[]? SpawnWeaponDamages { get; set; }
     public int[]? SpawnWeaponRanges { get; set; }
     public int[]? SpawnWeaponAttackApCosts { get; set; }
+    public int[]? SpawnCurrentMagazineRounds { get; set; }
     public double[]? SpawnWeaponTightnesses { get; set; }
     public int[]? SpawnWeaponTrajectoryHeights { get; set; }
     public bool[]? SpawnWeaponIsSnipers { get; set; }

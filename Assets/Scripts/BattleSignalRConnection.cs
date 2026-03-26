@@ -153,6 +153,7 @@ public class BattleSignalRConnection : MonoBehaviour
                 battleId = _battleId,
                 playerId = _playerId,
                 roundIndex = p.roundIndex,
+                currentMagazineRounds = p.currentMagazineRounds,
                 actions = p.actions
             };
             var json = JsonUtility.ToJson(msg);
@@ -305,7 +306,7 @@ public class BattleSignalRConnection : MonoBehaviour
         try
         {
             // JsonUtility не заполняет вложенные массивы/объекты в turnResult (executedActions и т.д.).
-            push = JsonConvert.DeserializeObject<BattleRoundWsPush>(json);
+            push = JsonConvert.DeserializeObject<BattleRoundWsPush>(json, HopeBattleJson.DeserializeSettings);
         }
         catch (Exception ex)
         {

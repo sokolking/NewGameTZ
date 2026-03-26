@@ -48,6 +48,15 @@ CREATE INDEX IF NOT EXISTS ix_user_inventory_items_user_id ON user_inventory_ite
 CREATE UNIQUE INDEX IF NOT EXISTS uq_user_inv_user_weapon_lower
     ON user_inventory_items (user_id, lower(weapon_code));
 
+CREATE TABLE IF NOT EXISTS ammo_types (
+    id BIGSERIAL PRIMARY KEY,
+    caliber TEXT NOT NULL UNIQUE,
+    unit_weight DOUBLE PRECISION NOT NULL DEFAULT 0,
+    rounds_per_pack INT NOT NULL DEFAULT 1,
+    CONSTRAINT chk_ammo_types_unit_weight CHECK (unit_weight >= 0),
+    CONSTRAINT chk_ammo_types_rounds_per_pack CHECK (rounds_per_pack > 0)
+);
+
 CREATE TABLE IF NOT EXISTS battles (
     battle_id TEXT PRIMARY KEY,
     created_utc TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -92,6 +101,24 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS accuracy INT NOT NULL DEFAULT 10;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS intuition INT NOT NULL DEFAULT 0;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS intellect INT NOT NULL DEFAULT 0;
 ALTER TABLE users DROP COLUMN IF EXISTS weapon_code;
+
+CREATE TABLE IF NOT EXISTS user_ammo_packs (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    ammo_type_id BIGINT NOT NULL REFERENCES ammo_types(id) ON DELETE RESTRICT,
+    packs_count INT NOT NULL DEFAULT 0,
+    rounds_count INT NOT NULL DEFAULT 0,
+    CONSTRAINT chk_user_ammo_packs_count CHECK (packs_count >= 0),
+    CONSTRAINT uq_user_ammo_type UNIQUE (user_id, ammo_type_id)
+);
+
+CREATE INDEX IF NOT EXISTS ix_user_ammo_packs_user_id ON user_ammo_packs (user_id);
+ALTER TABLE user_ammo_packs ADD COLUMN IF NOT EXISTS rounds_count INT NOT NULL DEFAULT 0;
+UPDATE user_ammo_packs uap
+SET rounds_count = GREATEST(0, uap.packs_count) * GREATEST(0, at.rounds_per_pack)
+FROM ammo_types at
+WHERE at.id = uap.ammo_type_id
+  AND (uap.rounds_count IS NULL OR uap.rounds_count = 0);
 
 INSERT INTO users (username, password, experience, strength, endurance, accuracy, max_hp, max_ap)
 VALUES
@@ -184,11 +211,29 @@ UPDATE weapons SET inventory_slot_width = 1 WHERE inventory_slot_width IS NULL O
 UPDATE weapons SET damage_min = GREATEST(0, damage), damage_max = GREATEST(0, damage), damage = GREATEST(0, damage)
 WHERE damage > 1 AND damage_min = 1 AND damage_max = 1;
 
+CREATE TABLE IF NOT EXISTS hope_schema_migrations (id TEXT PRIMARY KEY);
+WITH ins AS (
+  INSERT INTO hope_schema_migrations (id) VALUES ('weapons_spread_column_is_tightness_v1')
+  ON CONFLICT (id) DO NOTHING
+  RETURNING 1
+)
+UPDATE weapons AS w
+SET spread_penalty = GREATEST(0.0::real, LEAST(1.0::real, (1.0::real - w.spread_penalty)))
+FROM ins
+WHERE (SELECT COUNT(*) FROM weapons) >= 1;
+ALTER TABLE weapons ALTER COLUMN spread_penalty SET DEFAULT 1.0;
+
 INSERT INTO weapons (code, name, damage, range, icon_key, attack_ap_cost, spread_penalty, trajectory_height, quality, weapon_condition, is_sniper,
     mass, caliber, armor_pierce, magazine_size, reload_ap_cost, category, req_level, damage_type, damage_min, damage_max)
-VALUES ('fist', 'Fist', 1, 1, 'fist', 3, 0, 1, 100, 100, FALSE,
+VALUES ('fist', 'Fist', 1, 1, 'fist', 3, 1.0, 1, 100, 100, FALSE,
     0, '', 0, 0, 0, 'cold', 1, 'physical', 1, 1)
 ON CONFLICT (code) DO NOTHING;
+
+INSERT INTO ammo_types (caliber, unit_weight, rounds_per_pack)
+SELECT DISTINCT LOWER(TRIM(w.caliber)), 0.02, 30
+FROM weapons w
+WHERE TRIM(w.caliber) <> ''
+ON CONFLICT (caliber) DO NOTHING;
 
 CREATE TABLE IF NOT EXISTS body_parts (
     id SMALLINT PRIMARY KEY CHECK (id > 0),

@@ -52,6 +52,7 @@ public class ActionPointsUI : MonoBehaviour
 
     [Header("Online (server)")]
     [SerializeField] private GameSession _gameSession;
+    [SerializeField] private InventoryUI _inventoryUi;
 
     [Header("Round result wait")]
     [Tooltip("Full-screen panel: Image with Raycast Target, optional child Slider.")]
@@ -316,6 +317,8 @@ public class ActionPointsUI : MonoBehaviour
             TryEndTurn(animate: false);
         else if (Keyboard.current.eKey.wasPressedThisFrame)
             TryEndTurn(animate: true);
+        else if (Keyboard.current.rKey.wasPressedThisFrame)
+            TryQueueReload();
 
         if (_player.TurnTimeExpired)
         {
@@ -575,6 +578,19 @@ public class ActionPointsUI : MonoBehaviour
             StartCoroutine(EndTurnAnimated());
         else
             EndTurnImmediate();
+    }
+
+    private void TryQueueReload()
+    {
+        if (_player == null || _roundWaitVisible || IsModalDialogOpen)
+            return;
+        if (_gameSession != null && (_gameSession.IsWaitingForServerRoundResolve || _gameSession.IsBattleFinished))
+            return;
+        if (_inventoryUi == null)
+            _inventoryUi = FindFirstObjectByType<InventoryUI>();
+        int reloadCost = _inventoryUi != null ? _inventoryUi.GetCurrentWeaponReloadApCost() : 1;
+        if (!_player.QueueReloadAction(reloadCost))
+            AppendLog(Loc.T("ui.not_enough_ap"));
     }
 
     private bool IsOnlineSubmitFlow =>

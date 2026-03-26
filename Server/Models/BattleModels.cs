@@ -31,6 +31,7 @@ public class SubmitTurnPayloadDto
     public string BattleId { get; set; } = "";
     public string PlayerId { get; set; } = "";
     public int RoundIndex { get; set; }
+    public int CurrentMagazineRounds { get; set; }
     /// <summary>Идентификатор юнита, которым управляет игрок (опционально, для будущего PvE).</summary>
     public string? UnitId { get; set; }
     public QueuedBattleActionDto[]? Actions { get; set; }
@@ -58,6 +59,7 @@ public class QueuedBattleActionDto
     public int PreviousWeaponAttackApCost { get; set; }
     /// <summary>Для EquipWeapon: стоимость атаки нового оружия (клиент).</summary>
     public int WeaponAttackApCost { get; set; }
+    public int PreviousMagazineRounds { get; set; }
 }
 
 /// <summary>Баланс препятствий (таблица battle_obstacle_balance).</summary>
@@ -246,6 +248,7 @@ public class UnitStateDto
     public int WeaponRange { get; set; } = 1;
     /// <summary>Стоимость атаки (ОД), фиксированная логикой боя.</summary>
     public int WeaponAttackApCost { get; set; } = 1;
+    public int CurrentMagazineRounds { get; set; }
     /// <summary>Меткость: аддитивный бонус к p попадания (+2% за пункт после множителей дистанции и укрытия).</summary>
     public int Accuracy { get; set; } = 10;
     /// <summary>Кучность оружия <c>T</c> (0…1, выше — кучнее). В формуле попадания вычитается <c>clamp(1 − T, …)</c>. Колонка БД <c>spread_penalty</c> — историческое имя.</summary>
@@ -282,6 +285,7 @@ public class PlayerTurnResultDto
     public int WeaponRange { get; set; } = 1;
     /// <summary>Стоимость атаки (ОД), фиксированная логикой боя.</summary>
     public int WeaponAttackApCost { get; set; } = 1;
+    public int CurrentMagazineRounds { get; set; }
     public double WeaponTightness { get; set; } = 1.0;
     public int WeaponTrajectoryHeight { get; set; } = 1;
     public bool WeaponIsSniper { get; set; }
@@ -359,6 +363,7 @@ public class BattleStartedPayloadDto
     public int[]? SpawnWeaponDamageMins { get; set; }
     public int[]? SpawnWeaponRanges { get; set; }
     public int[]? SpawnWeaponAttackApCosts { get; set; }
+    public int[]? SpawnCurrentMagazineRounds { get; set; }
     public double[]? SpawnWeaponTightnesses { get; set; }
     public int[]? SpawnWeaponTrajectoryHeights { get; set; }
     public bool[]? SpawnWeaponIsSnipers { get; set; }
@@ -508,4 +513,44 @@ public sealed class UserInventoryItemReplaceDto
 public sealed class UserInventoryReplaceHttpBody
 {
     public List<UserInventoryItemReplaceDto> Items { get; set; } = new();
+}
+
+public sealed class AmmoTypeDto
+{
+    public long Id { get; set; }
+    public string Caliber { get; set; } = "";
+    public double UnitWeight { get; set; }
+    public int RoundsPerPack { get; set; } = 1;
+}
+
+public sealed class AmmoTypeUpsertRequest
+{
+    public string Caliber { get; set; } = "";
+    public double UnitWeight { get; set; }
+    public int RoundsPerPack { get; set; } = 1;
+}
+
+public sealed class UserAmmoPackAdminDto
+{
+    public long Id { get; set; }
+    public long AmmoTypeId { get; set; }
+    public string Caliber { get; set; } = "";
+    public double UnitWeight { get; set; }
+    public int RoundsPerPack { get; set; }
+    public int RoundsCount { get; set; }
+    public int PacksCount { get; set; }
+    public int TotalRounds { get; set; }
+}
+
+public sealed class UserAmmoPackReplaceDto
+{
+    public string Caliber { get; set; } = "";
+    public int RoundsCount { get; set; }
+    public int PacksCount { get; set; }
+    public int TotalRounds { get; set; }
+}
+
+public sealed class UserAmmoReplaceHttpBody
+{
+    public List<UserAmmoPackReplaceDto> Items { get; set; } = new();
 }

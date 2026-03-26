@@ -87,6 +87,10 @@ public static class UiHierarchyNames
     public const string ActiveItemPanel = "ActiveItemPanel";
     /// <summary>Дочерний объект с Image (внутри <see cref="ActiveItemPanel"/>).</summary>
     public const string ActiveItem = "ActiveItem";
+    /// <summary>Radial ammo donut around <see cref="ActiveItem"/>.</summary>
+    public const string ActiveItemAmmoDonut = "ActiveItemAmmoDonut";
+    /// <summary>Ammo text under/near donut.</summary>
+    public const string ActiveItemAmmoText = "ActiveItemAmmoText";
     /// <summary>Attack AP cost label; scene GameObject is still named with legacy typo <c>ItemAtionPointsCost</c>.</summary>
     public const string ItemActionPointsCost = "ItemAtionPointsCost";
     public const string InventoryCellImage = "InventoryCellImage";

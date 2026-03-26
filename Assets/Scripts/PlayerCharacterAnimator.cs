@@ -50,6 +50,14 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
     [SerializeField] private UnityEngine.Object _runPistol;
     [SerializeField] private UnityEngine.Object _sitPistol;
     [SerializeField] private UnityEngine.Object _dead;
+    [Header("Cold weapons (standing idle + melee swings; server category cold)")]
+    [Tooltip("Standing still with fist/knife etc. Walk/run keep generic locomotion clips.")]
+    [SerializeField] private UnityEngine.Object _idleCold;
+    [SerializeField] private UnityEngine.Object _attackColdHead;
+    [SerializeField] private UnityEngine.Object _attackColdBody;
+    [SerializeField] private UnityEngine.Object _attackColdLegs;
+    [Tooltip("Playback speed for cold melee attack clips (>1 = faster).")]
+    [SerializeField] [Range(0.5f, 4f)] private float _coldMeleeAttackPlaybackSpeed = 2f;
     [Header("Posture transitions (Walk/Run ↔ Sit/Hide)")]
     [Tooltip("Once when switching from walk or run to sit or hide.")]
     [SerializeField] private UnityEngine.Object _standToSit;
@@ -78,9 +86,16 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
     private AnimationClip _cachedClipRunPistol;
     private AnimationClip _cachedClipSitPistol;
     private AnimationClip _cachedClipDead;
+    private AnimationClip _cachedClipIdleCold;
+    private AnimationClip _cachedClipAttackColdHead;
+    private AnimationClip _cachedClipAttackColdBody;
+    private AnimationClip _cachedClipAttackColdLegs;
     private AnimationClip _cachedClipStandToSit;
     private AnimationClip _cachedClipSitToStand;
     private bool _clipsCached;
+
+    /// <summary>Blocks locomotion graph swaps while a one-shot melee clip plays.</summary>
+    private bool _meleeAttackActive;
 
     private MovementPosture _previousPostureTracked;
     private Coroutine _postureTransitionCoroutine;
@@ -90,6 +105,7 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
     private AnimationClip _resolvedClipCache;
     private bool _resolvedClipDirty = true;
     private bool _lastArmed;
+    private bool _lastColdIdle;
     private MovementPosture _lastPosture;
     private bool _lastMoving;
 
@@ -106,6 +122,10 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
     private AnimationClip ClipDead { get { if (!_clipsCached) CacheClipReferences(); return _cachedClipDead; } }
     private AnimationClip ClipStandToSit { get { if (!_clipsCached) CacheClipReferences(); return _cachedClipStandToSit; } }
     private AnimationClip ClipSitToStand { get { if (!_clipsCached) CacheClipReferences(); return _cachedClipSitToStand; } }
+    private AnimationClip ClipIdleCold { get { if (!_clipsCached) CacheClipReferences(); return _cachedClipIdleCold; } }
+    private AnimationClip ClipAttackColdHead { get { if (!_clipsCached) CacheClipReferences(); return _cachedClipAttackColdHead; } }
+    private AnimationClip ClipAttackColdBody { get { if (!_clipsCached) CacheClipReferences(); return _cachedClipAttackColdBody; } }
+    private AnimationClip ClipAttackColdLegs { get { if (!_clipsCached) CacheClipReferences(); return _cachedClipAttackColdLegs; } }
 
     private void CacheClipReferences()
     {
@@ -120,9 +140,56 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
         _cachedClipRunPistol = _runPistol as AnimationClip;
         _cachedClipSitPistol = _sitPistol as AnimationClip;
         _cachedClipDead = _dead as AnimationClip;
+        _cachedClipIdleCold = _idleCold as AnimationClip;
+        _cachedClipAttackColdHead = _attackColdHead as AnimationClip;
+        _cachedClipAttackColdBody = _attackColdBody as AnimationClip;
+        _cachedClipAttackColdLegs = _attackColdLegs as AnimationClip;
         _cachedClipStandToSit = _standToSit as AnimationClip;
         _cachedClipSitToStand = _sitToStand as AnimationClip;
         _clipsCached = true;
+    }
+
+    /// <summary>
+    /// Copies clip references and tuning from the local player for humanoid retargeting on another mesh (e.g. mob).
+    /// Call while this <see cref="GameObject"/> is <b>inactive</b> so <see cref="Awake"/> runs after fields are assigned.
+    /// </summary>
+    public void CopyLocomotionConfigFrom(PlayerCharacterAnimator source)
+    {
+        if (source == null)
+            return;
+
+        _clearAnimatorController = source._clearAnimatorController;
+        _playableControllerOverride = source._playableControllerOverride;
+        _uniformModelScale = source._uniformModelScale;
+        _faceMovementDirection = source._faceMovementDirection;
+        _rotatePlayerRoot = source._rotatePlayerRoot;
+        _rotationSpeed = source._rotationSpeed;
+        _moveFaceMinSqr = source._moveFaceMinSqr;
+        _locomotionCycleFractionPerHex = source._locomotionCycleFractionPerHex;
+        _coldMeleeAttackPlaybackSpeed = source._coldMeleeAttackPlaybackSpeed;
+
+        _idle = source._idle;
+        _walk = source._walk;
+        _run = source._run;
+        _sit = source._sit;
+        _sitWalk = source._sitWalk;
+        _sitWalkPistol = source._sitWalkPistol;
+        _idlePistol = source._idlePistol;
+        _walkPistol = source._walkPistol;
+        _runPistol = source._runPistol;
+        _sitPistol = source._sitPistol;
+        _dead = source._dead;
+        _idleCold = source._idleCold;
+        _attackColdHead = source._attackColdHead;
+        _attackColdBody = source._attackColdBody;
+        _attackColdLegs = source._attackColdLegs;
+        _standToSit = source._standToSit;
+        _sitToStand = source._sitToStand;
+
+        _player = null;
+        _remoteBattleUnit = null;
+        _animator = null;
+        _clipsCached = false;
     }
 
     private static bool IsStandingPosture(MovementPosture p) =>
@@ -169,6 +236,8 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
     /// </summary>
     public void NotifyHexStepStarted(float stepDurationSeconds)
     {
+        if (_meleeAttackActive)
+            return;
         if (_postureTransitionActive)
             return;
         if (_animator == null)
@@ -235,6 +304,10 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
         // Order matters: both filenames contain "sit" and "stand" as substrings.
         _standToSit = CoerceClipReference(_standToSit, new[] { "stand_to_sit", "standtosit", "stand", "sit" });
         _sitToStand = CoerceClipReference(_sitToStand, new[] { "sit_to_stand", "sittostand", "sit", "stand" });
+        _idleCold = CoerceClipReference(_idleCold, new[] { "idle", "cold" });
+        _attackColdHead = CoerceClipReference(_attackColdHead, new[] { "head", "atack", "attack", "cold" });
+        _attackColdBody = CoerceClipReference(_attackColdBody, new[] { "body", "atack", "attack", "cold" });
+        _attackColdLegs = CoerceClipReference(_attackColdLegs, new[] { "leg", "legs", "atack", "attack", "cold" });
 
         if (recordUndo)
             EditorUtility.SetDirty(this);
@@ -311,6 +384,10 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
         ValidateClipSlot(nameof(_dead), _dead);
         ValidateClipSlot(nameof(_standToSit), _standToSit);
         ValidateClipSlot(nameof(_sitToStand), _sitToStand);
+        ValidateClipSlot(nameof(_idleCold), _idleCold);
+        ValidateClipSlot(nameof(_attackColdHead), _attackColdHead);
+        ValidateClipSlot(nameof(_attackColdBody), _attackColdBody);
+        ValidateClipSlot(nameof(_attackColdLegs), _attackColdLegs);
     }
 
     /// <summary>Animator is usually on a child mesh; <see cref="GetComponent{T}"/> on the rig root is often null.</summary>
@@ -604,15 +681,17 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
     private AnimationClip ResolveLocomotionClip()
     {
         bool armed = _player != null && WeaponCatalog.IsPistolStyleWeapon(_player.WeaponCode);
+        bool coldIdle = _player != null && WeaponCatalog.IsColdWeapon(_player.WeaponCode) && ClipIdleCold != null;
         MovementPosture posture = _player != null ? _player.CurrentMovementPosture : MovementPosture.Walk;
         bool moving = _player != null ? _player.IsMoving : _remoteBattleUnit != null && _remoteBattleUnit.IsMoving;
 
         // Кэш: если ничего не изменилось с прошлого кадра, возвращаем тот же клип.
-        if (!_resolvedClipDirty && armed == _lastArmed && posture == _lastPosture && moving == _lastMoving
+        if (!_resolvedClipDirty && armed == _lastArmed && coldIdle == _lastColdIdle && posture == _lastPosture && moving == _lastMoving
             && _resolvedClipCache != null)
             return _resolvedClipCache;
 
         _lastArmed = armed;
+        _lastColdIdle = coldIdle;
         _lastPosture = posture;
         _lastMoving = moving;
         _resolvedClipDirty = false;
@@ -660,7 +739,12 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
         }
 
         if (result == null)
-            result = (armed && ClipIdlePistol != null) ? ClipIdlePistol : ClipIdle;
+        {
+            if (!crouch && !moving && coldIdle)
+                result = ClipIdleCold;
+            if (result == null)
+                result = (armed && ClipIdlePistol != null) ? ClipIdlePistol : ClipIdle;
+        }
 
         _resolvedClipCache = result;
         return result;
@@ -674,6 +758,8 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
     /// </summary>
     private void ApplyResolvedLocomotionClip()
     {
+        if (_meleeAttackActive)
+            return;
         if (_postureTransitionActive)
             return;
 
@@ -724,5 +810,44 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
             _graph.Destroy();
         _graph = default;
         _currentClip = null;
+    }
+
+    private AnimationClip ResolveColdAttackClip(int bodyPartId)
+    {
+        switch (bodyPartId)
+        {
+            case BodyPartIds.Head:
+                return ClipAttackColdHead;
+            case BodyPartIds.Legs:
+                return ClipAttackColdLegs;
+            case BodyPartIds.Torso:
+            case BodyPartIds.LeftArm:
+            case BodyPartIds.RightArm:
+            case BodyPartIds.None:
+            default:
+                return ClipAttackColdBody;
+        }
+    }
+
+    /// <summary>One-shot melee swing for cold weapons; caller should face the target first. Run via <c>StartCoroutine</c> from a <see cref="MonoBehaviour"/>.</summary>
+    public IEnumerator RunColdMeleeAttackRoutine(int bodyPartId)
+    {
+        AnimationClip clip = ResolveColdAttackClip(bodyPartId);
+        if (clip == null || clip.length <= 1e-5f || _animator == null)
+            yield break;
+
+        _meleeAttackActive = true;
+        float atkSpeed = Mathf.Clamp(_coldMeleeAttackPlaybackSpeed, 0.25f, 5f);
+        PlayClipInternal(clip, atkSpeed, 0.0, applyFootIk: true);
+        float len = Mathf.Clamp((float)clip.length / atkSpeed, 0.02f, 30f);
+        float t = 0f;
+        while (t < len)
+        {
+            t += Time.deltaTime;
+            yield return null;
+        }
+
+        _meleeAttackActive = false;
+        _resolvedClipDirty = true;
     }
 }

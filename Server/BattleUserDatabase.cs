@@ -11,11 +11,13 @@ public sealed class BattleUserDatabase
 
     private readonly BattlePostgresDatabase _database;
     private readonly BattleWeaponDatabase _weapons;
+    private readonly BattleAmmoDatabase _ammo;
 
-    public BattleUserDatabase(BattlePostgresDatabase database, BattleWeaponDatabase weapons)
+    public BattleUserDatabase(BattlePostgresDatabase database, BattleWeaponDatabase weapons, BattleAmmoDatabase ammo)
     {
         _database = database;
         _weapons = weapons;
+        _ammo = ammo;
     }
 
     public bool ValidateCredentials(string username, string password)
@@ -353,6 +355,174 @@ VALUES (@uid, @start, @code, @width, @eq);
         return true;
     }
 
+    public bool TryGetAmmoPacksForAdmin(long userId, out List<UserAmmoPackAdminDto> items, out string? error)
+    {
+        items = new List<UserAmmoPackAdminDto>();
+        error = null;
+        if (userId <= 0)
+        {
+            error = "invalid user id";
+            return false;
+        }
+
+        using var connection = _database.DataSource.OpenConnection();
+        if (!UserExists(connection, userId))
+        {
+            error = "user not found";
+            return false;
+        }
+
+        items = LoadAmmoPacks(connection, userId);
+        return true;
+    }
+
+    public bool TryReplaceUserAmmoPacks(long userId, IReadOnlyList<UserAmmoPackReplaceDto> rawItems, out string? error)
+    {
+        error = null;
+        if (userId <= 0)
+        {
+            error = "invalid user id";
+            return false;
+        }
+
+        if (rawItems == null)
+        {
+            error = "items array required";
+            return false;
+        }
+
+        var normalized = new List<(long ammoTypeId, int rounds)>();
+        var calibersSeen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var row in rawItems)
+        {
+            string caliber = (row.Caliber ?? "").Trim();
+            if (string.IsNullOrWhiteSpace(caliber))
+            {
+                error = "caliber required for each row";
+                return false;
+            }
+            if (!calibersSeen.Add(caliber))
+            {
+                error = "duplicate caliber: " + caliber;
+                return false;
+            }
+            if (!_ammo.TryGetAmmoTypeByCaliber(caliber, out var ammo))
+            {
+                error = "unknown caliber: " + caliber;
+                return false;
+            }
+            int rounds = Math.Max(0, row.RoundsCount > 0 ? row.RoundsCount : row.TotalRounds);
+            if (rounds == 0)
+                continue;
+            normalized.Add((ammo.Id, rounds));
+        }
+
+        using var connection = _database.DataSource.OpenConnection();
+        using var tx = connection.BeginTransaction();
+        if (!UserExists(connection, userId, tx))
+        {
+            error = "user not found";
+            return false;
+        }
+
+        using (var del = connection.CreateCommand())
+        {
+            del.Transaction = tx;
+            del.CommandText = "DELETE FROM user_ammo_packs WHERE user_id = @uid;";
+            del.Parameters.AddWithValue("uid", userId);
+            del.ExecuteNonQuery();
+        }
+
+        foreach (var (ammoTypeId, rounds) in normalized)
+        {
+            using var ins = connection.CreateCommand();
+            ins.Transaction = tx;
+            ins.CommandText = """
+INSERT INTO user_ammo_packs (user_id, ammo_type_id, packs_count, rounds_count)
+VALUES (@uid, @ammoTypeId, 0, @rounds);
+""";
+            ins.Parameters.AddWithValue("uid", userId);
+            ins.Parameters.AddWithValue("ammoTypeId", ammoTypeId);
+            ins.Parameters.AddWithValue("rounds", rounds);
+            ins.ExecuteNonQuery();
+        }
+
+        tx.Commit();
+        return true;
+    }
+
+    public bool TryGetAmmoPacks(string username, string password, out IReadOnlyList<UserAmmoPackAdminDto> items)
+    {
+        items = Array.Empty<UserAmmoPackAdminDto>();
+        if (!ValidateCredentials(username, password))
+            return false;
+        if (!TryGetUserId(username.Trim(), out long userId))
+            return false;
+
+        using var connection = _database.DataSource.OpenConnection();
+        items = LoadAmmoPacks(connection, userId);
+        return true;
+    }
+
+    public bool TryGetUserAmmoRounds(string username, string caliber, out int rounds)
+    {
+        rounds = 0;
+        if (string.IsNullOrWhiteSpace(username) || string.IsNullOrWhiteSpace(caliber))
+            return false;
+        if (!TryGetUserId(username.Trim(), out long userId))
+            return false;
+        if (!_ammo.TryGetAmmoTypeByCaliber(caliber.Trim(), out var ammoType))
+            return false;
+        using var connection = _database.DataSource.OpenConnection();
+        using var cmd = connection.CreateCommand();
+        cmd.CommandText = """
+SELECT COALESCE(rounds_count, 0)
+FROM user_ammo_packs
+WHERE user_id = @uid AND ammo_type_id = @aid
+LIMIT 1;
+""";
+        cmd.Parameters.AddWithValue("uid", userId);
+        cmd.Parameters.AddWithValue("aid", ammoType.Id);
+        object? scalar = cmd.ExecuteScalar();
+        rounds = scalar == null ? 0 : Math.Max(0, Convert.ToInt32(scalar));
+        return true;
+    }
+
+    public bool TrySetUserAmmoRounds(string username, string caliber, int rounds, out string? error)
+    {
+        error = null;
+        if (string.IsNullOrWhiteSpace(username))
+        {
+            error = "username required";
+            return false;
+        }
+        if (string.IsNullOrWhiteSpace(caliber))
+            return true;
+        if (!TryGetUserId(username.Trim(), out long userId))
+        {
+            error = "user not found";
+            return false;
+        }
+        if (!_ammo.TryGetAmmoTypeByCaliber(caliber.Trim(), out var ammoType))
+            return true;
+
+        int safeRounds = Math.Max(0, rounds);
+        using var connection = _database.DataSource.OpenConnection();
+        using var cmd = connection.CreateCommand();
+        cmd.CommandText = """
+INSERT INTO user_ammo_packs (user_id, ammo_type_id, packs_count, rounds_count)
+VALUES (@uid, @aid, 0, @rounds)
+ON CONFLICT (user_id, ammo_type_id) DO UPDATE SET
+    rounds_count = EXCLUDED.rounds_count,
+    packs_count = 0;
+""";
+        cmd.Parameters.AddWithValue("uid", userId);
+        cmd.Parameters.AddWithValue("aid", ammoType.Id);
+        cmd.Parameters.AddWithValue("rounds", safeRounds);
+        cmd.ExecuteNonQuery();
+        return true;
+    }
+
     /// <summary>Weapon allowed in battle equip when it exists in inventory or is <c>fist</c>.</summary>
     public bool TryValidateEquippedWeaponForRegisteredUser(string username, string weaponCode, out string? error)
     {
@@ -542,6 +712,40 @@ ORDER BY start_slot, id;
                 WeaponCode = reader.GetString(2),
                 SlotWidth = reader.GetInt32(3),
                 IsEquipped = reader.GetBoolean(4)
+            });
+        }
+
+        return list;
+    }
+
+    private static List<UserAmmoPackAdminDto> LoadAmmoPacks(NpgsqlConnection connection, long userId)
+    {
+        var list = new List<UserAmmoPackAdminDto>();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+SELECT uap.id, uap.ammo_type_id, at.caliber, at.unit_weight, at.rounds_per_pack, uap.packs_count, COALESCE(uap.rounds_count, 0)
+FROM user_ammo_packs uap
+JOIN ammo_types at ON at.id = uap.ammo_type_id
+WHERE uap.user_id = @uid
+ORDER BY LOWER(at.caliber), uap.id;
+""";
+        command.Parameters.AddWithValue("uid", userId);
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            int roundsPerPack = reader.GetInt32(4);
+            int packsCount = reader.GetInt32(5);
+            int roundsCount = reader.GetInt32(6);
+            list.Add(new UserAmmoPackAdminDto
+            {
+                Id = reader.GetInt64(0),
+                AmmoTypeId = reader.GetInt64(1),
+                Caliber = reader.GetString(2),
+                UnitWeight = reader.GetDouble(3),
+                RoundsPerPack = roundsPerPack,
+                PacksCount = 0,
+                RoundsCount = Math.Max(0, roundsCount),
+                TotalRounds = Math.Max(0, roundsCount)
             });
         }
 

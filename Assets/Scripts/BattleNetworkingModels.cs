@@ -40,6 +40,8 @@ public class SubmitTurnPayload
     public string battleId;
     public string playerId;
     public int roundIndex;
+    /// <summary>Client-local rounds currently loaded in magazine for active weapon.</summary>
+    public int currentMagazineRounds;
     public BattleQueuedAction[] actions;
 }
 
@@ -63,6 +65,8 @@ public class BattleQueuedAction
     public int previousWeaponDamage;
     public int previousWeaponRange;
     public int weaponAttackApCost;
+    /// <summary>Client-only helper for local undo/ui state.</summary>
+    public int previousMagazineRounds;
     public int cost;
 }
 
@@ -155,6 +159,8 @@ public class PlayerTurnResult
     public int weaponRange;
     /// <summary>Стоимость атаки (ОД), weapons.attack_ap_cost.</summary>
     public int weaponAttackApCost;
+    /// <summary>Rounds currently loaded in magazine after round resolve.</summary>
+    public int currentMagazineRounds;
     public BattleExecutedAction[] executedActions;
 }
 
@@ -166,6 +172,7 @@ public class WsClientSubmitTurn
     public string battleId;
     public string playerId;
     public int roundIndex;
+    public int currentMagazineRounds;
     public BattleQueuedAction[] actions;
 }
 
@@ -272,6 +279,7 @@ public class BattleStartedPayload
     public int[] spawnWeaponDamages;
     public int[] spawnWeaponRanges;
     public int[] spawnWeaponAttackApCosts;
+    public int[] spawnCurrentMagazineRounds;
     /// <summary>Ник для планки над головой (параллельно spawnPlayerIds).</summary>
     public string[] spawnDisplayNames;
     /// <summary>Уровень персонажа (параллельно spawnPlayerIds).</summary>
@@ -309,6 +317,35 @@ public class EquipWeaponResponsePayload
 public class UserInventorySlotsPayload
 {
     public UserInventorySlotPayload[] slots;
+}
+
+[Serializable]
+public class UserAmmoPacksPayload
+{
+    public UserAmmoPackPayload[] items;
+}
+
+[Serializable]
+public class UserAmmoPackPayload
+{
+    public long id;
+    public long ammoTypeId;
+    public string caliber;
+    public double unitWeight;
+    public int roundsPerPack;
+    public int roundsCount;
+    public int packsCount;
+    public int totalRounds;
+}
+
+[Serializable]
+public class WeaponDbRowPayload
+{
+    public long id;
+    public string code;
+    public string caliber;
+    public int magazineSize;
+    public int reloadApCost;
 }
 
 [Serializable]

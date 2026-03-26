@@ -82,6 +82,7 @@ public partial class BattleRoom
         unit.WeaponDamage = dMax;
         unit.WeaponRange = Math.Max(0, weaponRange);
         unit.WeaponAttackApCost = Math.Max(1, weaponAttackApCost);
+        unit.CurrentMagazineRounds = GetWeaponMagazineSizeFromDb(code);
         unit.WeaponTightness = Math.Clamp(weaponTightness, 0.0, 1.0);
         unit.WeaponTrajectoryHeight = Math.Clamp(weaponTrajectoryHeight, 0, 3);
         unit.WeaponIsSniper = weaponIsSniper;

@@ -616,6 +616,7 @@ public class GameSession : MonoBehaviour
     {
         if (result == null || result.results == null) return;
         AppendServerTurnLogs(result);
+        LogHitRollsFromTurnResult(result);
         var playback = BuildExecutedActionPlayback(result);
         var animJobs = BuildTurnResultAnimationJobs(result, prepareForAnimation: true, deferLocomotionPosture: playback.Count > 0);
         if (playback.Count > 0)
@@ -920,6 +921,7 @@ public class GameSession : MonoBehaviour
 
         if (action.actionType == "Attack")
         {
+            yield return PlayColdMeleeAttackIfApplicable(result, action);
             yield return PlayRangedBulletAnimation(result, action);
 
             if (action.succeeded && action.damage > 0)
@@ -1420,6 +1422,85 @@ public class GameSession : MonoBehaviour
         return false;
     }
 
+    private static bool TryGetWeaponCodeForUnit(TurnResultPayload result, string unitId, out string weaponCode)
+    {
+        weaponCode = "";
+        if (string.IsNullOrEmpty(unitId) || result?.results == null)
+            return false;
+
+        foreach (var item in result.results)
+        {
+            if (item == null || item.unitId != unitId)
+                continue;
+            weaponCode = string.IsNullOrWhiteSpace(item.weaponCode) ? WeaponCatalog.DefaultWeaponCode : item.weaponCode.Trim().ToLowerInvariant();
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>Melee cold-weapon swing when range ≤ 1 and target unit is set; ranged attacks still use <see cref="PlayRangedBulletAnimation"/>.</summary>
+    private IEnumerator PlayColdMeleeAttackIfApplicable(TurnResultPayload result, BattleExecutedAction action)
+    {
+        if (action == null || !action.succeeded || string.IsNullOrEmpty(action.targetUnitId))
+            yield break;
+
+        if (!TryGetWeaponCodeForUnit(result, action.unitId, out string wCode) || !WeaponCatalog.IsColdWeapon(wCode))
+            yield break;
+
+        if (!TryGetWeaponRangeForUnit(result, action.unitId, out int wRange) || wRange > 1)
+            yield break;
+
+        HexGrid grid = CachedHexGrid;
+        if (grid == null)
+            yield break;
+
+        int fc, fr;
+        if (action.fromPosition != null)
+        {
+            fc = action.fromPosition.col;
+            fr = action.fromPosition.row;
+        }
+        else if (!TryGetUnitFinalHexFromTurnResult(result, action.unitId, out fc, out fr))
+        {
+            yield break;
+        }
+
+        if (!TryGetUnitFinalHexFromTurnResult(result, action.targetUnitId, out int tc, out int tr))
+            yield break;
+
+        Vector3 atkPos = grid.GetCellWorldPosition(fc, fr);
+        Vector3 tgtPos = grid.GetCellWorldPosition(tc, tr);
+        Vector3 dir = tgtPos - atkPos;
+        dir.y = 0f;
+        if (dir.sqrMagnitude < 1e-8f)
+            yield break;
+        dir.Normalize();
+
+        PlayerCharacterAnimator faceA = null;
+        RemoteBattleUnitView faceR = null;
+        if (TryBeginFacingForRangedShot(result, action.unitId, dir, out faceA, out faceR))
+        {
+            Transform pivot = faceA != null ? faceA.FacingPivot : faceR.transform;
+            Quaternion targetRot = Quaternion.LookRotation(dir, Vector3.up);
+            yield return CoFaceUntilAligned(pivot, targetRot);
+        }
+
+        PlayerCharacterAnimator meleeAnim = null;
+        if (TryResolveAnimatedUnit(result, action.unitId, out object unit, out bool isLocal))
+        {
+            if (isLocal && unit is Player pl)
+                meleeAnim = pl.GetComponentInChildren<PlayerCharacterAnimator>();
+            else if (unit is RemoteBattleUnitView r)
+                meleeAnim = r.GetComponentInChildren<PlayerCharacterAnimator>();
+        }
+
+        if (meleeAnim != null)
+            yield return StartCoroutine(meleeAnim.RunColdMeleeAttackRoutine(action.bodyPart));
+
+        ClearFacingForRangedShot(faceA, faceR);
+    }
+
     /// <summary>Запасной вариант для старых turn result без toPosition/fromPosition в executedActions.</summary>
     private static bool TryGetUnitFinalHexFromTurnResult(TurnResultPayload result, string unitId, out int col, out int row)
     {
@@ -1506,6 +1587,8 @@ public class GameSession : MonoBehaviour
         _liveRoundDeadlineUtcMs = roundDeadlineUtcMs;
         Player local = LocalPlayer;
         local?.SetRoundState(roundIndex, roundDeadlineUtcMs);
+        if (!_isTurnHistoryReplayPlaying && _selectedTurnHistoryPointer < 0)
+            FindFirstObjectByType<InventoryUI>()?.ReloadInventoryFromServer();
     }
 
     /// <summary>Применить старт боя: локальный и удалённые юниты на позициях с сервера.</summary>
@@ -1737,6 +1820,7 @@ public class GameSession : MonoBehaviour
         if (_liveRoundDeadlineUtcMs > 0)
             ApplyRoundState(_serverRoundIndex, _liveRoundDeadlineUtcMs);
 
+        LogHitRollsFromTurnResult(targetTurn);
         var playback = BuildExecutedActionPlayback(targetTurn);
         var jobs = BuildTurnResultAnimationJobs(targetTurn, prepareForAnimation: true, deferLocomotionPosture: playback.Count > 0);
         if (playback.Count > 0)
@@ -2225,6 +2309,36 @@ public class GameSession : MonoBehaviour
         }
     }
 
+    /// <summary>Сервер присылает p и факт попадания в executedActions; пишем в Unity Console на русском.</summary>
+    private static void LogHitRollsFromTurnResult(TurnResultPayload result)
+    {
+        if (result?.results == null)
+            return;
+
+        foreach (var turnResult in result.results)
+        {
+            if (turnResult?.executedActions == null)
+                continue;
+
+            foreach (var action in turnResult.executedActions)
+            {
+                if (action == null)
+                    continue;
+                if (!string.Equals(action.actionType, "Attack", StringComparison.OrdinalIgnoreCase))
+                    continue;
+                if (!action.hitProbability.HasValue || !action.hitSucceeded.HasValue)
+                    continue;
+
+                string targetLabel = string.IsNullOrEmpty(action.targetUnitId) ? "—" : action.targetUnitId;
+                double p = action.hitProbability.Value;
+                bool hit = action.hitSucceeded.Value;
+                Debug.Log(
+                    $"[Combat] Раунд {result.roundIndex}, тик {action.tick}: стрелок {action.unitId} → {targetLabel} — " +
+                    $"вероятность попадания {p * 100.0:F1} %, попадание: {(hit ? "да" : "нет")}, урон {action.damage}");
+            }
+        }
+    }
+
     private void ShowDamagePopupForAction(TurnResultPayload result, BattleExecutedAction action)
     {
         if (action == null || !action.succeeded || action.damage <= 0 || string.IsNullOrEmpty(action.targetUnitId))
@@ -2340,7 +2454,8 @@ public class GameSession : MonoBehaviour
                 cost = action.cost,
                 weaponCode = action.weaponCode,
                 previousWeaponAttackApCost = action.previousWeaponAttackApCost,
-                weaponAttackApCost = action.weaponAttackApCost
+                weaponAttackApCost = action.weaponAttackApCost,
+                previousMagazineRounds = action.previousMagazineRounds
             };
         }
 
@@ -2349,6 +2464,7 @@ public class GameSession : MonoBehaviour
             battleId = _battleId,
             playerId = _playerId,
             roundIndex = roundIndex,
+            currentMagazineRounds = LocalPlayer != null ? LocalPlayer.CurrentMagazineRounds : 0,
             actions = payloadActions
         };
     }

@@ -198,7 +198,7 @@ public class BattleServerConnection : MonoBehaviour
         BattleTurnResponsePayload response = null;
         try
         {
-            response = JsonConvert.DeserializeObject<BattleTurnResponsePayload>(body);
+            response = JsonConvert.DeserializeObject<BattleTurnResponsePayload>(body, HopeBattleJson.DeserializeSettings);
         }
         catch (Exception ex)
         {

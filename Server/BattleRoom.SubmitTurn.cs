@@ -37,6 +37,7 @@ public partial class BattleRoom
                     WeaponDamage = DefaultWeaponDamage,
                     WeaponRange = DefaultWeaponRange,
                     WeaponAttackApCost = GetWeaponAttackApCostFromDb(DefaultWeaponCode),
+                    CurrentMagazineRounds = GetWeaponMagazineSizeFromDb(DefaultWeaponCode),
                     Accuracy = 10,
                     WeaponTightness = 1.0,
                     WeaponTrajectoryHeight = 1,
@@ -45,6 +46,10 @@ public partial class BattleRoom
                 };
             }
         }
+
+        // Magazine state is authoritative on server and must be consumed by executed actions.
+        // Do not overwrite with client submit snapshot, otherwise queued shots can all fail
+        // with "Magazine is empty" when client planned attacks down to zero.
 
         UnitCommands[unitId] = new UnitCommandDto
         {

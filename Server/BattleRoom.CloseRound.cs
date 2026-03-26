@@ -96,6 +96,7 @@ public partial class BattleRoom
         var runNormalHexCount = new Dictionary<string, int>();
         var runPenaltyHexCount = new Dictionary<string, int>();
         var apSpentByUnit = new Dictionary<string, int>();
+        var shotsByPlayerAndCaliber = new Dictionary<string, Dictionary<string, int>>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var uid in order)
         {
@@ -181,6 +182,8 @@ public partial class BattleRoom
                             cost = ChangePostureCost;
                         else if (string.Equals(queuedActionType, ActionWait, StringComparison.OrdinalIgnoreCase))
                             cost = Math.Max(1, action?.Cost ?? 1);
+                        else if (string.Equals(queuedActionType, ActionReload, StringComparison.OrdinalIgnoreCase))
+                            cost = Math.Max(1, action?.Cost ?? 1);
                         else if (string.Equals(queuedActionType, ActionEquipWeapon, StringComparison.OrdinalIgnoreCase))
                             cost = Math.Max(1, action?.Cost ?? 2);
                         else
@@ -263,6 +266,13 @@ public partial class BattleRoom
                     }
                     else if (string.Equals(actionType, ActionAttack, StringComparison.OrdinalIgnoreCase))
                     {
+                        int magazineSize = GetWeaponMagazineSizeFromDb(unit.WeaponCode);
+                        if (magazineSize > 0 && unit.CurrentMagazineRounds <= 0)
+                        {
+                            executed.FailureReason = "Magazine is empty";
+                        }
+                        else
+                        {
                         string? resolvedTargetId = ResolveUnitId(action.TargetUnitId);
                         if (string.IsNullOrEmpty(resolvedTargetId))
                         {
@@ -625,6 +635,28 @@ public partial class BattleRoom
                                     }
                                 }
                         }
+                        }
+                        if (executed.Succeeded && magazineSize > 0)
+                        {
+                            unit.CurrentMagazineRounds = Math.Max(0, unit.CurrentMagazineRounds - 1);
+                            Units[uid] = unit;
+                            if (unit.UnitType == UnitType.Player)
+                            {
+                                string pid = PlayerToUnitId.FirstOrDefault(kv => kv.Value == uid).Key ?? uid;
+                                string caliber = "";
+                                if (_weaponDb != null && _weaponDb.TryGetWeaponByCode(unit.WeaponCode ?? DefaultWeaponCode, out var shotWeapon))
+                                    caliber = (shotWeapon.Caliber ?? "").Trim().ToLowerInvariant();
+                                if (!string.IsNullOrWhiteSpace(caliber))
+                                {
+                                    if (!shotsByPlayerAndCaliber.TryGetValue(pid, out var byCaliber))
+                                    {
+                                        byCaliber = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                                        shotsByPlayerAndCaliber[pid] = byCaliber;
+                                    }
+                                    byCaliber[caliber] = byCaliber.GetValueOrDefault(caliber) + 1;
+                                }
+                            }
+                        }
                     }
                     else if (string.Equals(actionType, ActionChangePosture, StringComparison.OrdinalIgnoreCase))
                     {
@@ -636,6 +668,13 @@ public partial class BattleRoom
                     else if (string.Equals(actionType, ActionWait, StringComparison.OrdinalIgnoreCase))
                     {
                         executed.Succeeded = true;
+                    }
+                    else if (string.Equals(actionType, ActionReload, StringComparison.OrdinalIgnoreCase))
+                    {
+                        executed.Succeeded = true;
+                        int magazineSize = GetWeaponMagazineSizeFromDb(unit.WeaponCode);
+                        unit.CurrentMagazineRounds = Math.Max(0, magazineSize);
+                        Units[uid] = unit;
                     }
                     else if (string.Equals(actionType, ActionEquipWeapon, StringComparison.OrdinalIgnoreCase))
                     {
@@ -672,6 +711,7 @@ public partial class BattleRoom
                                 unit.WeaponDamage = wpn.DamageMax;
                                 unit.WeaponRange = wpn.Range;
                                 unit.WeaponAttackApCost = Math.Max(1, wpn.AttackApCost);
+                                unit.CurrentMagazineRounds = GetWeaponMagazineSizeFromDb(wpn.Code);
                                 unit.WeaponTightness = Math.Clamp(wpn.Tightness, 0.0, 1.0);
                                 unit.WeaponTrajectoryHeight = Math.Clamp(wpn.TrajectoryHeight, 0, 3);
                                 unit.WeaponIsSniper = wpn.IsSniper;
@@ -735,6 +775,20 @@ public partial class BattleRoom
 
             string playerId = PlayerToUnitId.FirstOrDefault(kv => kv.Value == uid).Key ?? uid;
             var unitActions = executedActions.TryGetValue(uid, out var executed) ? executed : new List<ExecutedBattleActionDto>();
+            if (us.UnitType == UnitType.Player)
+            {
+                string username = PlayerDisplayNames.GetValueOrDefault(playerId, playerId);
+                if (shotsByPlayerAndCaliber.TryGetValue(playerId, out var byCaliber))
+                {
+                    foreach (var kv in byCaliber)
+                    {
+                        int currentRounds = 0;
+                        _userDb?.TryGetUserAmmoRounds(username, kv.Key, out currentRounds);
+                        int nextRounds = Math.Max(0, currentRounds - Math.Max(0, kv.Value));
+                        _userDb?.TrySetUserAmmoRounds(username, kv.Key, nextRounds, out _);
+                    }
+                }
+            }
             results.Add(new PlayerTurnResultDto
             {
                 UnitId = uid,
@@ -758,6 +812,7 @@ public partial class BattleRoom
                 WeaponDamage = us.WeaponDamage,
                 WeaponRange = us.WeaponRange,
                 WeaponAttackApCost = Math.Max(1, us.WeaponAttackApCost),
+                CurrentMagazineRounds = us.CurrentMagazineRounds,
                 WeaponTightness = us.WeaponTightness,
                 WeaponTrajectoryHeight = us.WeaponTrajectoryHeight,
                 WeaponIsSniper = us.WeaponIsSniper,

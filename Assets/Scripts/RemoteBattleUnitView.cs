@@ -15,6 +15,11 @@ public class RemoteBattleUnitView : MonoBehaviour
     [Header("PvP visuals")]
     [SerializeField] private Color _enemyModelTint = new Color(0.95f, 0.28f, 0.22f, 1f);
 
+    [Header("Mob visuals")]
+    [Tooltip("Resources path without extension, e.g. Mob/mob for Assets/Resources/Mob/mob.fbx")]
+    [SerializeField] private string _mobModelResourcePath = "Mob/mob";
+    [SerializeField] private Color _mobModelTint = new Color(0.85f, 0.35f, 0.25f, 1f);
+
     [Header("Overhead UI")]
     [Tooltip("Prefab with CharacterNameplateView; otherwise Resources/CharacterNameplate.")]
     [SerializeField] private GameObject _characterNameplatePrefab;
@@ -134,7 +139,7 @@ public class RemoteBattleUnitView : MonoBehaviour
 
         if (IsMob)
         {
-            EnsureCapsuleFallback();
+            EnsureMobHumanoidVisual();
             return;
         }
 
@@ -238,6 +243,107 @@ public class RemoteBattleUnitView : MonoBehaviour
             {
                 mpb.SetColor("_BaseColor", _enemyModelTint);
             }
+
+            r.SetPropertyBlock(mpb);
+        }
+    }
+
+    private void EnsureMobHumanoidVisual()
+    {
+        if (GetComponentInChildren<SkinnedMeshRenderer>(true) != null)
+            return;
+
+        string path = string.IsNullOrWhiteSpace(_mobModelResourcePath) ? "Mob/mob" : _mobModelResourcePath.Trim();
+        GameObject mobPrefab = Resources.Load<GameObject>(path);
+        if (mobPrefab == null)
+        {
+            Debug.LogWarning($"[RemoteBattleUnitView] Mob model not found at Resources/{path} — using capsule.");
+            EnsureCapsuleFallback();
+            return;
+        }
+
+        GameObject mobRoot = Instantiate(mobPrefab);
+        mobRoot.name = "MobVisual";
+        mobRoot.SetActive(false);
+        mobRoot.transform.SetParent(transform, false);
+        mobRoot.transform.localPosition = Vector3.zero;
+        mobRoot.transform.localRotation = Quaternion.identity;
+        mobRoot.transform.localScale = Vector3.one;
+
+        Animator anim = mobRoot.GetComponentInChildren<Animator>(true);
+        if (anim == null)
+        {
+            Debug.LogWarning("[RemoteBattleUnitView] Mob FBX has no Animator — using capsule.");
+            Destroy(mobRoot);
+            EnsureCapsuleFallback();
+            return;
+        }
+
+        if (!anim.isHuman)
+        {
+            Debug.LogWarning(
+                "[RemoteBattleUnitView] Mob FBX is not Humanoid (Rig → Animation Type → Humanoid on mob.fbx) — using capsule.");
+            Destroy(mobRoot);
+            EnsureCapsuleFallback();
+            return;
+        }
+
+        Transform animHost = anim.transform;
+        PlayerCharacterAnimator pca = animHost.GetComponent<PlayerCharacterAnimator>();
+        if (pca == null)
+            pca = animHost.gameObject.AddComponent<PlayerCharacterAnimator>();
+
+        Player localPlayer = FindFirstObjectByType<Player>();
+        PlayerCharacterAnimator template =
+            localPlayer != null ? localPlayer.GetComponentInChildren<PlayerCharacterAnimator>(true) : null;
+        if (template == null)
+        {
+            Debug.LogWarning("[RemoteBattleUnitView] No local PlayerCharacterAnimator — mob uses capsule.");
+            Destroy(mobRoot);
+            EnsureCapsuleFallback();
+            return;
+        }
+
+        pca.CopyLocomotionConfigFrom(template);
+
+        ApplyMobTint(mobRoot);
+        Collider[] cols = mobRoot.GetComponentsInChildren<Collider>(true);
+        if (cols.Length > 0)
+        {
+            for (int i = 0; i < cols.Length; i++)
+            {
+                if (cols[i] != null)
+                    cols[i].isTrigger = true;
+            }
+        }
+        else
+            AddBoundsTriggerColliderForPicking(mobRoot);
+
+        mobRoot.SetActive(true);
+        _characterAnimator = pca;
+        _cachedAnimator = anim;
+    }
+
+    private void ApplyMobTint(GameObject root)
+    {
+        Renderer[] renderers = root.GetComponentsInChildren<Renderer>(true);
+        for (int i = 0; i < renderers.Length; i++)
+        {
+            Renderer r = renderers[i];
+            if (r == null) continue;
+            var mpb = new MaterialPropertyBlock();
+            r.GetPropertyBlock(mpb);
+            if (r.sharedMaterial != null)
+            {
+                if (r.sharedMaterial.HasProperty("_BaseColor"))
+                    mpb.SetColor("_BaseColor", _mobModelTint);
+                else if (r.sharedMaterial.HasProperty("_Color"))
+                    mpb.SetColor("_Color", _mobModelTint);
+                else
+                    mpb.SetColor("_BaseColor", _mobModelTint);
+            }
+            else
+                mpb.SetColor("_BaseColor", _mobModelTint);
 
             r.SetPropertyBlock(mpb);
         }

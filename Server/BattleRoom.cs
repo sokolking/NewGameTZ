@@ -15,6 +15,7 @@ public partial class BattleRoom
     private const string ActionAttack = "Attack";
     private const string ActionChangePosture = "ChangePosture";
     private const string ActionWait = "Wait";
+    private const string ActionReload = "Reload";
     private const string ActionEquipWeapon = "EquipWeapon";
     private const int ChangePostureCost = 2;
     private const float RunCostMultiplier = 0.5f;

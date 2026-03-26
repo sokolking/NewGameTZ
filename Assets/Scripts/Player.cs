@@ -97,6 +97,9 @@ public class Player : MonoBehaviour
     private int _weaponRangeHexes = 1;
     /// <summary>Стоимость атаки (ОД) из БД / сервера, не из каталога.</summary>
     private int _weaponAttackApCost = 1;
+    private int _magazineCapacity;
+    private int _currentMagazineRounds;
+    private int _reserveAmmoRounds;
 
     public int CurrentCol => _currentCol;
     public int CurrentRow => _currentRow;
@@ -187,6 +190,9 @@ public class Player : MonoBehaviour
     public int WeaponRangeHexes => Mathf.Max(0, _weaponRangeHexes);
     /// <summary>Стоимость одной атаки текущим оружием (ОД), с сервера / weapons.attack_ap_cost.</summary>
     public int WeaponAttackApCost => Mathf.Max(1, _weaponAttackApCost);
+    public int MagazineCapacity => Mathf.Max(0, _magazineCapacity);
+    public int CurrentMagazineRounds => Mathf.Clamp(_currentMagazineRounds, 0, Mathf.Max(0, _magazineCapacity));
+    public int ReserveAmmoRounds => Mathf.Max(0, _reserveAmmoRounds);
 
     /// <summary>Смена отображаемого оружия (после смены из инвентаря / результата раунда).</summary>
     public event System.Action OnEquippedWeaponChanged;
@@ -207,6 +213,29 @@ public class Player : MonoBehaviour
         _weaponRangeHexes = Mathf.Max(0, rangeHexes);
         _weaponAttackApCost = Mathf.Max(1, attackApCost);
         OnEquippedWeaponChanged?.Invoke();
+    }
+
+    public void SetMagazineState(int capacity, int currentRounds, bool notify = true)
+    {
+        int newCapacity = Mathf.Max(0, capacity);
+        int newRounds = newCapacity <= 0 ? 0 : Mathf.Clamp(currentRounds, 0, newCapacity);
+        if (_magazineCapacity == newCapacity && _currentMagazineRounds == newRounds)
+            return;
+
+        _magazineCapacity = newCapacity;
+        _currentMagazineRounds = newRounds;
+        if (notify)
+            OnEquippedWeaponChanged?.Invoke();
+    }
+
+    public void SetReserveAmmoRounds(int rounds, bool notify = true)
+    {
+        int v = Mathf.Max(0, rounds);
+        if (_reserveAmmoRounds == v)
+            return;
+        _reserveAmmoRounds = v;
+        if (notify)
+            OnEquippedWeaponChanged?.Invoke();
     }
 
     public delegate void PlayerMovedHandler(HexCell cell);
@@ -603,6 +632,7 @@ public class Player : MonoBehaviour
                 previousWeaponDamage = src.previousWeaponDamage,
                 previousWeaponRange = src.previousWeaponRange,
                 weaponAttackApCost = src.weaponAttackApCost,
+                previousMagazineRounds = src.previousMagazineRounds,
                 cost = src.cost
             };
         }
@@ -661,6 +691,8 @@ public class Player : MonoBehaviour
     /// <param name="bodyPartId">Server <see cref="BodyPartIds"/> / body_parts.id; 0 = unspecified.</param>
     public bool QueueAttackAction(string targetUnitId, int bodyPartId, int cost = 1)
     {
+        if (_magazineCapacity > 0 && _currentMagazineRounds <= 0)
+            return false;
         int safeCost = Mathf.Max(1, cost);
         if (_currentAp < safeCost)
             return false;
@@ -674,16 +706,22 @@ public class Player : MonoBehaviour
             targetUnitId = targetUnitId,
             bodyPart = bodyPartId,
             posture = MovementPostureUtility.ToId(_currentPosture),
+            previousMagazineRounds = _currentMagazineRounds,
             cost = safeCost
         });
         _apSpentThisTurn += safeCost;
         _currentAp -= safeCost;
+        if (_magazineCapacity > 0)
+            _currentMagazineRounds = Mathf.Max(0, _currentMagazineRounds - 1);
+        OnEquippedWeaponChanged?.Invoke();
         return true;
     }
 
     /// <summary>Выстрел по гексу прицела (Ctrl+клик): без targetUnitId, с <see cref="BattleQueuedAction.targetPosition"/> — урон по стене на ЛС, см. сервер.</summary>
     public bool QueueHexAttackAction(int col, int row, int cost = 1)
     {
+        if (_magazineCapacity > 0 && _currentMagazineRounds <= 0)
+            return false;
         int safeCost = Mathf.Max(1, cost);
         if (_currentAp < safeCost)
             return false;
@@ -698,10 +736,45 @@ public class Player : MonoBehaviour
             targetPosition = new HexPosition(col, row),
             bodyPart = BodyPartIds.None,
             posture = MovementPostureUtility.ToId(_currentPosture),
+            previousMagazineRounds = _currentMagazineRounds,
             cost = safeCost
         });
         _apSpentThisTurn += safeCost;
         _currentAp -= safeCost;
+        if (_magazineCapacity > 0)
+            _currentMagazineRounds = Mathf.Max(0, _currentMagazineRounds - 1);
+        OnEquippedWeaponChanged?.Invoke();
+        return true;
+    }
+
+    /// <summary>Queue manual reload action (R key). Server resets per-turn magazine usage.</summary>
+    public bool QueueReloadAction(int cost = 1)
+    {
+        if (_magazineCapacity <= 0 || _currentMagazineRounds >= _magazineCapacity)
+            return false;
+        int need = Mathf.Max(0, _magazineCapacity - _currentMagazineRounds);
+        if (_reserveAmmoRounds <= 0 || need <= 0)
+            return false;
+        int safeCost = Mathf.Max(1, cost);
+        if (_currentAp < safeCost)
+            return false;
+
+        if (_turnActions == null)
+            _turnActions = new List<BattleQueuedAction>();
+
+        _turnActions.Add(new BattleQueuedAction
+        {
+            actionType = "Reload",
+            posture = MovementPostureUtility.ToId(_currentPosture),
+            previousMagazineRounds = _currentMagazineRounds,
+            cost = safeCost
+        });
+        _apSpentThisTurn += safeCost;
+        _currentAp -= safeCost;
+        int loaded = Mathf.Min(need, _reserveAmmoRounds);
+        _currentMagazineRounds += loaded;
+        _reserveAmmoRounds = Mathf.Max(0, _reserveAmmoRounds - loaded);
+        OnEquippedWeaponChanged?.Invoke();
         return true;
     }
 
@@ -823,11 +896,17 @@ public class Player : MonoBehaviour
         }
 
         if (string.Equals(type, "Wait", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(type, "Reload", StringComparison.OrdinalIgnoreCase)
             || string.Equals(type, "Attack", StringComparison.OrdinalIgnoreCase))
         {
             int cost = Mathf.Max(0, last.cost);
             _currentAp += cost;
             _apSpentThisTurn -= cost;
+            if (_magazineCapacity > 0)
+            {
+                _currentMagazineRounds = Mathf.Clamp(last.previousMagazineRounds, 0, _magazineCapacity);
+                OnEquippedWeaponChanged?.Invoke();
+            }
             return true;
         }
 

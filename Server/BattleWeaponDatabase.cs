@@ -90,8 +90,8 @@ LIMIT 1;
             w.Range = 1;
         if (w.AttackApCost < 0)
             w.AttackApCost = 1;
-        if (w.SpreadPenalty < 0)
-            w.SpreadPenalty = 0.0;
+        if (w.Tightness < 0)
+            w.Tightness = 1.0;
         if (w.TrajectoryHeight < 0)
             w.TrajectoryHeight = 0;
         if (w.ArmorPierce < 0)
@@ -125,7 +125,7 @@ LIMIT 1;
 
     private static int StoreAttackApCostForDb(int v) => v < 0 ? -1 : Math.Max(1, v);
 
-    private static double StoreSpreadPenaltyForDb(double v) => v < 0 ? -1.0 : Math.Clamp(v, 0.0, 1.0);
+    private static double StoreTightnessForDb(double v) => v < 0 ? -1.0 : Math.Clamp(v, 0.0, 1.0);
 
     private static int StoreTrajectoryHeightForDb(int v) => v < 0 ? -1 : Math.Clamp(v, 0, 3);
 
@@ -158,7 +158,7 @@ LIMIT 1;
             Range = reader.GetInt32(4),
             IconKey = reader.GetString(5),
             AttackApCost = reader.GetInt32(6),
-            SpreadPenalty = reader.GetDouble(7),
+            Tightness = reader.GetDouble(7),
             TrajectoryHeight = reader.GetInt32(8),
             Quality = reader.GetInt32(9),
             WeaponCondition = reader.GetInt32(10),
@@ -194,7 +194,7 @@ LIMIT 1;
             Range = 1,
             IconKey = "fist",
             AttackApCost = 3,
-            SpreadPenalty = 0,
+            Tightness = 1.0,
             TrajectoryHeight = 1,
             Quality = 100,
             WeaponCondition = 100,
@@ -221,7 +221,7 @@ LIMIT 1;
         string ik = string.IsNullOrWhiteSpace(d.IconKey) ? d.Code.Trim().ToLowerInvariant() : d.IconKey.Trim().ToLowerInvariant();
         int rangeDb = StoreWeaponRangeForDb(d.Range);
         int ac = StoreAttackApCostForDb(d.AttackApCost);
-        double sp = StoreSpreadPenaltyForDb(d.SpreadPenalty);
+        double tn = StoreTightnessForDb(d.Tightness);
         int th = StoreTrajectoryHeightForDb(d.TrajectoryHeight);
         int legacyDamage = dMax;
 
@@ -279,7 +279,7 @@ SET name = EXCLUDED.name,
         command.Parameters.AddWithValue("range", rangeDb);
         command.Parameters.AddWithValue("iconKey", ik);
         command.Parameters.AddWithValue("attackApCost", ac);
-        command.Parameters.AddWithValue("spreadPenalty", sp);
+        command.Parameters.AddWithValue("spreadPenalty", tn);
         command.Parameters.AddWithValue("trajectoryHeight", th);
         command.Parameters.AddWithValue("quality", Math.Clamp(d.Quality, 0, 9999));
         command.Parameters.AddWithValue("weaponCondition", Math.Clamp(d.WeaponCondition, 0, 9999));
@@ -452,7 +452,7 @@ ORDER BY 1;
         string ik = string.IsNullOrWhiteSpace(d.IconKey) ? d.Code.Trim().ToLowerInvariant() : d.IconKey.Trim().ToLowerInvariant();
         int rangeDb = StoreWeaponRangeForDb(d.Range);
         int ac = StoreAttackApCostForDb(d.AttackApCost);
-        double sp = StoreSpreadPenaltyForDb(d.SpreadPenalty);
+        double tn = StoreTightnessForDb(d.Tightness);
         int th = StoreTrajectoryHeightForDb(d.TrajectoryHeight);
         int legacyDamage = dMax;
 
@@ -479,7 +479,7 @@ VALUES (
         command.Parameters.AddWithValue("range", rangeDb);
         command.Parameters.AddWithValue("iconKey", ik);
         command.Parameters.AddWithValue("attackApCost", ac);
-        command.Parameters.AddWithValue("spreadPenalty", sp);
+        command.Parameters.AddWithValue("spreadPenalty", tn);
         command.Parameters.AddWithValue("trajectoryHeight", th);
         command.Parameters.AddWithValue("quality", Math.Clamp(d.Quality, 0, 9999));
         command.Parameters.AddWithValue("weaponCondition", Math.Clamp(d.WeaponCondition, 0, 9999));
@@ -529,7 +529,7 @@ VALUES (
             sb.Append(w.Range.ToString(CultureInfo.InvariantCulture)).Append(", ");
             sb.Append(SqlString(w.IconKey)).Append(", ");
             sb.Append(w.AttackApCost.ToString(CultureInfo.InvariantCulture)).Append(", ");
-            sb.Append(w.SpreadPenalty.ToString(CultureInfo.InvariantCulture)).Append(", ");
+            sb.Append(w.Tightness.ToString(CultureInfo.InvariantCulture)).Append(", ");
             sb.Append(w.TrajectoryHeight.ToString(CultureInfo.InvariantCulture)).Append(", ");
             sb.Append(w.Quality.ToString(CultureInfo.InvariantCulture)).Append(", ");
             sb.Append(w.WeaponCondition.ToString(CultureInfo.InvariantCulture)).Append(", ");

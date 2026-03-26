@@ -27,6 +27,9 @@ public static class BattleWeaponsDashboardPage
     .status { color: #9aa4b2; font-size: 13px; margin-top: 8px; }
     .hint { color: #7f8ea3; font-size: 12px; margin-top: 6px; line-height: 1.4; }
     h3 { margin: 0 0 8px 0; }
+    .param-help-pop { position: fixed; z-index: 9999; max-width: 340px; padding: 10px 12px; background: #1e2430; border: 1px solid #4a5568; border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.45); font-size: 12px; line-height: 1.45; color: #e8ecf4; white-space: pre-wrap; display: none; pointer-events: none; }
+    .param-help-pop.visible { display: block; }
+    [data-param-key] { cursor: context-menu; }
   </style>
 </head>
 <body>
@@ -39,7 +42,7 @@ public static class BattleWeaponsDashboardPage
     </div>
     <div class="panel">
       <h3>Create / update weapon</h3>
-      <p class="hint">Row <strong>Save</strong> uses <code>POST /api/db/weapons</code>. <strong>Save table to DB</strong> calls <code>PUT /api/db/weapons/replace</code> (truncates <code>weapons</code> and inserts all visible rows — the set must include <code>fist</code>). <strong>Download SQL</strong> / import: <code>GET/POST /api/db/weapons/sql-export|sql-import</code>. Damage type and category use dropdowns from distinct DB values (current cell value kept if not in list). Numeric <strong>-1</strong> in most combat columns means <em>not applicable</em> (stored as-is; battle code substitutes safe defaults — e.g. melee range 1, spread 0). For stat-effect columns, only exactly <strong>-1</strong> is N/A (other negatives can be real penalties).</p>
+      <p class="hint">Right-click any parameter (table header, cell, or create form label) for a short explanation in Russian. Row <strong>Save</strong> uses <code>POST /api/db/weapons</code>. <strong>Save table to DB</strong> calls <code>PUT /api/db/weapons/replace</code> (truncates <code>weapons</code> and inserts all visible rows — the set must include <code>fist</code>). <strong>Download SQL</strong> / import: <code>GET/POST /api/db/weapons/sql-export|sql-import</code>. Damage type and category use dropdowns from distinct DB values (current cell value kept if not in list). Numeric <strong>-1</strong> in most combat columns means <em>not applicable</em> (stored as-is; battle code substitutes safe defaults — e.g. melee range 1, spread 0). For stat-effect columns, only exactly <strong>-1</strong> is N/A (other negatives can be real penalties).</p>
       <div class="row" id="createBar">
         <input id="c_code" placeholder="code" />
         <input id="c_name" placeholder="name" />
@@ -91,7 +94,7 @@ public static class BattleWeaponsDashboardPage
       { k: 'attackApCost', label: 'AP shot', title: 'Single shot AP cost' },
       { k: 'burstRounds', label: 'burst N', title: 'Burst: rounds per use' },
       { k: 'burstApCost', label: 'burst AP', title: 'Burst: AP cost' },
-      { k: 'spreadPenalty', label: 'spread', title: 'Spread penalty 0..1', step: 0.01, float: true },
+      { k: 'tightness', label: 'tight', title: 'Tightness 0..1 (higher = tighter grouping, better hit chance)', step: 0.01, float: true },
       { k: 'trajectoryHeight', label: 'traj', title: 'Trajectory height 0..3' },
       { k: 'quality', label: 'qual', title: 'Quality' },
       { k: 'weaponCondition', label: 'cond', title: 'Condition' },
@@ -114,6 +117,42 @@ public static class BattleWeaponsDashboardPage
       { k: '_del', label: '', type: 'del' },
       { k: '_save', label: '', type: 'btn' }
     ];
+
+    const PARAM_HELP_RU = {
+      id: 'Внутренний числовой id строки в таблице weapons (PostgreSQL).',
+      code: 'Уникальный код оружия: на него ссылаются клиент, экипировка и API. Менять у уже существующего оружия рискованно.',
+      name: 'Название для интерфейса и отладки.',
+      damageMin: 'Минимальный урон за одно попадание (в паре с максимумом задаёт разброс).',
+      damageMax: 'Максимальный урон за одно попадание.',
+      damageType: 'Тип урона (например physical). Задел под сопротивления и правила; не всё может уже учитываться в бою.',
+      range: 'Дальность атаки в гексах.',
+      inventorySlotWidth: 'Сколько ячеек сетки инвентаря занимает предмет по ширине: 1 или 2.',
+      attackApCost: 'Сколько очков действия (ОД) стоит один выстрел или удар.',
+      burstRounds: 'Сколько выстрелов в одной очереди.',
+      burstApCost: 'Сколько ОД стоит выстрел очередью целиком.',
+      tightness: 'Кучность оружия от 0 до 1: чем выше — тем кучнее стрельба и тем выше шанс попадания (из итоговой вероятности вычитается 1 − кучность).',
+      trajectoryHeight: 'Уровень «высоты» траектории для линии огня через стены (0…3). Чем больше число, тем реже преграда на пути блокирует выстрел.',
+      quality: 'Показатель качества предмета (торговля, износ и связанные правила — по дизайну игры).',
+      weaponCondition: 'Состояние / износ оружия.',
+      mass: 'Масса (число; конкретная единица — по дизайну: перегруз, требования и т.д.).',
+      caliber: 'Обозначение калибра (текст) для отображения и описания.',
+      armorPierce: 'Пробитие брони — задел под снижение защиты цели; в текущей версии сервера может не участвовать в расчёте боя.',
+      magazineSize: 'Патронов в магазине до перезарядки.',
+      reloadApCost: 'Очки действия на перезарядку.',
+      category: 'Категория оружия (холодное, лёгкое и т.д.): мастерство, UI и связанные правила.',
+      reqLevel: 'Минимальный уровень персонажа для использования.',
+      reqStrength: 'Требуемая сила для экипировки.',
+      reqEndurance: 'Требуемая выносливость.',
+      reqAccuracy: 'Требуемая меткость.',
+      reqMasteryCategory: 'Ключ категории мастерства, к которой относится оружие.',
+      statEffectStrength: 'Бонус или штраф к силе при экипировке. Для колонок stat-effect только −1 означает «не применимо».',
+      statEffectEndurance: 'Бонус или штраф к выносливости при экипировке. Только −1 = «не применимо».',
+      statEffectAccuracy: 'Бонус или штраф к меткости при экипировке. Только −1 = «не применимо».',
+      isSniper: 'Если включено, для шанса попадания используется отдельная (снайперская) зависимость от дистанции.',
+      iconKey: 'Имя ключа иконки на клиенте.',
+      _del: 'Удалить это оружие из базы (после подтверждения в диалоге).',
+      _save: 'Сохранить только эту строку на сервер (POST одной записи), не перезаписывая всю таблицу.'
+    };
 
     let metaDamageTypes = [];
     let metaCategories = [];
@@ -155,6 +194,7 @@ public static class BattleWeaponsDashboardPage
     function thFor(c) {
       const th = document.createElement('th');
       th.textContent = c.label;
+      th.dataset.paramKey = c.k;
       if (c.title) th.title = c.title;
       return th;
     }
@@ -162,6 +202,7 @@ public static class BattleWeaponsDashboardPage
     function inputFor(c, value, readOnly) {
       if (c.type === 'selectMeta') {
         const td = document.createElement('td');
+        td.dataset.paramKey = c.k;
         const sel = document.createElement('select');
         sel.setAttribute('data-field', c.k);
         if (readOnly || c.ro) sel.disabled = true;
@@ -173,6 +214,7 @@ public static class BattleWeaponsDashboardPage
       }
       if (c.type === 'del') {
         const td = document.createElement('td');
+        td.dataset.paramKey = c.k;
         const b = document.createElement('button');
         b.type = 'button';
         b.textContent = 'Delete';
@@ -182,6 +224,7 @@ public static class BattleWeaponsDashboardPage
       }
       if (c.type === 'cb') {
         const td = document.createElement('td');
+        td.dataset.paramKey = c.k;
         const cb = document.createElement('input');
         cb.type = 'checkbox';
         cb.setAttribute('data-field', c.k);
@@ -192,6 +235,7 @@ public static class BattleWeaponsDashboardPage
       }
       if (c.type === 'btn') {
         const td = document.createElement('td');
+        td.dataset.paramKey = c.k;
         const b = document.createElement('button');
         b.type = 'button';
         b.textContent = 'Save';
@@ -200,6 +244,7 @@ public static class BattleWeaponsDashboardPage
         return td;
       }
       const td = document.createElement('td');
+      td.dataset.paramKey = c.k;
       const i = document.createElement('input');
       i.type = c.type === 'text' ? 'text' : 'number';
       if (i.type === 'number') {
@@ -224,6 +269,7 @@ public static class BattleWeaponsDashboardPage
       if (k === 'reqLevel') return 1;
       if (k === 'damageMin' || k === 'damageMax') return 1;
       if (k === 'inventorySlotWidth') return 1;
+      if (k === 'tightness') return 1;
       return 0;
     }
 
@@ -232,6 +278,7 @@ public static class BattleWeaponsDashboardPage
       const frag = document.createDocumentFragment();
       COLS.filter(c => !c.ro && c.k !== '_save' && c.k !== '_del').forEach(c => {
         const lab = document.createElement('label');
+        lab.dataset.paramKey = c.k;
         lab.style.marginRight = '10px';
         lab.style.display = 'inline-flex';
         lab.style.alignItems = 'center';
@@ -239,15 +286,20 @@ public static class BattleWeaponsDashboardPage
         const span = document.createElement('span');
         span.textContent = (c.title || c.label) + ':';
         span.style.color = '#7f8ea3';
+        span.dataset.paramKey = c.k;
         lab.appendChild(span);
         if (c.type === 'cb') {
           const cb = document.createElement('input');
           cb.type = 'checkbox';
           cb.setAttribute('data-field', c.k);
+          cb.dataset.paramKey = c.k;
+          if (c.title) cb.title = c.title;
           lab.appendChild(cb);
         } else if (c.type === 'selectMeta') {
           const sel = document.createElement('select');
           sel.setAttribute('data-field', c.k);
+          sel.dataset.paramKey = c.k;
+          if (c.title) sel.title = c.title;
           const def = c.k === 'damageType' ? 'physical' : 'cold';
           fillSelect(sel, c.metaList, def, c.optionLabels);
           sel.style.width = c.wide ? '100px' : '72px';
@@ -260,6 +312,8 @@ public static class BattleWeaponsDashboardPage
             if (c.float) i.step = i.step || 'any';
           }
           i.setAttribute('data-field', c.k);
+          i.dataset.paramKey = c.k;
+          if (c.title) i.title = c.title;
           i.placeholder = c.k;
           i.style.width = c.wide ? '100px' : '64px';
           lab.appendChild(i);
@@ -278,7 +332,7 @@ public static class BattleWeaponsDashboardPage
         if (el.tagName === 'SELECT') o[k] = (el.value || '').trim();
         else if (el.type === 'checkbox') o[k] = !!el.checked;
         else if (el.type === 'number') {
-          if (k === 'spreadPenalty' || k === 'mass') o[k] = floatOr(el.value, 0);
+          if (k === 'tightness' || k === 'mass') o[k] = floatOr(el.value, 0);
           else o[k] = numOr(el.value, 0);
         }
         else o[k] = (el.value || '').trim();
@@ -442,6 +496,54 @@ public static class BattleWeaponsDashboardPage
       statusEl.textContent = 'saved new: ' + code;
       await load();
     });
+
+    (function initParamHelpRu() {
+      let pop = null;
+      function hidePop() {
+        if (!pop) return;
+        pop.classList.remove('visible');
+        pop.style.display = 'none';
+      }
+      function showPop(clientX, clientY, text) {
+        if (!pop) {
+          pop = document.createElement('div');
+          pop.className = 'param-help-pop';
+          pop.setAttribute('role', 'tooltip');
+          document.body.appendChild(pop);
+        }
+        pop.textContent = text;
+        pop.style.display = 'block';
+        pop.classList.add('visible');
+        const pad = 10;
+        requestAnimationFrame(() => {
+          const r = pop.getBoundingClientRect();
+          const vw = window.innerWidth;
+          const vh = window.innerHeight;
+          let left = clientX + pad;
+          let top = clientY + pad;
+          if (left + r.width > vw - 8) left = Math.max(8, vw - r.width - 8);
+          if (top + r.height > vh - 8) top = Math.max(8, clientY - r.height - pad);
+          pop.style.left = left + 'px';
+          pop.style.top = top + 'px';
+        });
+      }
+      document.addEventListener('contextmenu', (e) => {
+        const host = e.target.closest('[data-param-key]');
+        if (!host) return;
+        const text = PARAM_HELP_RU[host.dataset.paramKey];
+        if (!text) return;
+        e.preventDefault();
+        showPop(e.clientX, e.clientY, text);
+      }, true);
+      document.addEventListener('mousedown', (e) => {
+        if (e.button === 0) hidePop();
+      }, true);
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') hidePop();
+      });
+      window.addEventListener('scroll', hidePop, true);
+      window.addEventListener('resize', hidePop);
+    })();
 
     load();
   </script>

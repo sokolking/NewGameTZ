@@ -1,3 +1,5 @@
+using System;
+using System.Collections.Generic;
 using UnityEngine;
 
 /// <summary>
@@ -21,11 +23,26 @@ public static class WeaponCatalog
         return code.Trim().ToLowerInvariant();
     }
 
+    /// <summary>Server <c>weapons.category = cold</c> (and similar melee). Extend when adding new cold weapons.</summary>
+    private static readonly HashSet<string> ColdWeaponCodes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "fist",
+        "knife"
+    };
+
     /// <summary>Пистолет и револьвер — отдельный набор анимаций (idle/walk/run/sit с оружием в руках).</summary>
     public static bool IsPistolStyleWeapon(string code)
     {
         string n = NormalizeWeaponCode(code);
         return n == "gun" || n == "revolver";
+    }
+
+    /// <summary>Cold/melee stance idle and melee attack clips (standing). Mutually exclusive with <see cref="IsPistolStyleWeapon"/>.</summary>
+    public static bool IsColdWeapon(string code)
+    {
+        if (IsPistolStyleWeapon(code))
+            return false;
+        return ColdWeaponCodes.Contains(NormalizeWeaponCode(code));
     }
 
     /// <summary>Загрузка спрайта из Resources/WeaponIcons/{iconKeyOrCode}. Ключ — code или icon_key из БД.</summary>

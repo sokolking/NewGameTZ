@@ -1,8 +1,10 @@
 using System;
 using System.Collections;
+using System.Collections.Generic;
 using Newtonsoft.Json;
 using TMPro;
 using UnityEngine;
+using UnityEngine.EventSystems;
 using UnityEngine.UI;
 
 /// <summary>
@@ -22,10 +24,23 @@ public sealed class InventoryUI : MonoBehaviour
     [Tooltip("Text for AP:X attack cost with current weapon. Wire object named ItemAtionPointsCost in scene (legacy typo).")]
     [SerializeField] private TextMeshProUGUI _itemActionPointsCostTmp;
     [SerializeField] private Text _itemActionPointsCostLegacy;
+    [Header("Active item ammo donut")]
+    [SerializeField] private Graphic _activeItemAmmoDonutImage;
+    [SerializeField] private Text _activeItemAmmoText;
 
     private UserInventorySlotPayload[] _slots = new UserInventorySlotPayload[12];
+    private readonly Dictionary<string, WeaponDbRowPayload> _weaponRowsByCode = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, UserAmmoPackPayload> _ammoByCaliber = new(StringComparer.OrdinalIgnoreCase);
+    private string _ammoWeaponCodeApplied = "";
+    private int _ammoMagazineCapacity;
+    private int _ammoReserveRounds;
+    private ActiveItemAmmoDonutSlider _ammoDonutSlider;
+    private StripedDonutIndicator _ammoStripedIndicator;
     private BattleServerConnection _serverConnection;
     private int _lastDisplayedAttackApCost = int.MinValue;
+    private int _lastAmmoActionCount = -1;
+    private int _lastAmmoAp = int.MinValue;
+    private int _lastKnownReloadApCost = 1;
 
     private void Awake()
     {
@@ -34,6 +49,7 @@ public sealed class InventoryUI : MonoBehaviour
         _serverConnection = FindFirstObjectByType<BattleServerConnection>();
         ResolveHierarchyIfNeeded();
         ClearActiveWeaponPlaceholder();
+        TryResolveAmmoUi();
     }
 
     private void OnEnable()
@@ -67,6 +83,23 @@ public sealed class InventoryUI : MonoBehaviour
             _player.OnEquippedWeaponChanged -= OnPlayerEquippedWeaponChanged;
     }
 
+    private void Update()
+    {
+        if (_player == null)
+            _player = FindFirstObjectByType<Player>();
+        if (_player == null)
+            return;
+
+        var actions = _player.GetTurnActionsCopy();
+        int actionCount = actions != null ? actions.Length : 0;
+        int ap = _player.CurrentAp;
+        if (actionCount == _lastAmmoActionCount && ap == _lastAmmoAp)
+            return;
+        _lastAmmoActionCount = actionCount;
+        _lastAmmoAp = ap;
+        RefreshActiveItemAmmoUi();
+    }
+
     /// <summary>
     /// OnEnable срабатывает до Start у <see cref="BattleServerConnection"/>, поэтому первый запрос инвентаря
     /// мог уйти на localhost из инспектора. После идентификации боя URL уже верный — перезагружаем слоты.
@@ -93,6 +126,7 @@ public sealed class InventoryUI : MonoBehaviour
     {
         RefreshActiveWeaponIcon();
         RefreshItemActionPointsCostText();
+        RefreshActiveItemAmmoUi();
     }
 
     private void ResolveHierarchyIfNeeded()
@@ -169,6 +203,7 @@ public sealed class InventoryUI : MonoBehaviour
 
         if (_activeWeaponImage == null)
             TryResolveActiveWeaponImage();
+        TryResolveAmmoUi();
     }
 
     /// <summary>Новая иерархия: ActiveItemPanel (Canvas) → ActiveItem (Image). Старый вариант: один объект ActiveItem с Image.</summary>
@@ -189,6 +224,41 @@ public sealed class InventoryUI : MonoBehaviour
         var legacy = GameObject.Find(UiHierarchyNames.ActiveItem);
         if (legacy != null)
             _activeWeaponImage = legacy.GetComponent<Image>();
+    }
+
+    private void TryResolveAmmoUi()
+    {
+        var panelGo = GameObject.Find(UiHierarchyNames.ActiveItemPanel);
+        if (panelGo == null)
+            return;
+
+        if (_activeItemAmmoDonutImage == null)
+        {
+            Transform donutTr = panelGo.transform.Find(UiHierarchyNames.ActiveItemAmmoDonut)
+                               ?? FindChildRecursive(panelGo.transform, UiHierarchyNames.ActiveItemAmmoDonut);
+            if (donutTr == null)
+                return;
+            _activeItemAmmoDonutImage = donutTr.GetComponent<Graphic>();
+        }
+
+        if (_activeItemAmmoDonutImage != null)
+        {
+            _ammoDonutSlider = _activeItemAmmoDonutImage.GetComponent<ActiveItemAmmoDonutSlider>();
+            if (_ammoDonutSlider == null)
+                _ammoDonutSlider = _activeItemAmmoDonutImage.gameObject.AddComponent<ActiveItemAmmoDonutSlider>();
+            _ammoStripedIndicator = _activeItemAmmoDonutImage.GetComponent<StripedDonutIndicator>();
+            _ammoDonutSlider.OnValueChanged -= OnAmmoDonutValueChanged;
+            _ammoDonutSlider.OnValueChanged += OnAmmoDonutValueChanged;
+        }
+
+        if (_activeItemAmmoText == null)
+        {
+            Transform txtTr = panelGo.transform.Find(UiHierarchyNames.ActiveItemAmmoText)
+                             ?? FindChildRecursive(panelGo.transform, UiHierarchyNames.ActiveItemAmmoText);
+            if (txtTr == null)
+                return;
+            _activeItemAmmoText = txtTr.GetComponent<Text>();
+        }
     }
 
     private static Transform FindChildRecursive(Transform root, string name)
@@ -273,8 +343,65 @@ public sealed class InventoryUI : MonoBehaviour
             }
 
             ApplySlotsToCells();
+            yield return LoadAmmoAndWeaponsCoroutine(baseUrl, user, pass);
             OnPlayerEquippedWeaponChanged();
         }
+    }
+
+    public void ReloadInventoryFromServer()
+    {
+        StartCoroutine(LoadInventoryFromServerCoroutine());
+    }
+
+    private IEnumerator LoadAmmoAndWeaponsCoroutine(string baseUrl, string user, string pass)
+    {
+        string weaponsText = null;
+        string ammoText = null;
+        string weaponsErr = null;
+        string ammoErr = null;
+
+        string weaponsUrl = $"{baseUrl}/api/db/weapons?take=500";
+        string ammoUrl = $"{baseUrl}/api/db/user/ammo";
+        string ammoBody = JsonUtility.ToJson(new UserInventoryAuthJson { username = user, password = pass });
+
+        yield return HttpSimple.GetString(weaponsUrl, b => weaponsText = b, e => weaponsErr = e);
+        yield return HttpSimple.PostJson(ammoUrl, ammoBody, b => ammoText = b, e => ammoErr = e);
+
+        _weaponRowsByCode.Clear();
+        if (string.IsNullOrEmpty(weaponsErr) && !string.IsNullOrEmpty(weaponsText))
+        {
+            WeaponDbRowPayload[] rows = null;
+            try { rows = JsonConvert.DeserializeObject<WeaponDbRowPayload[]>(weaponsText); } catch { }
+            if (rows != null)
+            {
+                for (int i = 0; i < rows.Length; i++)
+                {
+                    var r = rows[i];
+                    if (r == null || string.IsNullOrWhiteSpace(r.code))
+                        continue;
+                    _weaponRowsByCode[r.code.Trim().ToLowerInvariant()] = r;
+                }
+            }
+        }
+
+        _ammoByCaliber.Clear();
+        if (string.IsNullOrEmpty(ammoErr) && !string.IsNullOrEmpty(ammoText))
+        {
+            UserAmmoPacksPayload payload = null;
+            try { payload = JsonConvert.DeserializeObject<UserAmmoPacksPayload>(ammoText); } catch { }
+            if (payload?.items != null)
+            {
+                for (int i = 0; i < payload.items.Length; i++)
+                {
+                    var it = payload.items[i];
+                    if (it == null || string.IsNullOrWhiteSpace(it.caliber))
+                        continue;
+                    _ammoByCaliber[it.caliber.Trim().ToLowerInvariant()] = it;
+                }
+            }
+        }
+
+        RefreshActiveItemAmmoUi(forceResetOnWeaponChange: true);
     }
 
     private void FillFallbackLocalIcons()
@@ -420,6 +547,95 @@ public sealed class InventoryUI : MonoBehaviour
             : WeaponIconHelper.LoadEquippedWeaponIcon(code);
         SetImageIcon(_activeWeaponImage, sp, ActiveIconSize);
     }
+
+    private void RefreshActiveItemAmmoUi(bool forceResetOnWeaponChange = false)
+    {
+        TryResolveAmmoUi();
+        if (_activeItemAmmoDonutImage == null || _activeItemAmmoText == null)
+            return;
+        if (_player == null)
+            _player = FindFirstObjectByType<Player>();
+        string weaponCode = _player != null ? WeaponCatalog.NormalizeWeaponCode(_player.WeaponCode) : WeaponCatalog.DefaultWeaponCode;
+        bool weaponChanged = !string.Equals(_ammoWeaponCodeApplied, weaponCode, StringComparison.OrdinalIgnoreCase);
+        if (weaponChanged)
+            _ammoWeaponCodeApplied = weaponCode;
+
+        if (!_weaponRowsByCode.TryGetValue(weaponCode, out var w))
+        {
+            SetAmmoUiVisible(false);
+            return;
+        }
+
+        int mag = Mathf.Max(0, w.magazineSize);
+        bool weaponUsesAmmo = mag > 0 && !WeaponCatalog.IsColdWeapon(weaponCode);
+        if (!weaponUsesAmmo)
+        {
+            SetAmmoUiVisible(false);
+            return;
+        }
+
+        _ammoMagazineCapacity = mag;
+        string cal = (w.caliber ?? string.Empty).Trim().ToLowerInvariant();
+        if (!string.IsNullOrEmpty(cal) && _ammoByCaliber.TryGetValue(cal, out var ammo))
+        {
+            int reserve = Mathf.Max(0, ammo.roundsCount > 0 ? ammo.roundsCount : ammo.totalRounds);
+            _ammoReserveRounds = reserve;
+            _player?.SetReserveAmmoRounds(reserve, notify: false);
+        }
+        int currentRounds = _player != null ? _player.CurrentMagazineRounds : _ammoMagazineCapacity;
+        // Initialize full magazine only once when local magazine state is not initialized yet.
+        if (_player != null && _player.MagazineCapacity <= 0 && currentRounds <= 0)
+            currentRounds = _ammoMagazineCapacity;
+        currentRounds = Mathf.Clamp(currentRounds, 0, _ammoMagazineCapacity);
+        _player?.SetMagazineState(_ammoMagazineCapacity, currentRounds, notify: false);
+
+        int spent = Mathf.Max(0, _ammoMagazineCapacity - currentRounds);
+        float fill = _ammoMagazineCapacity > 0 ? (float)spent / _ammoMagazineCapacity : 0f;
+        if (_ammoDonutSlider != null)
+            _ammoDonutSlider.SetValue01(fill, notify: false);
+        if (_ammoStripedIndicator != null)
+        {
+            _ammoStripedIndicator.SetStripeCount(_ammoMagazineCapacity);
+            _ammoStripedIndicator.SetValue01(fill);
+        }
+        int reloadApCost = Mathf.Max(1, w.reloadApCost);
+        _lastKnownReloadApCost = reloadApCost;
+        _activeItemAmmoText.text = $"{reloadApCost} AP";
+        SetAmmoUiVisible(true);
+    }
+
+    public int GetCurrentWeaponReloadApCost()
+    {
+        if (_player == null)
+            _player = FindFirstObjectByType<Player>();
+        string weaponCode = _player != null ? WeaponCatalog.NormalizeWeaponCode(_player.WeaponCode) : WeaponCatalog.DefaultWeaponCode;
+        if (_weaponRowsByCode.TryGetValue(weaponCode, out var w) && w != null)
+            return Mathf.Max(1, w.reloadApCost);
+        return Mathf.Max(1, _lastKnownReloadApCost);
+    }
+
+    private void OnAmmoDonutValueChanged(float value01)
+    {
+        if (_ammoMagazineCapacity <= 0)
+            return;
+        int shotsUsed = Mathf.Clamp(Mathf.RoundToInt(value01 * _ammoMagazineCapacity), 0, _ammoMagazineCapacity);
+        int currentRounds = Mathf.Max(0, _ammoMagazineCapacity - shotsUsed);
+        _player?.SetMagazineState(_ammoMagazineCapacity, currentRounds, notify: false);
+        float fill = _ammoMagazineCapacity > 0 ? (float)shotsUsed / _ammoMagazineCapacity : 0f;
+        if (_activeItemAmmoText != null && _weaponRowsByCode.TryGetValue(_ammoWeaponCodeApplied, out var row))
+            _activeItemAmmoText.text = $"{Mathf.Max(1, row.reloadApCost)} AP";
+    }
+
+    private void SetAmmoUiVisible(bool visible)
+    {
+        if (_activeItemAmmoDonutImage != null)
+            _activeItemAmmoDonutImage.enabled = visible;
+        if (_activeItemAmmoText != null)
+            _activeItemAmmoText.enabled = visible;
+    }
+
+    
+
 
     /// <summary>Убирает «белый квадрат» Unity UI Image без спрайта (до загрузки иконки).</summary>
     private void ClearActiveWeaponPlaceholder()

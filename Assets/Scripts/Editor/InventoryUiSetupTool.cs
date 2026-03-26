@@ -4,7 +4,9 @@ using UnityEngine;
 using UnityEngine.UI;
 
 /// <summary>
-/// Tools → Hex Grid → Setup Inventory UI — создаёт Inventory (12 ячеек), Canvas ActiveItemPanel → ActiveItem (Image), вешает InventoryUI и сохраняет сцену.
+/// Tools → Hex Grid → Setup Inventory UI — создаёт Inventory (12 ячеек), Canvas ActiveItemPanel
+/// с ActiveItem (Image), ActiveItemAmmoDonut (radial Image), ActiveItemAmmoText (Text),
+/// вешает InventoryUI и сохраняет сцену.
 /// Родитель: «Front Content Maker» (как у остального боя UI).
 /// </summary>
 public static class InventoryUiSetupTool
@@ -87,7 +89,10 @@ public static class InventoryUiSetupTool
         Debug.Log("[Inventory UI] Готово: Inventory + ActiveItemPanel → ActiveItem под «Front Content Maker». Сохрани сцену (Ctrl+S).");
     }
 
-    /// <summary>Canvas ActiveItemPanel с дочерним ActiveItem (Image). Возвращает дочерний объект для ссылки на Image.</summary>
+    /// <summary>
+    /// Canvas ActiveItemPanel с дочерними ActiveItem (Image), ActiveItemAmmoDonut (radial Image),
+    /// ActiveItemAmmoText (Text). Возвращает ActiveItem для ссылки в InventoryUI.
+    /// </summary>
     private static GameObject CreateActiveItemUnderPanel(Transform parent)
     {
         var panelGo = new GameObject(UiHierarchyNames.ActiveItemPanel);
@@ -119,8 +124,43 @@ public static class InventoryUiSetupTool
         img.color = Color.white;
         img.raycastTarget = false;
 
+        var donut = new GameObject(UiHierarchyNames.ActiveItemAmmoDonut);
+        donut.transform.SetParent(panelGo.transform, false);
+        var donutRt = donut.AddComponent<RectTransform>();
+        donutRt.anchorMin = new Vector2(0f, 0f);
+        donutRt.anchorMax = new Vector2(0f, 0f);
+        donutRt.pivot = new Vector2(0f, 0f);
+        donutRt.anchoredPosition = new Vector2(-2f, -2f);
+        donutRt.sizeDelta = new Vector2(68f, 68f);
+        var donutImg = donut.AddComponent<Image>();
+        donutImg.color = new Color(1f, 0.74f, 0.24f, 0.9f);
+        donutImg.raycastTarget = true;
+        donutImg.type = Image.Type.Filled;
+        donutImg.fillMethod = Image.FillMethod.Radial360;
+        donutImg.fillOrigin = (int)Image.Origin360.Top;
+        donutImg.fillClockwise = true;
+        donutImg.fillAmount = 0f;
+
+        var ammoTxt = new GameObject(UiHierarchyNames.ActiveItemAmmoText);
+        ammoTxt.transform.SetParent(panelGo.transform, false);
+        var ammoTxtRt = ammoTxt.AddComponent<RectTransform>();
+        ammoTxtRt.anchorMin = new Vector2(0f, 0f);
+        ammoTxtRt.anchorMax = new Vector2(0f, 0f);
+        ammoTxtRt.pivot = new Vector2(0f, 0f);
+        ammoTxtRt.anchoredPosition = new Vector2(0f, -20f);
+        ammoTxtRt.sizeDelta = new Vector2(150f, 18f);
+        var ammoTxtComp = ammoTxt.AddComponent<Text>();
+        ammoTxtComp.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+        ammoTxtComp.fontSize = 13;
+        ammoTxtComp.alignment = TextAnchor.MiddleLeft;
+        ammoTxtComp.color = new Color(0.92f, 0.92f, 0.92f, 0.95f);
+        ammoTxtComp.raycastTarget = false;
+        ammoTxtComp.text = "";
+
         Undo.RegisterCreatedObjectUndo(panelGo, "Inventory UI");
         Undo.RegisterCreatedObjectUndo(child, "Inventory UI");
+        Undo.RegisterCreatedObjectUndo(donut, "Inventory UI");
+        Undo.RegisterCreatedObjectUndo(ammoTxt, "Inventory UI");
         return child;
     }
 

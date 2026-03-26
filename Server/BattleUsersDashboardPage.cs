@@ -146,7 +146,8 @@ public static class BattleUsersDashboardPage
       padding: 8px 12px;
     }
     dialog#editUser,
-    dialog#invEditor {
+    dialog#invEditor,
+    dialog#ammoEditor {
       background: var(--panel);
       color: var(--text);
       border: 1px solid var(--border);
@@ -154,15 +155,18 @@ public static class BattleUsersDashboardPage
       padding: 0;
       max-width: min(420px, 96vw);
     }
-    dialog#invEditor {
+    dialog#invEditor,
+    dialog#ammoEditor {
       max-width: min(560px, 96vw);
     }
     dialog#editUser::backdrop,
-    dialog#invEditor::backdrop {
+    dialog#invEditor::backdrop,
+    dialog#ammoEditor::backdrop {
       background: rgba(0,0,0,.55);
     }
     dialog#editUser h3,
-    dialog#invEditor h3 {
+    dialog#invEditor h3,
+    dialog#ammoEditor h3 {
       margin: 0;
       padding: 14px 16px;
       font-size: 15px;
@@ -267,6 +271,21 @@ public static class BattleUsersDashboardPage
     </div>
   </dialog>
 
+  <dialog id="ammoEditor">
+    <h3>User ammo rounds</h3>
+    <p class="hint" style="margin:0 0 10px;font-size:12px;line-height:1.4;">
+      Configure ammo amount by caliber. Server stores only <strong>roundsCount</strong>.
+    </p>
+    <div id="ammoRows" style="display:flex;flex-direction:column;gap:8px;max-height:320px;overflow:auto;"></div>
+    <div class="edit-actions" style="margin-top:10px;">
+      <button type="button" id="ammoAddRow">Add row</button>
+    </div>
+    <div class="edit-actions">
+      <button type="button" id="ammoCancel">Cancel</button>
+      <button type="button" id="ammoSave">Save ammo</button>
+    </div>
+  </dialog>
+
   <script>
     const userListEl = document.getElementById('userList');
     const userSearchEl = document.getElementById('userSearch');
@@ -287,9 +306,16 @@ public static class BattleUsersDashboardPage
     const invAddRowBtn = document.getElementById('invAddRow');
     const invCancelBtn = document.getElementById('invCancel');
     const invSaveBtn = document.getElementById('invSave');
+    const ammoDialog = document.getElementById('ammoEditor');
+    const ammoRowsEl = document.getElementById('ammoRows');
+    const ammoAddRowBtn = document.getElementById('ammoAddRow');
+    const ammoCancelBtn = document.getElementById('ammoCancel');
+    const ammoSaveBtn = document.getElementById('ammoSave');
     let users = [];
     let weaponList = [];
+    let ammoTypeList = [];
     let invUserId = null;
+    let ammoUserId = null;
 
     function setStatus(text) {
       statusEl.textContent = text;
@@ -332,9 +358,11 @@ public static class BattleUsersDashboardPage
           </div>
           <button type="button" class="edit-btn">Edit</button>
           <button type="button" class="edit-btn" data-act="inv">Inventory</button>
+          <button type="button" class="edit-btn" data-act="ammo">Ammo</button>
         `;
         row.querySelector('.edit-btn').addEventListener('click', () => openEdit(user));
         row.querySelector('[data-act="inv"]').addEventListener('click', () => openInventoryEditor(user));
+        row.querySelector('[data-act="ammo"]').addEventListener('click', () => openAmmoEditor(user));
         userListEl.appendChild(row);
       }
     }
@@ -359,6 +387,11 @@ public static class BattleUsersDashboardPage
     function openInventoryEditor(user) {
       invUserId = user.id;
       loadInventoryForUser(user.id);
+    }
+
+    function openAmmoEditor(user) {
+      ammoUserId = user.id;
+      loadAmmoForUser(user.id);
     }
 
     async function loadInventoryForUser(id) {
@@ -485,6 +518,118 @@ public static class BattleUsersDashboardPage
       await loadUsers();
     });
 
+    function renderAmmoRows(items) {
+      ammoRowsEl.innerHTML = '';
+      for (const it of items) {
+        const wrap = document.createElement('div');
+        wrap.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;align-items:center;border:1px solid var(--border);border-radius:8px;padding:8px;';
+        const sel = document.createElement('select');
+        for (const a of ammoTypeList) {
+          const opt = document.createElement('option');
+          opt.value = a.caliber;
+          opt.textContent = a.caliber;
+          sel.appendChild(opt);
+        }
+        const cal = (it.caliber || '').trim();
+        if (cal && ![...sel.options].some(o => o.value === cal)) {
+          const opt = document.createElement('option');
+          opt.value = cal;
+          opt.textContent = cal + ' (missing in ammo list)';
+          sel.appendChild(opt);
+        }
+        if (sel.options.length && !cal)
+          sel.value = sel.options[0].value;
+        else
+          sel.value = cal;
+
+        const rounds = document.createElement('input');
+        rounds.type = 'number';
+        rounds.min = 0;
+        rounds.step = 1;
+        rounds.value = String(Math.max(0, Number(it.roundsCount || it.totalRounds || 0)));
+        rounds.style.width = '92px';
+        rounds.title = 'rounds count';
+
+        const info = document.createElement('span');
+        info.className = 'hint';
+        info.style.fontSize = '11px';
+        const updInfo = () => {
+          const r = Math.max(0, Number(rounds.value || 0));
+          info.textContent = r + ' rounds';
+        };
+        sel.addEventListener('change', updInfo);
+        rounds.addEventListener('input', updInfo);
+        updInfo();
+
+        const rm = document.createElement('button');
+        rm.type = 'button';
+        rm.textContent = 'Remove';
+        rm.addEventListener('click', () => wrap.remove());
+
+        wrap.appendChild(document.createTextNode('caliber '));
+        wrap.appendChild(sel);
+        wrap.appendChild(document.createTextNode('rounds '));
+        wrap.appendChild(rounds);
+        wrap.appendChild(info);
+        wrap.appendChild(rm);
+        ammoRowsEl.appendChild(wrap);
+      }
+    }
+
+    function collectAmmoRowsFromDom() {
+      const out = [];
+      for (const wrap of ammoRowsEl.children) {
+        const sel = wrap.querySelector('select');
+        const rounds = wrap.querySelector('input[type=number]');
+        if (!sel || !rounds) continue;
+        out.push({
+          caliber: (sel.value || '').trim(),
+          roundsCount: Math.max(0, Number(rounds.value || 0))
+        });
+      }
+      return out;
+    }
+
+    async function loadAmmoForUser(id) {
+      setStatus('loading ammo…');
+      const resp = await fetch('/api/db/users/' + id + '/ammo');
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        setStatus('ammo load failed: ' + (data.error || resp.status));
+        return;
+      }
+      const items = Array.isArray(data.items) ? data.items : [];
+      renderAmmoRows(items.length ? items : [{ caliber: (ammoTypeList[0] && ammoTypeList[0].caliber) || '', roundsCount: 0 }]);
+      ammoDialog.showModal();
+      setStatus('ammo loaded');
+    }
+
+    ammoAddRowBtn.addEventListener('click', () => {
+      const cur = collectAmmoRowsFromDom();
+      cur.push({ caliber: (ammoTypeList[0] && ammoTypeList[0].caliber) || '', roundsCount: 0 });
+      renderAmmoRows(cur);
+    });
+
+    ammoCancelBtn.addEventListener('click', () => ammoDialog.close());
+
+    ammoSaveBtn.addEventListener('click', async () => {
+      if (ammoUserId == null) return;
+      const payload = { items: collectAmmoRowsFromDom() };
+      setStatus('saving ammo…');
+      const resp = await fetch('/api/db/users/' + ammoUserId + '/ammo', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        setStatus('ammo save failed: ' + (data.error || resp.status));
+        return;
+      }
+      ammoDialog.close();
+      setStatus('ammo saved');
+    });
+
     editCancelBtn.addEventListener('click', () => editDialog.close());
 
     editForm.addEventListener('submit', async (e) => {
@@ -522,12 +667,14 @@ public static class BattleUsersDashboardPage
 
     async function loadUsers() {
       setStatus('loading users...');
-      const [usersResp, weaponsResp] = await Promise.all([
+      const [usersResp, weaponsResp, ammoResp] = await Promise.all([
         fetch('/api/db/users?take=200'),
-        fetch('/api/db/weapons?take=200')
+        fetch('/api/db/weapons?take=200'),
+        fetch('/api/db/ammo?take=300')
       ]);
       users = await usersResp.json();
       weaponList = await weaponsResp.json();
+      ammoTypeList = await ammoResp.json();
       renderUsers();
       setStatus(`loaded ${users.length} users`);
     }
