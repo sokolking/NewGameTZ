@@ -799,6 +799,15 @@ public class GameSession : MonoBehaviour
         if (playback == null || playback.Count == 0)
             yield break;
 
+        {
+            Player localForPhase = LocalPlayer;
+            if (localForPhase != null)
+            {
+                var anim = localForPhase.GetComponentInChildren<PlayerCharacterAnimator>();
+                anim?.ResetHexWalkPhaseForNewPath();
+            }
+        }
+
         int currentTick = -1;
         bool abortTimeline = false;
         var appliedMapTicks = new HashSet<int>();
@@ -1444,6 +1453,16 @@ public class GameSession : MonoBehaviour
         HexPosition to = action.toPosition;
         var path = new[] { new HexPosition(from.col, from.row), new HexPosition(to.col, to.row) };
 
+        bool prevMoveSameUnit = false;
+        if (playbackIndex > 0)
+        {
+            BattleExecutedAction prev = playback[playbackIndex - 1].Action;
+            if (prev != null && prev.succeeded
+                && string.Equals(prev.actionType, "MoveStep", StringComparison.OrdinalIgnoreCase)
+                && string.Equals(prev.unitId, action.unitId, StringComparison.Ordinal))
+                prevMoveSameUnit = true;
+        }
+
         bool nextMoveSameUnit = false;
         if (playbackIndex + 1 < playback.Count)
         {
@@ -1454,8 +1473,10 @@ public class GameSession : MonoBehaviour
                 nextMoveSameUnit = true;
         }
 
+        bool resetHex = !prevMoveSameUnit;
+
         if (isLocal && unit is Player local)
-            yield return local.PlayPathAnimation(path, driveCamera: false, clearMovementStateWhenDone: !nextMoveSameUnit);
+            yield return local.PlayPathAnimation(path, driveCamera: false, resetHexWalkPhase: resetHex, clearMovementStateWhenDone: !nextMoveSameUnit);
         else if (!isLocal && unit is RemoteBattleUnitView remote)
             yield return remote.PlayPathAnimation(path);
     }
