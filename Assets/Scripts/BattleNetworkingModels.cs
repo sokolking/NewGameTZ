@@ -1,4 +1,5 @@
 using System;
+using System.Globalization;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Converters;
 
@@ -6,6 +7,16 @@ using Newtonsoft.Json.Converters;
 /// Модели данных для обмена клиент–сервер по плану ServerSyncPlan.
 /// Сериализация в JSON (Unity JsonUtility или Newtonsoft) — использовать публичные поля или [SerializeField].
 /// </summary>
+
+/// <summary>Общие настройки Newtonsoft для пушей боя и загрузки хода по HTTP.</summary>
+public static class HopeBattleJson
+{
+    public static readonly JsonSerializerSettings DeserializeSettings = new JsonSerializerSettings
+    {
+        NullValueHandling = NullValueHandling.Ignore,
+        MissingMemberHandling = MissingMemberHandling.Ignore
+    };
+}
 
 [Serializable]
 public class HexPosition
@@ -71,6 +82,48 @@ public class BattleExecutedAction
     public string posture;
     public int damage;
     public bool targetDied;
+    /// <summary>Сервер: итоговая вероятность попадания (0…1); null если броска не было (например, только стена).</summary>
+    [JsonProperty("hitProbability")]
+    [JsonConverter(typeof(NullableDoubleNewtonsoftConverter))]
+    public double? hitProbability;
+    /// <summary>Сервер: результат броска; null если броска не было.</summary>
+    [JsonProperty("hitSucceeded")]
+    [JsonConverter(typeof(NullableBoolNewtonsoftConverter))]
+    public bool? hitSucceeded;
+    [JsonProperty("hitDebugDistance")]
+    public int? hitDebugDistance;
+    [JsonProperty("hitDebugPDistance")]
+    [JsonConverter(typeof(NullableDoubleNewtonsoftConverter))]
+    public double? hitDebugPDistance;
+    [JsonProperty("hitDebugTreeF")]
+    [JsonConverter(typeof(NullableDoubleNewtonsoftConverter))]
+    public double? hitDebugTreeF;
+    [JsonProperty("hitDebugRockF")]
+    [JsonConverter(typeof(NullableDoubleNewtonsoftConverter))]
+    public double? hitDebugRockF;
+    [JsonProperty("hitDebugCoverMul")]
+    [JsonConverter(typeof(NullableDoubleNewtonsoftConverter))]
+    public double? hitDebugCoverMul;
+    [JsonProperty("hitDebugAccBonus")]
+    [JsonConverter(typeof(NullableDoubleNewtonsoftConverter))]
+    public double? hitDebugAccBonus;
+    [JsonProperty("hitDebugWeaponTightness")]
+    [JsonConverter(typeof(NullableDoubleNewtonsoftConverter))]
+    public double? hitDebugWeaponTightness;
+    [JsonProperty("hitDebugSpreadRaw")]
+    [JsonConverter(typeof(NullableDoubleNewtonsoftConverter))]
+    public double? hitDebugSpreadRaw;
+    [JsonProperty("hitDebugSpread")]
+    [JsonConverter(typeof(NullableDoubleNewtonsoftConverter))]
+    public double? hitDebugSpread;
+    [JsonProperty("hitDebugTargetPosture")]
+    public string hitDebugTargetPosture;
+    [JsonProperty("hitDebugAnyTree")]
+    [JsonConverter(typeof(NullableBoolNewtonsoftConverter))]
+    public bool? hitDebugAnyTree;
+    [JsonProperty("hitDebugAnyRock")]
+    [JsonConverter(typeof(NullableBoolNewtonsoftConverter))]
+    public bool? hitDebugAnyRock;
 }
 
 /// <summary>Результат хода для одного игрока (часть TurnResult).</summary>
@@ -277,6 +330,93 @@ public class UserInventorySlotPayload
     public bool equipped;
     /// <summary>Second cell of a 2-slot weapon; not clickable.</summary>
     public bool continuation;
+}
+
+/// <summary>Newtonsoft + Unity: надёжный разбор <c>double?</c> из Integer/Float/String.</summary>
+public sealed class NullableDoubleNewtonsoftConverter : JsonConverter
+{
+    public override bool CanConvert(Type objectType) =>
+        objectType == typeof(double?) || objectType == typeof(double);
+
+    public override object ReadJson(JsonReader reader, Type objectType, object existingValue, JsonSerializer serializer)
+    {
+        switch (reader.TokenType)
+        {
+            case JsonToken.Null:
+            case JsonToken.Undefined:
+                return null;
+            case JsonToken.Float:
+            case JsonToken.Integer:
+                return Convert.ToDouble(reader.Value, CultureInfo.InvariantCulture);
+            case JsonToken.String:
+                if (reader.Value is string s && double.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out double d))
+                    return d;
+                return null;
+            default:
+                return null;
+        }
+    }
+
+    public override void WriteJson(JsonWriter writer, object value, JsonSerializer serializer)
+    {
+        if (value == null)
+        {
+            writer.WriteNull();
+            return;
+        }
+
+        if (value is double d)
+            writer.WriteValue(d);
+        else
+            writer.WriteNull();
+    }
+}
+
+/// <summary>Newtonsoft + Unity: надёжный разбор <c>bool?</c> из Bool/Integer/String.</summary>
+public sealed class NullableBoolNewtonsoftConverter : JsonConverter
+{
+    public override bool CanConvert(Type objectType) =>
+        objectType == typeof(bool?) || objectType == typeof(bool);
+
+    public override object ReadJson(JsonReader reader, Type objectType, object existingValue, JsonSerializer serializer)
+    {
+        switch (reader.TokenType)
+        {
+            case JsonToken.Null:
+            case JsonToken.Undefined:
+                return null;
+            case JsonToken.Boolean:
+                return (bool)reader.Value;
+            case JsonToken.Integer:
+                return Convert.ToInt32(reader.Value, CultureInfo.InvariantCulture) != 0;
+            case JsonToken.String:
+                if (reader.Value is string s)
+                {
+                    if (bool.TryParse(s, out bool b))
+                        return b;
+                    if (s == "1") return true;
+                    if (s == "0") return false;
+                }
+
+                return null;
+            default:
+                return null;
+        }
+    }
+
+    public override void WriteJson(JsonWriter writer, object value, JsonSerializer serializer)
+    {
+        if (value == null)
+        {
+            writer.WriteNull();
+            return;
+        }
+
+        if (value is bool b)
+            writer.WriteValue(b);
+        else
+            writer.WriteNull();
+    }
 }
 
 /// <summary>Newtonsoft: сервер отдаёт <c>unitType</c> как "Player"/"Mob", не как 0/1.</summary>

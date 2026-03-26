@@ -265,7 +265,7 @@ app.MapPost("/api/battle/join", (BattleRoomStore s, JoinRequest? body) =>
         username,
         characterLevel,
         accuracy,
-        weapon.SpreadPenalty,
+        weapon.Tightness,
         weapon.TrajectoryHeight,
         weapon.IsSniper);
     return Results.Json(resp, jsonOpt);
@@ -392,7 +392,7 @@ app.MapGet("/api/battle/{battleId}", (string battleId, BattleRoomStore s) =>
     if (room == null) return Results.Json(new { error = "Battle not found" }, statusCode: 404);
     var battleRecord = battleHistoryDb.GetBattle(battleId);
 
-    room.FillSpawnArrays(out var spawnIds, out var spawnCols, out var spawnRows, out var spawnCurrentAps, out var spawnMaxAps, out var spawnMaxHps, out var spawnCurrentHps, out var spawnCurrentPostures, out var spawnWeaponCodes, out var spawnWeaponDamageMins, out var spawnWeaponDamages, out var spawnWeaponRanges, out var spawnWeaponAttackApCosts, out var spawnWeaponSpreadPenalties, out var spawnWeaponTrajectoryHeights, out var spawnWeaponIsSnipers, out var spawnDisplayNames, out var spawnLevels);
+    room.FillSpawnArrays(out var spawnIds, out var spawnCols, out var spawnRows, out var spawnCurrentAps, out var spawnMaxAps, out var spawnMaxHps, out var spawnCurrentHps, out var spawnCurrentPostures, out var spawnWeaponCodes, out var spawnWeaponDamageMins, out var spawnWeaponDamages, out var spawnWeaponRanges, out var spawnWeaponAttackApCosts, out var spawnWeaponTightnesses, out var spawnWeaponTrajectoryHeights, out var spawnWeaponIsSnipers, out var spawnDisplayNames, out var spawnLevels);
     var response = new BattleStateResponse
     {
         RoundIndex = room.RoundIndex,
@@ -417,7 +417,7 @@ app.MapGet("/api/battle/{battleId}", (string battleId, BattleRoomStore s) =>
         SpawnWeaponDamages = spawnWeaponDamages,
         SpawnWeaponRanges = spawnWeaponRanges,
         SpawnWeaponAttackApCosts = spawnWeaponAttackApCosts,
-        SpawnWeaponSpreadPenalties = spawnWeaponSpreadPenalties,
+        SpawnWeaponTightnesses = spawnWeaponTightnesses,
         SpawnWeaponTrajectoryHeights = spawnWeaponTrajectoryHeights,
         SpawnWeaponIsSnipers = spawnWeaponIsSnipers,
         SpawnDisplayNames = spawnDisplayNames,
@@ -438,10 +438,10 @@ app.MapPost("/api/battle/{battleId}/equip-weapon", (string battleId, EquipWeapon
     string username = room.PlayerDisplayNames.GetValueOrDefault(body.PlayerId.Trim()) ?? body.PlayerId.Trim();
     if (!users.TryValidateEquippedWeaponForRegisteredUser(username, w.Code, out var invErr))
         return Results.Json(new { error = invErr ?? "weapon_not_allowed" }, jsonOpt, statusCode: 400);
-    if (!room.TryEquipWeapon(body.PlayerId.Trim(), w.Code, w.DamageMin, w.DamageMax, w.Range, w.AttackApCost, w.SpreadPenalty, w.TrajectoryHeight, w.IsSniper, out var fail))
+    if (!room.TryEquipWeapon(body.PlayerId.Trim(), w.Code, w.DamageMin, w.DamageMax, w.Range, w.AttackApCost, w.Tightness, w.TrajectoryHeight, w.IsSniper, out var fail))
         return Results.Json(new { error = fail ?? "equip_failed" }, statusCode: 400);
     users.SyncEquippedWeaponForRegisteredUser(username, w.Code);
-    return Results.Json(new { ok = true, weaponCode = w.Code, weaponDamageMin = w.DamageMin, weaponDamage = w.DamageMax, weaponRange = w.Range, weaponAttackApCost = w.AttackApCost, weaponSpreadPenalty = w.SpreadPenalty, weaponTrajectoryHeight = w.TrajectoryHeight, weaponIsSniper = w.IsSniper });
+    return Results.Json(new { ok = true, weaponCode = w.Code, weaponDamageMin = w.DamageMin, weaponDamage = w.DamageMax, weaponRange = w.Range, weaponAttackApCost = w.AttackApCost, weaponTightness = w.Tightness, weaponTrajectoryHeight = w.TrajectoryHeight, weaponIsSniper = w.IsSniper });
 });
 
 app.MapGet("/api/battle/{battleId}/turns/{turnId}", (string battleId, string turnId) =>
@@ -693,6 +693,25 @@ app.MapGet("/weapons", async (HttpContext ctx) =>
     await ctx.Response.WriteAsync(BattleWeaponsDashboardPage.Html);
 });
 app.MapGet("/obstacle-balance", () => Results.Content(BattleObstacleBalanceDashboardPage.Html, "text/html; charset=utf-8"));
+app.MapGet("/hit_formula.html", (IWebHostEnvironment env) =>
+{
+    string cr = env.ContentRootPath;
+    string[] candidates =
+    {
+        Path.Combine(cr, "hit_formula.html"),
+        Path.Combine(cr, "..", "hit_formula.html"),
+        Path.Combine(cr, "Server", "hit_formula.html"),
+    };
+    foreach (string candidate in candidates)
+    {
+        string full = Path.GetFullPath(candidate);
+        if (!File.Exists(full))
+            continue;
+        string html = File.ReadAllText(full);
+        return Results.Content(html, "text/html; charset=utf-8");
+    }
+    return Results.Content(HitFormulaPage.Html, "text/html; charset=utf-8");
+});
 
 // POST leave — только вне игровой сцены (отмена очереди с меню; в бою выход — disconnect WS + leave по сокету).
 app.MapPost("/api/battle/{battleId}/leave", (string battleId, string playerId, BattleRoomStore s) =>
@@ -753,7 +772,7 @@ public class BattleStateResponse
     public int[]? SpawnWeaponDamages { get; set; }
     public int[]? SpawnWeaponRanges { get; set; }
     public int[]? SpawnWeaponAttackApCosts { get; set; }
-    public double[]? SpawnWeaponSpreadPenalties { get; set; }
+    public double[]? SpawnWeaponTightnesses { get; set; }
     public int[]? SpawnWeaponTrajectoryHeights { get; set; }
     public bool[]? SpawnWeaponIsSnipers { get; set; }
     public string[]? SpawnDisplayNames { get; set; }
@@ -784,7 +803,8 @@ public class WeaponUpsertRequest
     public int range { get; set; }
     public string? iconKey { get; set; }
     public int attackApCost { get; set; } = 1;
-    public double spreadPenalty { get; set; }
+    /// <summary>Кучность 0…1: чем выше — тем кучнее (выше шанс попадания).</summary>
+    public double tightness { get; set; } = 1;
     public int trajectoryHeight { get; set; } = 1;
     public int quality { get; set; } = 100;
     public int weaponCondition { get; set; } = 100;
@@ -844,7 +864,7 @@ public class WeaponUpsertRequest
             Range = range,
             IconKey = iconKey ?? "",
             AttackApCost = attackApCost,
-            SpreadPenalty = spreadPenalty,
+            Tightness = tightness,
             TrajectoryHeight = trajectoryHeight,
             Quality = quality,
             WeaponCondition = weaponCondition,

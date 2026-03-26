@@ -89,8 +89,8 @@ public class BattleWeaponBrowseRowDto
     public string IconKey { get; set; } = "";
     /// <summary>Single attack AP cost. In DB, <c>-1</c> means N/A; combat uses 1.</summary>
     public int AttackApCost { get; set; } = 1;
-    /// <summary>Spread penalty (0…1). In DB, negative (e.g. <c>-1</c>) means N/A; combat uses 0.</summary>
-    public double SpreadPenalty { get; set; }
+    /// <summary>Кучность (0…1): чем выше — тем кучнее, тем выше шанс попадания. Колонка БД <c>spread_penalty</c> (историческое имя).</summary>
+    public double Tightness { get; set; } = 1.0;
     /// <summary>Trajectory height for LoS (0…3). In DB, <c>-1</c> means N/A; combat uses 0.</summary>
     public int TrajectoryHeight { get; set; } = 1;
     /// <summary>Только БД; в бой пока не входит.</summary>
@@ -148,7 +148,8 @@ public sealed class BattleWeaponUpsertDto
     public int Range { get; set; }
     public string IconKey { get; set; } = "";
     public int AttackApCost { get; set; } = 1;
-    public double SpreadPenalty { get; set; }
+    /// <summary>Кучность 0…1 (выше — лучше). В БД колонка <c>spread_penalty</c>.</summary>
+    public double Tightness { get; set; } = 1.0;
     public int TrajectoryHeight { get; set; } = 1;
     public int Quality { get; set; } = 100;
     public int WeaponCondition { get; set; } = 100;
@@ -189,6 +190,34 @@ public class ExecutedBattleActionDto
     public string? Posture { get; set; }
     public int Damage { get; set; }
     public bool TargetDied { get; set; }
+    /// <summary>Итоговая вероятность попадания (0…1) после дистанции, укрытия и меткости; null если броска не было (стена, промах валидации и т.п.).</summary>
+    public double? HitProbability { get; set; }
+    /// <summary>Результат броска по <see cref="HitProbability"/>; null если броска не было.</summary>
+    public bool? HitSucceeded { get; set; }
+    /// <summary>Hex distance shooter->target used in hit formula.</summary>
+    public int? HitDebugDistance { get; set; }
+    /// <summary>Base distance-only probability before cover/accuracy/spread.</summary>
+    public double? HitDebugPDistance { get; set; }
+    /// <summary>Tree cover factor in [0..1].</summary>
+    public double? HitDebugTreeF { get; set; }
+    /// <summary>Rock cover factor in [0..1].</summary>
+    public double? HitDebugRockF { get; set; }
+    /// <summary>Combined cover multiplier (treeF * rockF).</summary>
+    public double? HitDebugCoverMul { get; set; }
+    /// <summary>Accuracy additive bonus.</summary>
+    public double? HitDebugAccBonus { get; set; }
+    /// <summary>Weapon tightness T used in formula.</summary>
+    public double? HitDebugWeaponTightness { get; set; }
+    /// <summary>Raw spread from tightness: clamp(1 - T, 0..1).</summary>
+    public double? HitDebugSpreadRaw { get; set; }
+    /// <summary>Spread after combat clamp to 0.95.</summary>
+    public double? HitDebugSpread { get; set; }
+    /// <summary>Target posture used for rock-cover check.</summary>
+    public string? HitDebugTargetPosture { get; set; }
+    /// <summary>Whether any tree contributed to cover on this shot.</summary>
+    public bool? HitDebugAnyTree { get; set; }
+    /// <summary>Whether any rock contributed to cover on this shot.</summary>
+    public bool? HitDebugAnyRock { get; set; }
 }
 
 /// <summary>Команда юнита на один раунд (расширяемо под разные типы действий).</summary>
@@ -219,8 +248,8 @@ public class UnitStateDto
     public int WeaponAttackApCost { get; set; } = 1;
     /// <summary>Меткость: аддитивный бонус к p попадания (+2% за пункт после множителей дистанции и укрытия).</summary>
     public int Accuracy { get; set; } = 10;
-    /// <summary>Кучность оружия: вычитается из p (0…1).</summary>
-    public double WeaponSpreadPenalty { get; set; }
+    /// <summary>Кучность оружия <c>T</c> (0…1, выше — кучнее). В формуле попадания вычитается <c>clamp(1 − T, …)</c>. Колонка БД <c>spread_penalty</c> — историческое имя.</summary>
+    public double WeaponTightness { get; set; } = 1.0;
     /// <summary>Высота траектории выстрела для ЛС и стен (0 низкая, 1 обычная, 2 высокая).</summary>
     public int WeaponTrajectoryHeight { get; set; } = 1;
     /// <summary>Снайперское оружие: иная кривая p по дистанции за пределами дальности (урон без изменений).</summary>
@@ -253,7 +282,7 @@ public class PlayerTurnResultDto
     public int WeaponRange { get; set; } = 1;
     /// <summary>Стоимость атаки (ОД), фиксированная логикой боя.</summary>
     public int WeaponAttackApCost { get; set; } = 1;
-    public double WeaponSpreadPenalty { get; set; }
+    public double WeaponTightness { get; set; } = 1.0;
     public int WeaponTrajectoryHeight { get; set; } = 1;
     public bool WeaponIsSniper { get; set; }
     public ExecutedBattleActionDto[]? ExecutedActions { get; set; }
@@ -330,7 +359,7 @@ public class BattleStartedPayloadDto
     public int[]? SpawnWeaponDamageMins { get; set; }
     public int[]? SpawnWeaponRanges { get; set; }
     public int[]? SpawnWeaponAttackApCosts { get; set; }
-    public double[]? SpawnWeaponSpreadPenalties { get; set; }
+    public double[]? SpawnWeaponTightnesses { get; set; }
     public int[]? SpawnWeaponTrajectoryHeights { get; set; }
     public bool[]? SpawnWeaponIsSnipers { get; set; }
     public string[]? SpawnDisplayNames { get; set; }

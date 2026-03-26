@@ -82,8 +82,8 @@ public partial class BattleRoom
 
     /// <summary>Текущее состояние каждого игрока (позиция, ОД, штраф). Обновляется после каждого раунда.</summary>
     public Dictionary<string, PlayerBattleState> CurrentState { get; } = new();
-    /// <summary>Кортеж: … weaponDamageMin, weaponDamageMax, weaponRange, attackApCost, accuracy, spread, traj, sniper.</summary>
-    public Dictionary<string, (int maxHp, int maxAp, string weaponCode, int weaponDamageMin, int weaponDamageMax, int weaponRange, int weaponAttackApCost, int accuracy, double weaponSpreadPenalty, int weaponTrajectoryHeight, bool weaponIsSniper)> PlayerCombatProfiles { get; } = new();
+    /// <summary>Кортеж: … weaponDamageMin, weaponDamageMax, weaponRange, attackApCost, accuracy, tightness T, traj, sniper.</summary>
+    public Dictionary<string, (int maxHp, int maxAp, string weaponCode, int weaponDamageMin, int weaponDamageMax, int weaponRange, int weaponAttackApCost, int accuracy, double weaponTightness, int weaponTrajectoryHeight, bool weaponIsSniper)> PlayerCombatProfiles { get; } = new();
 
     /// <summary>Порядок отправки хода в текущем раунде (кто раньше отправил — выше приоритет на клетку).</summary>
     public List<string> SubmissionOrder { get; } = new();

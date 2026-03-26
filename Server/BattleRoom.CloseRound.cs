@@ -37,7 +37,7 @@ public partial class BattleRoom
         if (hexDistance <= 1)
             return 1.0;
         int dClamped = Math.Min(hexDistance, Math.Max(0, weaponRange));
-        double p = (wr + 1 - dClamped) / wr;
+        double p = (wr + 1 - dClamped) / (double)wr;
         if (p < 0)
             p = 0;
         if (p > 1)
@@ -411,16 +411,31 @@ public partial class BattleRoom
                                                 }
 
                                                 string tgtPostureHex = postureByUnit.TryGetValue(hexHitId, out var tpHex) ? NormalizePosture(tpHex) : PostureWalk;
-                                                double pHex = CombineHitProbability(
+                                                bool rockCoverHex = anyRockHex && (string.Equals(tgtPostureHex, PostureSit, StringComparison.OrdinalIgnoreCase)
+                                                    || string.Equals(tgtPostureHex, PostureHide, StringComparison.OrdinalIgnoreCase));
+                                                var hitDbgHex = BuildHitFormulaDebug(
                                                     GetBaseHitProbabilityFromRange(distHex, weaponRangeHex, unit.WeaponIsSniper),
                                                     anyTreeHex,
-                                                    anyRockHex && (string.Equals(tgtPostureHex, PostureSit, StringComparison.OrdinalIgnoreCase)
-                                                        || string.Equals(tgtPostureHex, PostureHide, StringComparison.OrdinalIgnoreCase)),
+                                                    rockCoverHex,
                                                     bal,
                                                     unit.Accuracy,
-                                                    unit.WeaponSpreadPenalty);
+                                                    unit.WeaponTightness);
 
-                                                bool hitHex = _rng.NextDouble() < pHex;
+                                                executed.HitProbability = hitDbgHex.Probability;
+                                                executed.HitDebugDistance = distHex;
+                                                executed.HitDebugPDistance = hitDbgHex.BasePDistance;
+                                                executed.HitDebugTreeF = hitDbgHex.TreeF;
+                                                executed.HitDebugRockF = hitDbgHex.RockF;
+                                                executed.HitDebugCoverMul = hitDbgHex.CoverMul;
+                                                executed.HitDebugAccBonus = hitDbgHex.AccBonus;
+                                                executed.HitDebugWeaponTightness = hitDbgHex.WeaponTightness;
+                                                executed.HitDebugSpreadRaw = hitDbgHex.SpreadRaw;
+                                                executed.HitDebugSpread = hitDbgHex.Spread;
+                                                executed.HitDebugTargetPosture = tgtPostureHex;
+                                                executed.HitDebugAnyTree = anyTreeHex;
+                                                executed.HitDebugAnyRock = anyRockHex;
+                                                bool hitHex = _rng.NextDouble() < hitDbgHex.Probability;
+                                                executed.HitSucceeded = hitHex;
                                                 if (!hitHex)
                                                 {
                                                     executed.Succeeded = true;
@@ -558,16 +573,31 @@ public partial class BattleRoom
                                     }
 
                                     string tgtPosture = postureByUnit.TryGetValue(resolvedTargetId, out var tp) ? NormalizePosture(tp) : PostureWalk;
-                                    double p = CombineHitProbability(
+                                    bool rockCover = anyRock && (string.Equals(tgtPosture, PostureSit, StringComparison.OrdinalIgnoreCase)
+                                        || string.Equals(tgtPosture, PostureHide, StringComparison.OrdinalIgnoreCase));
+                                    var hitDbg = BuildHitFormulaDebug(
                                         GetBaseHitProbabilityFromRange(dist, weaponRange, unit.WeaponIsSniper),
                                         anyTree,
-                                        anyRock && (string.Equals(tgtPosture, PostureSit, StringComparison.OrdinalIgnoreCase)
-                                            || string.Equals(tgtPosture, PostureHide, StringComparison.OrdinalIgnoreCase)),
+                                        rockCover,
                                         bal,
                                         unit.Accuracy,
-                                        unit.WeaponSpreadPenalty);
+                                        unit.WeaponTightness);
 
-                                    bool hit = _rng.NextDouble() < p;
+                                    executed.HitProbability = hitDbg.Probability;
+                                    executed.HitDebugDistance = dist;
+                                    executed.HitDebugPDistance = hitDbg.BasePDistance;
+                                    executed.HitDebugTreeF = hitDbg.TreeF;
+                                    executed.HitDebugRockF = hitDbg.RockF;
+                                    executed.HitDebugCoverMul = hitDbg.CoverMul;
+                                    executed.HitDebugAccBonus = hitDbg.AccBonus;
+                                    executed.HitDebugWeaponTightness = hitDbg.WeaponTightness;
+                                    executed.HitDebugSpreadRaw = hitDbg.SpreadRaw;
+                                    executed.HitDebugSpread = hitDbg.Spread;
+                                    executed.HitDebugTargetPosture = tgtPosture;
+                                    executed.HitDebugAnyTree = anyTree;
+                                    executed.HitDebugAnyRock = anyRock;
+                                    bool hit = _rng.NextDouble() < hitDbg.Probability;
+                                    executed.HitSucceeded = hit;
                                     if (!hit)
                                     {
                                         executed.Succeeded = true;
@@ -642,13 +672,13 @@ public partial class BattleRoom
                                 unit.WeaponDamage = wpn.DamageMax;
                                 unit.WeaponRange = wpn.Range;
                                 unit.WeaponAttackApCost = Math.Max(1, wpn.AttackApCost);
-                                unit.WeaponSpreadPenalty = Math.Clamp(wpn.SpreadPenalty, 0.0, 1.0);
+                                unit.WeaponTightness = Math.Clamp(wpn.Tightness, 0.0, 1.0);
                                 unit.WeaponTrajectoryHeight = Math.Clamp(wpn.TrajectoryHeight, 0, 3);
                                 unit.WeaponIsSniper = wpn.IsSniper;
                                 Units[uid] = unit;
 
                                 if (!string.IsNullOrEmpty(pid) && PlayerCombatProfiles.TryGetValue(pid, out var prof))
-                                    PlayerCombatProfiles[pid] = (prof.Item1, prof.Item2, wpn.Code, wpn.DamageMin, wpn.DamageMax, wpn.Range, Math.Max(1, wpn.AttackApCost), prof.Item7, unit.WeaponSpreadPenalty, unit.WeaponTrajectoryHeight, unit.WeaponIsSniper);
+                                    PlayerCombatProfiles[pid] = (prof.Item1, prof.Item2, wpn.Code, wpn.DamageMin, wpn.DamageMax, wpn.Range, Math.Max(1, wpn.AttackApCost), prof.Item7, unit.WeaponTightness, unit.WeaponTrajectoryHeight, unit.WeaponIsSniper);
                                 _userDb?.SyncEquippedWeaponForRegisteredUser(username, wpn.Code);
                                 executed.Succeeded = true;
                             }
@@ -728,7 +758,7 @@ public partial class BattleRoom
                 WeaponDamage = us.WeaponDamage,
                 WeaponRange = us.WeaponRange,
                 WeaponAttackApCost = Math.Max(1, us.WeaponAttackApCost),
-                WeaponSpreadPenalty = us.WeaponSpreadPenalty,
+                WeaponTightness = us.WeaponTightness,
                 WeaponTrajectoryHeight = us.WeaponTrajectoryHeight,
                 WeaponIsSniper = us.WeaponIsSniper,
                 ExecutedActions = unitActions.ToArray()

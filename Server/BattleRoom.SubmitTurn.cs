@@ -38,7 +38,7 @@ public partial class BattleRoom
                     WeaponRange = DefaultWeaponRange,
                     WeaponAttackApCost = GetWeaponAttackApCostFromDb(DefaultWeaponCode),
                     Accuracy = 10,
-                    WeaponSpreadPenalty = 0,
+                    WeaponTightness = 1.0,
                     WeaponTrajectoryHeight = 1,
                     WeaponIsSniper = false,
                     Posture = PostureWalk
