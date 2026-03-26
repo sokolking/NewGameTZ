@@ -121,7 +121,7 @@ public sealed class InventoryUI : MonoBehaviour
             StartCoroutine(LoadInventoryFromServerCoroutine());
     }
 
-    /// <summary>Базовый URL API для /api/db/user/inventory: сначала URL сессии (уже известен до Start), затем продакшен из меню, затем компонент соединения.</summary>
+    /// <summary>Базовый URL API для /api/db/user/items: сначала URL сессии (уже известен до Start), затем продакшен из меню, затем компонент соединения.</summary>
     private static string ResolveInventoryApiBaseUrl(BattleServerConnection connection)
     {
         if (!string.IsNullOrEmpty(BattleSessionState.ServerUrl))
@@ -299,7 +299,7 @@ public sealed class InventoryUI : MonoBehaviour
         return null;
     }
 
-    /// <summary>GET слотов с <c>/api/db/user/inventory</c>, заполнение ячеек; при ошибке — локальный fallback.</summary>
+    /// <summary>GET слотов с <c>/api/db/user/items</c>, заполнение ячеек; при ошибке — локальный fallback.</summary>
     private IEnumerator LoadInventoryFromServerCoroutine()
     {
         ResolveHierarchyIfNeeded();
@@ -317,7 +317,7 @@ public sealed class InventoryUI : MonoBehaviour
             yield break;
         }
 
-        string url = $"{baseUrl}/api/db/user/inventory";
+        string url = $"{baseUrl}/api/db/user/items";
         var body = JsonUtility.ToJson(new UserInventoryAuthJson { username = user, password = pass });
         string responseText = null;
         string err = null;
@@ -379,7 +379,7 @@ public sealed class InventoryUI : MonoBehaviour
             }
 
             ApplySlotsToCells();
-            yield return LoadAmmoAndWeaponsCoroutine(baseUrl, user, pass);
+            yield return LoadAmmoAndWeaponsCoroutine(baseUrl);
             OnPlayerEquippedWeaponChanged();
         }
     }
@@ -389,19 +389,14 @@ public sealed class InventoryUI : MonoBehaviour
         StartCoroutine(LoadInventoryFromServerCoroutine());
     }
 
-    private IEnumerator LoadAmmoAndWeaponsCoroutine(string baseUrl, string user, string pass)
+    private IEnumerator LoadAmmoAndWeaponsCoroutine(string baseUrl)
     {
         string weaponsText = null;
-        string ammoText = null;
         string weaponsErr = null;
-        string ammoErr = null;
 
         string weaponsUrl = $"{baseUrl}/api/db/weapons?take=500";
-        string ammoUrl = $"{baseUrl}/api/db/user/ammo";
-        string ammoBody = JsonUtility.ToJson(new UserInventoryAuthJson { username = user, password = pass });
 
         yield return HttpSimple.GetString(weaponsUrl, b => weaponsText = b, e => weaponsErr = e);
-        yield return HttpSimple.PostJson(ammoUrl, ammoBody, b => ammoText = b, e => ammoErr = e);
 
         _weaponRowsByCode.Clear();
         if (string.IsNullOrEmpty(weaponsErr) && !string.IsNullOrEmpty(weaponsText))
@@ -423,27 +418,40 @@ public sealed class InventoryUI : MonoBehaviour
         _ammoByCaliber.Clear();
         _localAmmoRoundsByCaliber.Clear();
         _localMagazineRoundsByWeapon.Clear();
-        if (string.IsNullOrEmpty(ammoErr) && !string.IsNullOrEmpty(ammoText))
-        {
-            UserAmmoPacksPayload payload = null;
-            try { payload = JsonConvert.DeserializeObject<UserAmmoPacksPayload>(ammoText); } catch { }
-            if (payload?.items != null)
-            {
-                for (int i = 0; i < payload.items.Length; i++)
-                {
-                    var it = payload.items[i];
-                    if (it == null || string.IsNullOrWhiteSpace(it.caliber))
-                        continue;
-                    string cal = it.caliber.Trim().ToLowerInvariant();
-                    int rounds = Mathf.Max(0, it.roundsCount > 0 ? it.roundsCount : it.totalRounds);
-                    _ammoByCaliber[cal] = it;
-                    _localAmmoRoundsByCaliber[cal] = rounds;
-                }
-            }
-        }
-
+        RebuildAmmoCacheFromSlots();
         RefreshActiveItemAmmoUi(forceResetOnWeaponChange: true);
         ApplySlotsToCells();
+    }
+
+    private void RebuildAmmoCacheFromSlots()
+    {
+        if (_slots == null || _slots.Length == 0)
+            return;
+
+        for (int i = 0; i < _slots.Length; i++)
+        {
+            var slot = _slots[i];
+            if (slot == null || !slot.stackable || slot.continuation)
+                continue;
+            string caliber = (slot.weaponCode ?? string.Empty).Trim().ToLowerInvariant();
+            if (string.IsNullOrEmpty(caliber))
+                continue;
+            int rounds = Mathf.Max(0, slot.quantity);
+            if (_localAmmoRoundsByCaliber.ContainsKey(caliber))
+                _localAmmoRoundsByCaliber[caliber] += rounds;
+            else
+                _localAmmoRoundsByCaliber[caliber] = rounds;
+        }
+
+        foreach (var kv in _localAmmoRoundsByCaliber)
+        {
+            _ammoByCaliber[kv.Key] = new UserAmmoPackPayload
+            {
+                caliber = kv.Key,
+                roundsCount = kv.Value,
+                totalRounds = kv.Value
+            };
+        }
     }
 
     private void FillFallbackLocalIcons()
@@ -711,7 +719,8 @@ public sealed class InventoryUI : MonoBehaviour
         }
 
         int mag = Mathf.Max(0, w.magazineSize);
-        bool weaponUsesAmmo = mag > 0 && !WeaponCatalog.IsColdWeapon(weaponCode);
+        string cal = (w.caliber ?? string.Empty).Trim().ToLowerInvariant();
+        bool weaponUsesAmmo = mag > 0 && !string.IsNullOrEmpty(cal);
         if (!weaponUsesAmmo)
         {
             SetAmmoUiVisible(false);
@@ -719,7 +728,6 @@ public sealed class InventoryUI : MonoBehaviour
         }
 
         _ammoMagazineCapacity = mag;
-        string cal = (w.caliber ?? string.Empty).Trim().ToLowerInvariant();
         if (!string.IsNullOrEmpty(cal) && _ammoByCaliber.TryGetValue(cal, out var ammo))
         {
             int serverReserve = Mathf.Max(0, ammo.roundsCount > 0 ? ammo.roundsCount : ammo.totalRounds);

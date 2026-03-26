@@ -668,15 +668,26 @@ public partial class BattleRoom
                         int magazineSize = GetWeaponMagazineSizeFromDb(unit.WeaponCode);
                         int before = Math.Max(0, unit.CurrentMagazineRounds);
                         int after = Math.Max(0, magazineSize);
+                        string reloadCaliber = "";
+                        if (_weaponDb != null && _weaponDb.TryGetWeaponByCode(unit.WeaponCode ?? DefaultWeaponCode, out var reloadWeaponDef))
+                            reloadCaliber = (reloadWeaponDef.Caliber ?? "").Trim().ToLowerInvariant();
+                        if (unit.UnitType == UnitType.Player && _userDb != null && !string.IsNullOrWhiteSpace(reloadCaliber))
+                        {
+                            string pid = PlayerToUnitId.FirstOrDefault(kv => kv.Value == uid).Key ?? uid;
+                            string username = PlayerDisplayNames.GetValueOrDefault(pid, pid);
+                            int reserveRounds = 0;
+                            _userDb.TryGetUserAmmoRounds(username, reloadCaliber, out reserveRounds);
+                            int canLoad = Math.Max(0, reserveRounds);
+                            int need = Math.Max(0, magazineSize - before);
+                            after = before + Math.Min(need, canLoad);
+                        }
                         int loaded = Math.Max(0, after - before);
                         unit.CurrentMagazineRounds = after;
                         Units[uid] = unit;
                         if (loaded > 0 && unit.UnitType == UnitType.Player)
                         {
                             string pid = PlayerToUnitId.FirstOrDefault(kv => kv.Value == uid).Key ?? uid;
-                            string caliber = "";
-                            if (_weaponDb != null && _weaponDb.TryGetWeaponByCode(unit.WeaponCode ?? DefaultWeaponCode, out var reloadWeapon))
-                                caliber = (reloadWeapon.Caliber ?? "").Trim().ToLowerInvariant();
+                            string caliber = reloadCaliber;
                             if (!string.IsNullOrWhiteSpace(caliber))
                             {
                                 if (!reloadedByPlayerAndCaliber.TryGetValue(pid, out var byCaliber))
@@ -723,7 +734,14 @@ public partial class BattleRoom
                                 unit.WeaponDamage = wpn.DamageMax;
                                 unit.WeaponRange = wpn.Range;
                                 unit.WeaponAttackApCost = Math.Max(1, wpn.AttackApCost);
-                                unit.CurrentMagazineRounds = GetWeaponMagazineSizeFromDb(wpn.Code);
+                                int equippedMag = GetWeaponMagazineSizeFromDb(wpn.Code);
+                                if (_userDb != null)
+                                {
+                                    int chamberFromDb;
+                                    if (_userDb.TryGetUserWeaponChamberRounds(username, wpn.Code, out chamberFromDb))
+                                        equippedMag = Math.Clamp(chamberFromDb, 0, Math.Max(0, wpn.MagazineSize));
+                                }
+                                unit.CurrentMagazineRounds = Math.Max(0, equippedMag);
                                 unit.WeaponTightness = Math.Clamp(wpn.Tightness, 0.0, 1.0);
                                 unit.WeaponTrajectoryHeight = Math.Clamp(wpn.TrajectoryHeight, 0, 3);
                                 unit.WeaponIsSniper = wpn.IsSniper;

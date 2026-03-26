@@ -509,58 +509,6 @@ app.MapPut("/api/db/users", (BattleUserDatabase users, UserUpdateRequest? body) 
     return Results.Ok(new { ok = true });
 });
 
-app.MapGet("/api/db/users/{userId:long}/inventory", (long userId, BattleUserDatabase users) =>
-{
-    if (!users.TryGetInventoryItemsForAdmin(userId, out var items, out var error))
-        return Results.Json(new { error = error ?? "not found" }, jsonOpt, statusCode: 404);
-    return Results.Json(new { items }, jsonOpt);
-});
-
-app.MapPut("/api/db/users/{userId:long}/inventory", async (long userId, BattleUserDatabase users, HttpContext ctx) =>
-{
-    UserInventoryReplaceHttpBody? body;
-    try
-    {
-        body = await JsonSerializer.DeserializeAsync<UserInventoryReplaceHttpBody>(ctx.Request.Body, jsonOpt);
-    }
-    catch
-    {
-        return Results.Json(new { error = "invalid JSON" }, jsonOpt, statusCode: 400);
-    }
-
-    if (body?.Items == null || body.Items.Count == 0)
-        return Results.Json(new { error = "items array required" }, jsonOpt, statusCode: 400);
-    if (!users.TryReplaceUserInventory(userId, body.Items, out var err))
-        return Results.Json(new { error = err ?? "replace failed" }, jsonOpt, statusCode: 400);
-    return Results.Ok(new { ok = true });
-});
-
-app.MapGet("/api/db/users/{userId:long}/ammo", (long userId, BattleUserDatabase users) =>
-{
-    if (!users.TryGetAmmoPacksForAdmin(userId, out var items, out var error))
-        return Results.Json(new { error = error ?? "not found" }, jsonOpt, statusCode: 404);
-    return Results.Json(new { items }, jsonOpt);
-});
-
-app.MapPut("/api/db/users/{userId:long}/ammo", async (long userId, BattleUserDatabase users, HttpContext ctx) =>
-{
-    UserAmmoReplaceHttpBody? body;
-    try
-    {
-        body = await JsonSerializer.DeserializeAsync<UserAmmoReplaceHttpBody>(ctx.Request.Body, jsonOpt);
-    }
-    catch
-    {
-        return Results.Json(new { error = "invalid JSON" }, jsonOpt, statusCode: 400);
-    }
-
-    if (body?.Items == null)
-        return Results.Json(new { error = "items array required" }, jsonOpt, statusCode: 400);
-    if (!users.TryReplaceUserAmmoPacks(userId, body.Items, out var err))
-        return Results.Json(new { error = err ?? "replace failed" }, jsonOpt, statusCode: 400);
-    return Results.Ok(new { ok = true });
-});
-
 app.MapGet("/api/db/users/{userId:long}/items", (long userId, BattleUserDatabase users) =>
 {
     if (!users.TryGetUserItemsForAdmin(userId, out var items, out var error))
@@ -587,22 +535,13 @@ app.MapPut("/api/db/users/{userId:long}/items", async (long userId, BattleUserDa
     return Results.Ok(new { ok = true });
 });
 
-app.MapPost("/api/db/user/inventory", (BattleUserDatabase users, UserInventoryAuthRequest? body) =>
+app.MapPost("/api/db/user/items", (BattleUserDatabase users, UserInventoryAuthRequest? body) =>
 {
     if (body == null || string.IsNullOrWhiteSpace(body.username))
         return Results.Json(new { error = "username required" }, jsonOpt, statusCode: 400);
     if (!users.TryGetInventory(body.username.Trim(), body.password ?? "", out var slots))
         return Results.Json(new { error = "Invalid credentials" }, jsonOpt, statusCode: 401);
     return Results.Json(new { slots }, jsonOpt);
-});
-
-app.MapPost("/api/db/user/ammo", (BattleUserDatabase users, UserInventoryAuthRequest? body) =>
-{
-    if (body == null || string.IsNullOrWhiteSpace(body.username))
-        return Results.Json(new { error = "username required" }, jsonOpt, statusCode: 400);
-    if (!users.TryGetAmmoPacks(body.username.Trim(), body.password ?? "", out var items))
-        return Results.Json(new { error = "Invalid credentials" }, jsonOpt, statusCode: 401);
-    return Results.Json(new { items }, jsonOpt);
 });
 
 app.MapPost("/api/db/user/profile", (BattleUserDatabase users, UserInventoryAuthRequest? body) =>
@@ -780,13 +719,26 @@ app.MapGet("/api/logs/stream", async (HttpContext ctx, BattleLogStore logs) =>
 app.MapGet("/logs", () => Results.Content(BattleLogDashboardPage.Html, "text/html; charset=utf-8"));
 app.MapGet("/db", () => Results.Content(BattleDbDashboardPage.Html, "text/html; charset=utf-8"));
 app.MapGet("/users", () => Results.Content(BattleUsersDashboardPage.Html, "text/html; charset=utf-8"));
+app.MapGet("/items", () => Results.Content(BattleItemsDashboardPage.Html, "text/html; charset=utf-8"));
 app.MapGet("/weapons", async (HttpContext ctx) =>
+{
+    ctx.Response.Headers.CacheControl = "no-store, max-age=0, must-revalidate";
+    ctx.Response.ContentType = "text/html; charset=utf-8";
+    await ctx.Response.WriteAsync(BattleItemsDashboardPage.Html);
+});
+app.MapGet("/ammo", async (HttpContext ctx) =>
+{
+    ctx.Response.Headers.CacheControl = "no-store, max-age=0, must-revalidate";
+    ctx.Response.ContentType = "text/html; charset=utf-8";
+    await ctx.Response.WriteAsync(BattleItemsDashboardPage.Html);
+});
+app.MapGet("/weapons-table", async (HttpContext ctx) =>
 {
     ctx.Response.Headers.CacheControl = "no-store, max-age=0, must-revalidate";
     ctx.Response.ContentType = "text/html; charset=utf-8";
     await ctx.Response.WriteAsync(BattleWeaponsDashboardPage.Html);
 });
-app.MapGet("/ammo", async (HttpContext ctx) =>
+app.MapGet("/ammo-table", async (HttpContext ctx) =>
 {
     ctx.Response.Headers.CacheControl = "no-store, max-age=0, must-revalidate";
     ctx.Response.ContentType = "text/html; charset=utf-8";
@@ -929,6 +881,8 @@ public class WeaponUpsertRequest
     public int burstApCost { get; set; }
     /// <summary>1 or 2 cells in the 12-slot grid (server clamps).</summary>
     public int inventorySlotWidth { get; set; } = 1;
+    /// <summary>Hand occupancy marker: 0, 1 or 2.</summary>
+    public int inventoryGrid { get; set; } = 1;
 
     public BattleWeaponUpsertDto ToUpsertDto()
     {
@@ -986,7 +940,8 @@ public class WeaponUpsertRequest
             StatEffectAccuracy = statEffectAccuracy,
             DamageType = damageType ?? "physical",
             BurstRounds = burstRounds,
-            BurstApCost = burstApCost
+            BurstApCost = burstApCost,
+            InventoryGrid = inventoryGrid
         };
     }
 }

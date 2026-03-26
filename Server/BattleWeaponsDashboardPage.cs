@@ -91,6 +91,7 @@ public static class BattleWeaponsDashboardPage
       { k: 'damageMax', label: 'dmg↑', title: 'Damage max' },
       { k: 'damageType', label: 'dmg type', title: 'Damage type', type: 'selectMeta', metaList: 'damageTypes', wide: true },
       { k: 'range', label: 'range', title: 'Range (hexes)' },
+      { k: 'inventoryGrid', label: 'hand', title: 'Hand occupancy marker: 0, 1 or 2' },
       { k: 'inventorySlotWidth', label: 'inv W', title: 'Inventory grid width: 1 or 2 cells' },
       { k: 'attackApCost', label: 'AP shot', title: 'Single shot AP cost' },
       { k: 'burstRounds', label: 'burst N', title: 'Burst: rounds per use' },
@@ -127,6 +128,7 @@ public static class BattleWeaponsDashboardPage
       damageMax: 'Максимальный урон за одно попадание.',
       damageType: 'Тип урона (например physical). Задел под сопротивления и правила; не всё может уже учитываться в бою.',
       range: 'Дальность атаки в гексах.',
+      inventoryGrid: 'Маркер занятости в руках: 0, 1 или 2 (для будущих механик рук/перкoв).',
       inventorySlotWidth: 'Сколько ячеек сетки инвентаря занимает предмет по ширине: 1 или 2.',
       attackApCost: 'Сколько очков действия (ОД) стоит один выстрел или удар.',
       burstRounds: 'Сколько выстрелов в одной очереди.',
@@ -158,6 +160,7 @@ public static class BattleWeaponsDashboardPage
     let metaDamageTypes = [];
     let metaCategories = [];
     let metaCalibers = [];
+    const initialCategory = new URLSearchParams(window.location.search).get('category') || '';
 
     async function refreshMeta() {
       const [weaponsMetaResp, ammoResp] = await Promise.all([
@@ -353,6 +356,8 @@ public static class BattleWeaponsDashboardPage
         }
         else o[k] = (el.value || '').trim();
       });
+      if (String(o.category || '').toLowerCase() === 'cold')
+        o.range = 1;
       return o;
     }
 
@@ -461,7 +466,11 @@ public static class BattleWeaponsDashboardPage
       await refreshMeta();
       buildCreatePanel();
       const resp = await fetch('/api/db/weapons?take=500', { cache: 'no-store' });
-      const list = await resp.json();
+      let list = await resp.json();
+      if (initialCategory) {
+        const c = String(initialCategory).toLowerCase();
+        list = (Array.isArray(list) ? list : []).filter(w => String(w?.category || '').toLowerCase() === c);
+      }
       rowsEl.innerHTML = '';
       for (const w of list) rowsEl.appendChild(rowFromWeapon(w));
       statusEl.textContent = 'loaded ' + list.length + ' weapons';

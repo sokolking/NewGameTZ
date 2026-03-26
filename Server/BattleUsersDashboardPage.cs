@@ -457,7 +457,9 @@ public static class BattleUsersDashboardPage
             if (chamber.disabled) chamber.value = '0';
             else chamber.value = String(Math.min(Math.max(0, Number(it.chamberRounds || chamber.value || 0)), magSize));
             eqLab.style.display = '';
-            info.textContent = 'uses ' + weaponSlotWidth(code.value) + ' cell(s), mag ' + magSize;
+            const weaponDef = weaponList.find(x => x.code === code.value);
+            const hand = weaponDef && weaponDef.inventoryGrid != null ? Number(weaponDef.inventoryGrid) : 1;
+            info.textContent = 'uses ' + weaponSlotWidth(code.value) + ' cell(s), hand ' + hand + ', mag ' + magSize;
           } else {
             addAmmoOptions(code, it.code || '');
             slot.disabled = false;
@@ -466,7 +468,9 @@ public static class BattleUsersDashboardPage
             chamber.value = '0';
             eq.checked = false;
             eqLab.style.display = 'none';
-            info.textContent = 'stackable item, 1 cell';
+            const ammoDef = ammoTypeList.find(x => x.caliber === code.value);
+            const hand = ammoDef && ammoDef.inventoryGrid != null ? Number(ammoDef.inventoryGrid) : 1;
+            info.textContent = 'stackable item, 1 cell, hand ' + hand;
           }
         }
 
@@ -487,9 +491,13 @@ public static class BattleUsersDashboardPage
             chamber.max = String(Math.max(0, magSize));
             if (chamber.disabled) chamber.value = '0';
             else chamber.value = String(Math.min(Math.max(0, Number(chamber.value || 0)), magSize));
-            info.textContent = 'uses ' + weaponSlotWidth(code.value) + ' cell(s), mag ' + magSize;
+            const weaponDef = weaponList.find(x => x.code === code.value);
+            const hand = weaponDef && weaponDef.inventoryGrid != null ? Number(weaponDef.inventoryGrid) : 1;
+            info.textContent = 'uses ' + weaponSlotWidth(code.value) + ' cell(s), hand ' + hand + ', mag ' + magSize;
           } else {
-            info.textContent = 'stackable item, 1 cell';
+            const ammoDef = ammoTypeList.find(x => x.caliber === code.value);
+            const hand = ammoDef && ammoDef.inventoryGrid != null ? Number(ammoDef.inventoryGrid) : 1;
+            info.textContent = 'stackable item, 1 cell, hand ' + hand;
           }
         });
         syncUi();

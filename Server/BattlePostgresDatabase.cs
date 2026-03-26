@@ -51,16 +51,30 @@ CREATE INDEX IF NOT EXISTS ix_user_inventory_items_user_id ON user_inventory_ite
 CREATE UNIQUE INDEX IF NOT EXISTS uq_user_inv_user_weapon_lower
     ON user_inventory_items (user_id, lower(weapon_code));
 
+CREATE TABLE IF NOT EXISTS items (
+    id BIGSERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    mass DOUBLE PRECISION NOT NULL DEFAULT 0,
+    quality INT NOT NULL DEFAULT 100,
+    condition INT NOT NULL DEFAULT 100,
+    icon_key TEXT NOT NULL DEFAULT '',
+    type TEXT NOT NULL,
+    inventorygrid SMALLINT NOT NULL DEFAULT 1,
+    CONSTRAINT chk_items_inventorygrid CHECK (inventorygrid IN (0, 1, 2))
+);
+
 CREATE TABLE IF NOT EXISTS ammo_types (
     id BIGSERIAL PRIMARY KEY,
+    item_id BIGINT REFERENCES items(id) ON DELETE SET NULL,
     caliber TEXT NOT NULL UNIQUE,
     unit_weight DOUBLE PRECISION NOT NULL DEFAULT 0,
     icon_key TEXT NOT NULL DEFAULT '',
-    rounds_per_pack INT NOT NULL DEFAULT 1,
-    CONSTRAINT chk_ammo_types_unit_weight CHECK (unit_weight >= 0),
-    CONSTRAINT chk_ammo_types_rounds_per_pack CHECK (rounds_per_pack > 0)
+    CONSTRAINT chk_ammo_types_unit_weight CHECK (unit_weight >= 0)
 );
+ALTER TABLE ammo_types ADD COLUMN IF NOT EXISTS item_id BIGINT REFERENCES items(id) ON DELETE SET NULL;
 ALTER TABLE ammo_types ADD COLUMN IF NOT EXISTS icon_key TEXT NOT NULL DEFAULT '';
+ALTER TABLE ammo_types DROP CONSTRAINT IF EXISTS chk_ammo_types_rounds_per_pack;
+ALTER TABLE ammo_types DROP COLUMN IF EXISTS rounds_per_pack;
 
 CREATE TABLE IF NOT EXISTS battles (
     battle_id TEXT PRIMARY KEY,
@@ -122,11 +136,9 @@ CREATE INDEX IF NOT EXISTS ix_user_ammo_packs_user_id ON user_ammo_packs (user_i
 ALTER TABLE user_ammo_packs ADD COLUMN IF NOT EXISTS rounds_count INT NOT NULL DEFAULT 0;
 ALTER TABLE user_ammo_packs ADD COLUMN IF NOT EXISTS start_slot INT NOT NULL DEFAULT 0;
 UPDATE user_ammo_packs SET start_slot = 0 WHERE start_slot < 0 OR start_slot > 11;
-UPDATE user_ammo_packs uap
-SET rounds_count = GREATEST(0, uap.packs_count) * GREATEST(0, at.rounds_per_pack)
-FROM ammo_types at
-WHERE at.id = uap.ammo_type_id
-  AND (uap.rounds_count IS NULL OR uap.rounds_count = 0);
+UPDATE user_ammo_packs
+SET rounds_count = GREATEST(0, packs_count)
+WHERE rounds_count IS NULL OR rounds_count < 0;
 
 INSERT INTO users (username, password, experience, strength, endurance, accuracy, max_hp, max_ap)
 VALUES
@@ -157,6 +169,7 @@ WHERE NOT EXISTS (SELECT 1 FROM battle_obstacle_balance WHERE id = 1);
 
 CREATE TABLE IF NOT EXISTS weapons (
     id BIGSERIAL PRIMARY KEY,
+    item_id BIGINT REFERENCES items(id) ON DELETE SET NULL,
     code TEXT NOT NULL UNIQUE,
     name TEXT NOT NULL,
     damage INT NOT NULL DEFAULT 1,
@@ -188,6 +201,7 @@ CREATE TABLE IF NOT EXISTS weapons (
     burst_rounds INT NOT NULL DEFAULT 0,
     burst_ap_cost INT NOT NULL DEFAULT 0
 );
+ALTER TABLE weapons ADD COLUMN IF NOT EXISTS item_id BIGINT REFERENCES items(id) ON DELETE SET NULL;
 
 ALTER TABLE weapons ADD COLUMN IF NOT EXISTS spread_penalty REAL NOT NULL DEFAULT 0;
 ALTER TABLE weapons ADD COLUMN IF NOT EXISTS trajectory_height INT NOT NULL DEFAULT 1;
@@ -237,11 +251,39 @@ VALUES ('fist', 'Fist', 1, 1, 'fist', 3, 1.0, 1, 100, 100, FALSE,
     0, '', 0, 0, 0, 'cold', 1, 'physical', 1, 1)
 ON CONFLICT (code) DO NOTHING;
 
-INSERT INTO ammo_types (caliber, unit_weight, icon_key, rounds_per_pack)
-SELECT DISTINCT LOWER(TRIM(w.caliber)), 0.02, '', 30
+INSERT INTO items (name, mass, quality, condition, icon_key, type, inventorygrid)
+SELECT w.name, w.mass, w.quality, w.weapon_condition, w.icon_key, 'weapon', LEAST(2, GREATEST(0, w.inventory_slot_width))
+FROM weapons w
+WHERE w.item_id IS NULL
+ON CONFLICT DO NOTHING;
+
+UPDATE weapons w
+SET item_id = i.id
+FROM items i
+WHERE w.item_id IS NULL
+  AND i.type = 'weapon'
+  AND i.name = w.name
+  AND i.icon_key = w.icon_key;
+
+INSERT INTO ammo_types (caliber, unit_weight, icon_key)
+SELECT DISTINCT LOWER(TRIM(w.caliber)), 0.02, ''
 FROM weapons w
 WHERE TRIM(w.caliber) <> ''
 ON CONFLICT (caliber) DO NOTHING;
+
+INSERT INTO items (name, mass, quality, condition, icon_key, type, inventorygrid)
+SELECT at.caliber, at.unit_weight, 100, 100, at.icon_key, 'ammo', 1
+FROM ammo_types at
+WHERE at.item_id IS NULL
+ON CONFLICT DO NOTHING;
+
+UPDATE ammo_types at
+SET item_id = i.id
+FROM items i
+WHERE at.item_id IS NULL
+  AND i.type = 'ammo'
+  AND i.name = at.caliber
+  AND i.icon_key = at.icon_key;
 
 CREATE TABLE IF NOT EXISTS body_parts (
     id SMALLINT PRIMARY KEY CHECK (id > 0),

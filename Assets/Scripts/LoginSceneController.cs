@@ -86,7 +86,7 @@ public class LoginSceneController : MonoBehaviour
     private IEnumerator CoTryLogin(string username, string password, bool solo, bool debug, string baseUrl)
     {
         _busy = true;
-        string url = baseUrl + "/api/db/user/inventory";
+        string url = baseUrl + "/api/db/user/items";
         string json = JsonUtility.ToJson(new InventoryAuthJson { username = username, password = password });
 
         bool success = false;

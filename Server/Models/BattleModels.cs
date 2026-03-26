@@ -131,6 +131,8 @@ public class BattleWeaponBrowseRowDto
     public int BurstApCost { get; set; }
     /// <summary>Inventory grid width: 1 or 2 cells (server clamps).</summary>
     public int InventorySlotWidth { get; set; } = 1;
+    /// <summary>Hand slots consumed by item in inventory grid: 0, 1 or 2.</summary>
+    public int InventoryGrid { get; set; } = 1;
 }
 
 /// <summary>Distinct <c>damage_type</c> / <c>category</c> values for weapons admin UI.</summary>
@@ -175,6 +177,8 @@ public sealed class BattleWeaponUpsertDto
     public int BurstApCost { get; set; }
     /// <summary>1 or 2 inventory cells per instance.</summary>
     public int InventorySlotWidth { get; set; } = 1;
+    /// <summary>Hand slots consumed by item in inventory grid: 0, 1 or 2.</summary>
+    public int InventoryGrid { get; set; } = 1;
 }
 
 public class ExecutedBattleActionDto
@@ -506,69 +510,58 @@ public sealed class UserInventoryItemAdminDto
     public bool IsEquipped { get; set; }
 }
 
-/// <summary>Payload item for replacing a user&apos;s inventory (no <see cref="UserInventoryItemAdminDto.Id"/>).</summary>
-public sealed class UserInventoryItemReplaceDto
-{
-    public int StartSlot { get; set; }
-    public string WeaponCode { get; set; } = "";
-    /// <summary>Ignored on save: width comes from <c>weapons.inventory_slot_width</c>.</summary>
-    public int SlotWidth { get; set; } = 1;
-    public int ChamberRounds { get; set; }
-    public bool IsEquipped { get; set; }
-}
-
-/// <summary>HTTP body for <c>PUT /api/db/users/{{id}}/inventory</c>.</summary>
-public sealed class UserInventoryReplaceHttpBody
-{
-    public List<UserInventoryItemReplaceDto> Items { get; set; } = new();
-}
-
 public sealed class AmmoTypeDto
 {
     public long Id { get; set; }
+    public long ItemId { get; set; }
     public string Caliber { get; set; } = "";
+    public string Name { get; set; } = "";
     public double UnitWeight { get; set; }
+    public int Quality { get; set; } = 100;
+    public int Condition { get; set; } = 100;
     public string IconKey { get; set; } = "";
+    public int InventoryGrid { get; set; } = 1;
 }
 
 public sealed class AmmoTypeUpsertRequest
 {
     public string Caliber { get; set; } = "";
+    public string Name { get; set; } = "";
     public double UnitWeight { get; set; }
+    public int Quality { get; set; } = 100;
+    public int Condition { get; set; } = 100;
     public string? IconKey { get; set; }
+    public int InventoryGrid { get; set; } = 1;
 }
 
 public sealed class UserAmmoPackAdminDto
 {
     public long Id { get; set; }
     public long AmmoTypeId { get; set; }
+    public long ItemId { get; set; }
     public string Caliber { get; set; } = "";
+    public string Name { get; set; } = "";
     public double UnitWeight { get; set; }
+    public int Quality { get; set; } = 100;
+    public int Condition { get; set; } = 100;
     public string IconKey { get; set; } = "";
+    public int InventoryGrid { get; set; } = 1;
     public int StartSlot { get; set; }
     public int RoundsCount { get; set; }
     public int PacksCount { get; set; }
     public int TotalRounds { get; set; }
-}
-
-public sealed class UserAmmoPackReplaceDto
-{
-    public string Caliber { get; set; } = "";
-    public int StartSlot { get; set; }
-    public int RoundsCount { get; set; }
-    public int PacksCount { get; set; }
-    public int TotalRounds { get; set; }
-}
-
-public sealed class UserAmmoReplaceHttpBody
-{
-    public List<UserAmmoPackReplaceDto> Items { get; set; } = new();
 }
 
 public sealed class UserItemAdminDto
 {
     public string ItemType { get; set; } = "";
     public string Code { get; set; } = "";
+    public string Name { get; set; } = "";
+    public string IconKey { get; set; } = "";
+    public int Quality { get; set; } = 100;
+    public int Condition { get; set; } = 100;
+    public double Mass { get; set; }
+    public int InventoryGrid { get; set; } = 1;
     public int Quantity { get; set; }
     public int ChamberRounds { get; set; }
     public int StartSlot { get; set; } = -1;

@@ -41,7 +41,11 @@ public static class BattleAmmoDashboardPage
       <p class="hint">Rows are upserted by <code>caliber</code> using <code>POST /api/db/ammo</code>.</p>
       <div class="row">
         <input id="c_caliber" placeholder="caliber" />
+        <input id="c_name" placeholder="name" />
         <input id="c_unitWeight" type="number" step="0.01" min="0" placeholder="unitWeight" />
+        <input id="c_quality" type="number" min="0" step="1" placeholder="quality" value="100" />
+        <input id="c_condition" type="number" min="0" step="1" placeholder="condition" value="100" />
+        <input id="c_inventoryGrid" type="number" min="0" max="2" step="1" placeholder="inventoryGrid" value="1" />
         <input id="c_iconKey" placeholder="iconKey" />
         <button id="createSaveBtn" type="button">Save new</button>
         <button id="reloadBtn" type="button">Reload table</button>
@@ -55,8 +59,12 @@ public static class BattleAmmoDashboardPage
           <thead>
             <tr>
               <th>id</th>
+              <th>name</th>
               <th>caliber</th>
               <th>unitWeight</th>
+              <th>quality</th>
+              <th>condition</th>
+              <th>inventoryGrid</th>
               <th>iconKey</th>
               <th></th>
             </tr>
@@ -88,21 +96,29 @@ public static class BattleAmmoDashboardPage
       tr.dataset.caliber = a.caliber || '';
       tr.innerHTML = `
         <td>${a.id ?? ''}</td>
+        <td><input data-field="name" type="text" value="${(a.name || '').replaceAll('"', '&quot;')}" /></td>
         <td><input data-field="caliber" type="text" value="${(a.caliber || '').replaceAll('"', '&quot;')}" /></td>
         <td><input data-field="unitWeight" type="number" step="0.01" min="0" value="${a.unitWeight ?? 0}" /></td>
+        <td><input data-field="quality" type="number" min="0" step="1" value="${a.quality ?? 100}" /></td>
+        <td><input data-field="condition" type="number" min="0" step="1" value="${a.condition ?? 100}" /></td>
+        <td><input data-field="inventoryGrid" type="number" min="0" max="2" step="1" value="${a.inventoryGrid ?? 1}" /></td>
         <td><input data-field="iconKey" type="text" value="${(a.iconKey || '').replaceAll('"', '&quot;')}" /></td>
         <td><button type="button" data-act="save">Save</button></td>
       `;
       tr.querySelector('[data-act="save"]').addEventListener('click', async () => {
         const caliber = (tr.querySelector('[data-field="caliber"]').value || '').trim();
+        const name = (tr.querySelector('[data-field="name"]').value || '').trim();
         const unitWeight = Math.max(0, numOr(tr.querySelector('[data-field="unitWeight"]').value, 0));
+        const quality = Math.max(0, numOr(tr.querySelector('[data-field="quality"]').value, 100));
+        const condition = Math.max(0, numOr(tr.querySelector('[data-field="condition"]').value, 100));
+        const inventoryGrid = Math.min(2, Math.max(0, numOr(tr.querySelector('[data-field="inventoryGrid"]').value, 1)));
         const iconKey = (tr.querySelector('[data-field="iconKey"]').value || '').trim();
         if (!caliber) {
           statusEl.textContent = 'caliber is required';
           return;
         }
         statusEl.textContent = 'saving ' + caliber + '...';
-        const resp = await postAmmo({ caliber, unitWeight, iconKey });
+        const resp = await postAmmo({ caliber, name, unitWeight, quality, condition, inventoryGrid, iconKey });
         if (!resp.ok) {
           const err = await resp.json().catch(() => ({}));
           statusEl.textContent = 'save failed: ' + (err.error || resp.status);
@@ -127,20 +143,25 @@ public static class BattleAmmoDashboardPage
     document.getElementById('reloadBtn').addEventListener('click', () => load());
     document.getElementById('createSaveBtn').addEventListener('click', async () => {
       const caliber = (document.getElementById('c_caliber').value || '').trim();
+      const name = (document.getElementById('c_name').value || '').trim();
       const unitWeight = Math.max(0, numOr(document.getElementById('c_unitWeight').value, 0));
+      const quality = Math.max(0, numOr(document.getElementById('c_quality').value, 100));
+      const condition = Math.max(0, numOr(document.getElementById('c_condition').value, 100));
+      const inventoryGrid = Math.min(2, Math.max(0, numOr(document.getElementById('c_inventoryGrid').value, 1)));
       const iconKey = (document.getElementById('c_iconKey').value || '').trim();
       if (!caliber) {
         statusEl.textContent = 'caliber is required';
         return;
       }
       statusEl.textContent = 'saving ' + caliber + '...';
-      const resp = await postAmmo({ caliber, unitWeight, iconKey });
+      const resp = await postAmmo({ caliber, name, unitWeight, quality, condition, inventoryGrid, iconKey });
       if (!resp.ok) {
         const err = await resp.json().catch(() => ({}));
         statusEl.textContent = 'save failed: ' + (err.error || resp.status);
         return;
       }
       document.getElementById('c_caliber').value = '';
+      document.getElementById('c_name').value = '';
       document.getElementById('c_iconKey').value = '';
       statusEl.textContent = 'saved: ' + caliber;
       await load();

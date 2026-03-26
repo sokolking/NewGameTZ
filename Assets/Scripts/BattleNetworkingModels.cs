@@ -293,25 +293,6 @@ public class BattleStartedPayload
 }
 
 /// <summary>POST /api/battle/.../equip-weapon (клиент).</summary>
-[Serializable]
-public class EquipWeaponRequestPayload
-{
-    public string playerId;
-    public string weaponCode;
-}
-
-[Serializable]
-public class EquipWeaponResponsePayload
-{
-    public bool ok;
-    public string error;
-    public string weaponCode;
-    public int weaponDamageMin;
-    public int weaponDamage;
-    public int weaponRange;
-    public int weaponAttackApCost;
-}
-
 /// <summary>Ответ POST /api/db/user/inventory.</summary>
 [Serializable]
 public class UserInventorySlotsPayload
@@ -320,18 +301,18 @@ public class UserInventorySlotsPayload
 }
 
 [Serializable]
-public class UserAmmoPacksPayload
-{
-    public UserAmmoPackPayload[] items;
-}
-
-[Serializable]
 public class UserAmmoPackPayload
 {
     public long id;
+    public long itemId;
     public long ammoTypeId;
     public string caliber;
+    public string name;
     public double unitWeight;
+    public int quality;
+    public int condition;
+    public string iconKey;
+    public int inventoryGrid;
     public int roundsCount;
     public int packsCount;
     public int totalRounds;
@@ -342,9 +323,11 @@ public class WeaponDbRowPayload
 {
     public long id;
     public string code;
+    public string name;
     public string caliber;
     public int magazineSize;
     public int reloadApCost;
+    public int inventoryGrid;
 }
 
 [Serializable]
