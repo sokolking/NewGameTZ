@@ -210,6 +210,7 @@ public class BattleStartedPayload
     public int[] spawnCols;
     public int[] spawnRows;
     public int[] spawnCurrentAps;
+    public int[] spawnMaxAps;
     public int[] spawnMaxHps;
     public int[] spawnCurrentHps;
     public string[] spawnCurrentPostures;
@@ -270,6 +271,12 @@ public class UserInventorySlotPayload
     public string iconKey;
     /// <summary>Стоимость атаки этим оружием (ОД), из weapons.attack_ap_cost.</summary>
     public int attackApCost;
+    /// <summary>Primary cell: span 1 or 2; continuation cells use 0.</summary>
+    public int slotSpan;
+    /// <summary>Currently equipped (in hands); primary cell only.</summary>
+    public bool equipped;
+    /// <summary>Second cell of a 2-slot weapon; not clickable.</summary>
+    public bool continuation;
 }
 
 /// <summary>Newtonsoft: сервер отдаёт <c>unitType</c> как "Player"/"Mob", не как 0/1.</summary>

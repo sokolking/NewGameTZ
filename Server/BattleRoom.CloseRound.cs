@@ -620,15 +620,6 @@ public partial class BattleRoom
                         }
                         else
                         {
-                            unit.WeaponCode = wpn.Code;
-                            unit.WeaponDamageMin = wpn.DamageMin;
-                            unit.WeaponDamage = wpn.DamageMax;
-                            unit.WeaponRange = wpn.Range;
-                            unit.WeaponAttackApCost = Math.Max(1, wpn.AttackApCost);
-                            unit.WeaponSpreadPenalty = Math.Clamp(wpn.SpreadPenalty, 0.0, 1.0);
-                            unit.WeaponTrajectoryHeight = Math.Clamp(wpn.TrajectoryHeight, 0, 3);
-                            unit.WeaponIsSniper = wpn.IsSniper;
-                            Units[uid] = unit;
                             string? pid = null;
                             foreach (var kv in PlayerToUnitId)
                             {
@@ -639,9 +630,28 @@ public partial class BattleRoom
                                 }
                             }
 
-                            if (!string.IsNullOrEmpty(pid) && PlayerCombatProfiles.TryGetValue(pid, out var prof))
-                                PlayerCombatProfiles[pid] = (prof.Item1, prof.Item2, wpn.Code, wpn.DamageMin, wpn.DamageMax, wpn.Range, Math.Max(1, wpn.AttackApCost), prof.Item7, unit.WeaponSpreadPenalty, unit.WeaponTrajectoryHeight, unit.WeaponIsSniper);
-                            executed.Succeeded = true;
+                            string username = string.IsNullOrEmpty(pid) ? "" : PlayerDisplayNames.GetValueOrDefault(pid, pid);
+                            if (_userDb != null && !_userDb.TryValidateEquippedWeaponForRegisteredUser(username, wpn.Code, out var invErr))
+                            {
+                                executed.FailureReason = invErr ?? "weapon not in inventory";
+                            }
+                            else
+                            {
+                                unit.WeaponCode = wpn.Code;
+                                unit.WeaponDamageMin = wpn.DamageMin;
+                                unit.WeaponDamage = wpn.DamageMax;
+                                unit.WeaponRange = wpn.Range;
+                                unit.WeaponAttackApCost = Math.Max(1, wpn.AttackApCost);
+                                unit.WeaponSpreadPenalty = Math.Clamp(wpn.SpreadPenalty, 0.0, 1.0);
+                                unit.WeaponTrajectoryHeight = Math.Clamp(wpn.TrajectoryHeight, 0, 3);
+                                unit.WeaponIsSniper = wpn.IsSniper;
+                                Units[uid] = unit;
+
+                                if (!string.IsNullOrEmpty(pid) && PlayerCombatProfiles.TryGetValue(pid, out var prof))
+                                    PlayerCombatProfiles[pid] = (prof.Item1, prof.Item2, wpn.Code, wpn.DamageMin, wpn.DamageMax, wpn.Range, Math.Max(1, wpn.AttackApCost), prof.Item7, unit.WeaponSpreadPenalty, unit.WeaponTrajectoryHeight, unit.WeaponIsSniper);
+                                _userDb?.SyncEquippedWeaponForRegisteredUser(username, wpn.Code);
+                                executed.Succeeded = true;
+                            }
                         }
                     }
                     else

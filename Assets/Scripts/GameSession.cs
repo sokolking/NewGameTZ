@@ -1558,8 +1558,9 @@ public class GameSession : MonoBehaviour
         {
             bool isMob = !string.IsNullOrEmpty(pid) && pid.StartsWith("MOB_", System.StringComparison.OrdinalIgnoreCase);
             int spawnIndex = FindSpawnIndex(payload, pid, col, row);
-            int startAp = GetSpawnInt(payload.spawnCurrentAps, spawnIndex, isMob ? 15 : 100);
-            int maxHp = GetSpawnInt(payload.spawnMaxHps, spawnIndex, 10);
+            int startAp = GetSpawnInt(payload.spawnCurrentAps, spawnIndex, isMob ? 15 : Player.DefaultCombatMaxAp);
+            int maxHp = GetSpawnInt(payload.spawnMaxHps, spawnIndex, isMob ? 10 : Player.DefaultCombatMaxHp);
+            int maxAp = GetSpawnInt(payload.spawnMaxAps, spawnIndex, isMob ? 15 : Player.DefaultCombatMaxAp);
             int currentHp = GetSpawnInt(payload.spawnCurrentHps, spawnIndex, maxHp);
             if (pid == _playerId)
             {
@@ -1567,8 +1568,9 @@ public class GameSession : MonoBehaviour
                 {
                     local.SetHidden(false);
                     string posture = GetSpawnString(payload.spawnCurrentPostures, spawnIndex, MovementPostureUtility.WalkId);
-                    local.ApplyServerTurnResult(new HexPosition(col, row), new[] { new HexPosition(col, row) }, startAp, 0f, posture);
+                    local.SetMaxAp(maxAp);
                     local.SetHealth(currentHp, maxHp);
+                    local.ApplyServerTurnResult(new HexPosition(col, row), new[] { new HexPosition(col, row) }, startAp, 0f, posture);
                     string wCode = GetSpawnString(payload.spawnWeaponCodes, spawnIndex, WeaponCatalog.DefaultWeaponCode);
                     int wDmg = GetSpawnInt(payload.spawnWeaponDamages, spawnIndex, 1);
                     int wDmgMin = (payload.spawnWeaponDamageMins != null && spawnIndex >= 0 && spawnIndex < payload.spawnWeaponDamageMins.Length)

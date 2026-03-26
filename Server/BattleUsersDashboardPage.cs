@@ -145,7 +145,8 @@ public static class BattleUsersDashboardPage
       font-size: 12px;
       padding: 8px 12px;
     }
-    dialog#editUser {
+    dialog#editUser,
+    dialog#invEditor {
       background: var(--panel);
       color: var(--text);
       border: 1px solid var(--border);
@@ -153,10 +154,15 @@ public static class BattleUsersDashboardPage
       padding: 0;
       max-width: min(420px, 96vw);
     }
-    dialog#editUser::backdrop {
+    dialog#invEditor {
+      max-width: min(560px, 96vw);
+    }
+    dialog#editUser::backdrop,
+    dialog#invEditor::backdrop {
       background: rgba(0,0,0,.55);
     }
-    dialog#editUser h3 {
+    dialog#editUser h3,
+    dialog#invEditor h3 {
       margin: 0;
       padding: 14px 16px;
       font-size: 15px;
@@ -237,14 +243,28 @@ public static class BattleUsersDashboardPage
       <label>Accuracy
         <input id="editAccuracy" type="number" min="0" step="1" required />
       </label>
-      <label>Weapon
-        <select id="editWeapon"></select>
-      </label>
+      <p class="hint" style="margin:0;font-size:12px;">Equipped weapon and bag: use <strong>Inventory</strong> on the user row.</p>
       <div class="edit-actions">
         <button type="button" id="editCancel">Cancel</button>
         <button type="submit" id="editSave">Save</button>
       </div>
     </form>
+  </dialog>
+
+  <dialog id="invEditor">
+    <h3>User inventory</h3>
+    <p class="hint" style="margin:0 0 10px;font-size:12px;line-height:1.4;">
+      Grid 12 cells (0–11). Each weapon uses <strong>inventory slot width</strong> from the weapons table (1 or 2).
+      Include <code>fist</code>. Exactly <strong>one</strong> row must be equipped (in hands). No overlapping slots.
+    </p>
+    <div id="invRows" style="display:flex;flex-direction:column;gap:8px;max-height:320px;overflow:auto;"></div>
+    <div class="edit-actions" style="margin-top:10px;">
+      <button type="button" id="invAddRow">Add row</button>
+    </div>
+    <div class="edit-actions">
+      <button type="button" id="invCancel">Cancel</button>
+      <button type="button" id="invSave">Save inventory</button>
+    </div>
   </dialog>
 
   <script>
@@ -261,10 +281,15 @@ public static class BattleUsersDashboardPage
     const editStrengthEl = document.getElementById('editStrength');
     const editEnduranceEl = document.getElementById('editEndurance');
     const editAccuracyEl = document.getElementById('editAccuracy');
-    const editWeaponEl = document.getElementById('editWeapon');
     const editCancelBtn = document.getElementById('editCancel');
+    const invDialog = document.getElementById('invEditor');
+    const invRowsEl = document.getElementById('invRows');
+    const invAddRowBtn = document.getElementById('invAddRow');
+    const invCancelBtn = document.getElementById('invCancel');
+    const invSaveBtn = document.getElementById('invSave');
     let users = [];
     let weaponList = [];
+    let invUserId = null;
 
     function setStatus(text) {
       statusEl.textContent = text;
@@ -306,24 +331,21 @@ public static class BattleUsersDashboardPage
             </div>
           </div>
           <button type="button" class="edit-btn">Edit</button>
+          <button type="button" class="edit-btn" data-act="inv">Inventory</button>
         `;
         row.querySelector('.edit-btn').addEventListener('click', () => openEdit(user));
+        row.querySelector('[data-act="inv"]').addEventListener('click', () => openInventoryEditor(user));
         userListEl.appendChild(row);
       }
     }
 
-    function fillWeaponSelect() {
-      editWeaponEl.innerHTML = '';
-      for (const w of weaponList) {
-        const opt = document.createElement('option');
-        opt.value = w.code;
-        opt.textContent = w.code + ' — ' + w.name;
-        editWeaponEl.appendChild(opt);
-      }
+    function weaponSlotWidth(code) {
+      const w = weaponList.find(x => x.code === code);
+      const n = w && w.inventorySlotWidth != null ? Number(w.inventorySlotWidth) : 1;
+      return n >= 2 ? 2 : 1;
     }
 
     function openEdit(user) {
-      fillWeaponSelect();
       editIdEl.value = String(user.id);
       editUsernameEl.value = user.username;
       editPasswordEl.value = '';
@@ -331,17 +353,137 @@ public static class BattleUsersDashboardPage
       editStrengthEl.value = user.strength;
       editEnduranceEl.value = user.endurance;
       editAccuracyEl.value = user.accuracy;
-      const code = user.weaponCode || 'fist';
-      const hasOpt = [...editWeaponEl.options].some(o => o.value === code);
-      if (!hasOpt) {
-        const opt = document.createElement('option');
-        opt.value = code;
-        opt.textContent = code + ' (not in list)';
-        editWeaponEl.appendChild(opt);
-      }
-      editWeaponEl.value = code;
       editDialog.showModal();
     }
+
+    function openInventoryEditor(user) {
+      invUserId = user.id;
+      loadInventoryForUser(user.id);
+    }
+
+    async function loadInventoryForUser(id) {
+      setStatus('loading inventory…');
+      const resp = await fetch('/api/db/users/' + id + '/inventory');
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        setStatus('inventory load failed: ' + (data.error || resp.status));
+        return;
+      }
+      const items = Array.isArray(data.items) ? data.items : [];
+      renderInvRows(items.length ? items : [{ id: 0, startSlot: 0, weaponCode: 'fist', slotWidth: 1, isEquipped: true }]);
+      invDialog.showModal();
+      setStatus('inventory loaded');
+    }
+
+    function renderInvRows(items) {
+      invRowsEl.innerHTML = '';
+      for (const it of items) {
+        const wrap = document.createElement('div');
+        wrap.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;align-items:center;border:1px solid var(--border);border-radius:8px;padding:8px;';
+        const start = document.createElement('input');
+        start.type = 'number';
+        start.min = 0;
+        start.max = 11;
+        start.value = String(it.startSlot ?? 0);
+        start.title = 'start slot 0–11';
+        start.style.width = '52px';
+        const sel = document.createElement('select');
+        for (const w of weaponList) {
+          const opt = document.createElement('option');
+          opt.value = w.code;
+          opt.textContent = w.code + ' — ' + w.name;
+          sel.appendChild(opt);
+        }
+        const wc = (it.weaponCode || 'fist').toLowerCase();
+        if (![...sel.options].some(o => o.value === wc)) {
+          const opt = document.createElement('option');
+          opt.value = wc;
+          opt.textContent = wc + ' (missing in weapons list)';
+          sel.appendChild(opt);
+        }
+        sel.value = wc;
+        const span = document.createElement('span');
+        span.className = 'hint';
+        span.style.fontSize = '11px';
+        const updSpan = () => { span.textContent = 'uses ' + weaponSlotWidth(sel.value) + ' cell(s)'; };
+        sel.addEventListener('change', updSpan);
+        updSpan();
+        const eq = document.createElement('label');
+        eq.style.cssText = 'display:inline-flex;align-items:center;gap:4px;font-size:12px;';
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.checked = !!it.isEquipped;
+        cb.addEventListener('change', () => {
+          if (cb.checked) {
+            invRowsEl.querySelectorAll('input[type=checkbox]').forEach(x => { if (x !== cb) x.checked = false; });
+          }
+        });
+        eq.appendChild(cb);
+        eq.appendChild(document.createTextNode(' equipped'));
+        const rm = document.createElement('button');
+        rm.type = 'button';
+        rm.textContent = 'Remove';
+        rm.addEventListener('click', () => wrap.remove());
+        wrap.appendChild(document.createTextNode('slot '));
+        wrap.appendChild(start);
+        wrap.appendChild(sel);
+        wrap.appendChild(span);
+        wrap.appendChild(eq);
+        wrap.appendChild(rm);
+        invRowsEl.appendChild(wrap);
+      }
+    }
+
+    invAddRowBtn.addEventListener('click', () => {
+      const cur = collectInvRowsFromDom();
+      const firstCode = weaponList.length ? weaponList[0].code : 'fist';
+      cur.push({ startSlot: 0, weaponCode: firstCode, isEquipped: false });
+      renderInvRows(cur);
+    });
+
+    function collectInvRowsFromDom() {
+      const out = [];
+      for (const wrap of invRowsEl.children) {
+        const inputs = wrap.querySelectorAll('input');
+        const start = wrap.querySelector('input[type=number]');
+        const sel = wrap.querySelector('select');
+        const cb = wrap.querySelector('input[type=checkbox]');
+        if (!start || !sel || !cb) continue;
+        out.push({
+          startSlot: Number(start.value) || 0,
+          weaponCode: sel.value,
+          isEquipped: cb.checked
+        });
+      }
+      return out;
+    }
+
+    invCancelBtn.addEventListener('click', () => invDialog.close());
+
+    invSaveBtn.addEventListener('click', async () => {
+      if (invUserId == null) return;
+      const rows = collectInvRowsFromDom();
+      const payload = { items: rows.map(r => ({
+        startSlot: r.startSlot,
+        weaponCode: r.weaponCode,
+        slotWidth: 1,
+        isEquipped: r.isEquipped
+      })) };
+      setStatus('saving inventory…');
+      const resp = await fetch('/api/db/users/' + invUserId + '/inventory', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        setStatus('inventory save failed: ' + (data.error || resp.status));
+        return;
+      }
+      invDialog.close();
+      setStatus('inventory saved');
+      await loadUsers();
+    });
 
     editCancelBtn.addEventListener('click', () => editDialog.close());
 
@@ -356,8 +498,7 @@ public static class BattleUsersDashboardPage
         endurance: Number(editEnduranceEl.value),
         accuracy: Number(editAccuracyEl.value),
         maxHp: 1,
-        maxAp: 1,
-        weaponCode: editWeaponEl.value
+        maxAp: 1
       };
       const pw = editPasswordEl.value;
       if (pw && pw.trim())
@@ -387,7 +528,6 @@ public static class BattleUsersDashboardPage
       ]);
       users = await usersResp.json();
       weaponList = await weaponsResp.json();
-      fillWeaponSelect();
       renderUsers();
       setStatus(`loaded ${users.length} users`);
     }

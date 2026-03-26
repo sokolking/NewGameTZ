@@ -30,7 +30,8 @@ public partial class BattleRoom
     public const float RoundDuration = 100f;
     public const int MaxAp = 100;
     public const int MobMaxAp = 15;
-    public const int DefaultPlayerMaxHp = 10;
+    public const int DefaultPlayerMaxHp = PlayerLevelStatsTable.BaseMaxHp;
+    public const int DefaultPlayerMaxAp = PlayerLevelStatsTable.BaseMaxAp;
     public const int DefaultMobMaxHp = 10;
     public const string DefaultWeaponCode = "fist";
     public const int DefaultWeaponDamage = 1;
@@ -110,13 +111,15 @@ public partial class BattleRoom
     private readonly BattleWeaponDatabase? _weaponDb;
     private readonly BattleObstacleBalanceDatabase? _obstacleDb;
     private readonly BattleBodyPartDatabase? _bodyPartDb;
+    private readonly BattleUserDatabase? _userDb;
 
-    public BattleRoom(string battleId, BattleWeaponDatabase? weaponDb = null, BattleObstacleBalanceDatabase? obstacleDb = null, BattleBodyPartDatabase? bodyPartDb = null)
+    public BattleRoom(string battleId, BattleWeaponDatabase? weaponDb = null, BattleObstacleBalanceDatabase? obstacleDb = null, BattleBodyPartDatabase? bodyPartDb = null, BattleUserDatabase? userDb = null)
     {
         BattleId = battleId;
         _rng = new Random(Guid.NewGuid().GetHashCode());
         _weaponDb = weaponDb;
         _obstacleDb = obstacleDb;
+        _userDb = userDb;
         _bodyPartDb = bodyPartDb;
     }
 

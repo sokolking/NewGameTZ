@@ -8,6 +8,10 @@ using UnityEngine;
 /// </summary>
 public class Player : MonoBehaviour
 {
+    /// <summary>Offline / missing-payload defaults; online caps come from <see cref="SetMaxAp"/> and <see cref="SetHealth"/> via battle spawn.</summary>
+    public const int DefaultCombatMaxAp = 15;
+    public const int DefaultCombatMaxHp = 20;
+
     private const int ChangePostureCost = 2;
     private const float RunCostMultiplier = 0.5f;
     private const float SitCostMultiplier = 1.5f;
@@ -32,9 +36,11 @@ public class Player : MonoBehaviour
     [SerializeField] private float _rangedFireFallbackHeightAboveHex = 1.05f;
 
     [Header("Action points")]
-    [SerializeField] private int _maxAp = 100;
+    [Tooltip("Used until server spawn applies max AP (see DefaultCombatMaxAp).")]
+    [SerializeField] private int _maxAp = DefaultCombatMaxAp;
     [Header("Health")]
-    [SerializeField] private int _maxHp = 10;
+    [Tooltip("Used until server spawn applies max HP (see DefaultCombatMaxHp).")]
+    [SerializeField] private int _maxHp = DefaultCombatMaxHp;
 
     [Header("Overhead UI")]
     [Tooltip("Optional CharacterNameplateView prefab; else Resources/CharacterNameplate.")]
@@ -250,6 +256,13 @@ public class Player : MonoBehaviour
         _characterLevel = Mathf.Max(1, level);
         EnsureNameplate();
         OnDisplayProfileChanged?.Invoke();
+    }
+
+    /// <summary>Server-authoritative max AP (battle spawn / sync).</summary>
+    public void SetMaxAp(int maxAp)
+    {
+        _maxAp = Mathf.Max(1, maxAp);
+        _currentAp = Mathf.Clamp(_currentAp, 0, _maxAp);
     }
 
     private void EnsureNameplate()

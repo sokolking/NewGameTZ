@@ -19,7 +19,7 @@ public partial class BattleRoom
             var unitId = playerId + "_UNIT";
             var profile = PlayerCombatProfiles.TryGetValue(playerId, out var p)
                 ? p
-                : (DefaultPlayerMaxHp, MaxAp, DefaultWeaponCode, DefaultWeaponDamage, DefaultWeaponDamage, DefaultWeaponRange, GetWeaponAttackApCostFromDb(DefaultWeaponCode), 10, 0.0, 1, false);
+                : (DefaultPlayerMaxHp, DefaultPlayerMaxAp, DefaultWeaponCode, DefaultWeaponDamage, DefaultWeaponDamage, DefaultWeaponRange, GetWeaponAttackApCostFromDb(DefaultWeaponCode), 10, 0.0, 1, false);
             PlayerToUnitId[playerId] = unitId;
             Units[unitId] = new UnitStateDto
             {

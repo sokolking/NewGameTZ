@@ -30,7 +30,7 @@ id, code, name, damage, range, icon_key, attack_ap_cost, spread_penalty, traject
 mass, caliber, armor_pierce, magazine_size, reload_ap_cost, category,
 req_level, req_strength, req_endurance, req_accuracy, req_mastery_category,
 stat_effect_strength, stat_effect_endurance, stat_effect_accuracy,
-damage_type, damage_min, damage_max, burst_rounds, burst_ap_cost
+damage_type, damage_min, damage_max, burst_rounds, burst_ap_cost, inventory_slot_width
 """;
 
     public IReadOnlyList<BattleWeaponBrowseRowDto> ListWeapons(int take)
@@ -75,8 +75,67 @@ LIMIT 1;
             return false;
 
         weapon = ReadWeaponRow(reader);
+        ApplyWeaponCombatDefaults(weapon);
         return true;
     }
+
+    /// <summary>
+    /// DB may store <c>-1</c> on numeric fields meaning "not applicable" (e.g. knife: no magazine, no spread).
+    /// Combat and equip paths expect non-negative / clamped values — apply defaults in one place.
+    /// Admin list/export still uses raw rows from <see cref="ReadWeaponRow"/> without this step.
+    /// </summary>
+    public static void ApplyWeaponCombatDefaults(BattleWeaponBrowseRowDto w)
+    {
+        if (w.Range < 0)
+            w.Range = 1;
+        if (w.AttackApCost < 0)
+            w.AttackApCost = 1;
+        if (w.SpreadPenalty < 0)
+            w.SpreadPenalty = 0.0;
+        if (w.TrajectoryHeight < 0)
+            w.TrajectoryHeight = 0;
+        if (w.ArmorPierce < 0)
+            w.ArmorPierce = 0;
+        if (w.MagazineSize < 0)
+            w.MagazineSize = 0;
+        if (w.ReloadApCost < 0)
+            w.ReloadApCost = 0;
+        if (w.BurstRounds < 0)
+            w.BurstRounds = 0;
+        if (w.BurstApCost < 0)
+            w.BurstApCost = 0;
+        if (w.ReqLevel < 0)
+            w.ReqLevel = 0;
+        if (w.ReqStrength < 0)
+            w.ReqStrength = 0;
+        if (w.ReqEndurance < 0)
+            w.ReqEndurance = 0;
+        if (w.ReqAccuracy < 0)
+            w.ReqAccuracy = 0;
+        // Only -1 is N/A; other negatives may be intentional stat penalties from the weapon.
+        if (w.StatEffectStrength == -1)
+            w.StatEffectStrength = 0;
+        if (w.StatEffectEndurance == -1)
+            w.StatEffectEndurance = 0;
+        if (w.StatEffectAccuracy == -1)
+            w.StatEffectAccuracy = 0;
+    }
+
+    private static int StoreWeaponRangeForDb(int r) => r < 0 ? -1 : Math.Max(0, r);
+
+    private static int StoreAttackApCostForDb(int v) => v < 0 ? -1 : Math.Max(1, v);
+
+    private static double StoreSpreadPenaltyForDb(double v) => v < 0 ? -1.0 : Math.Clamp(v, 0.0, 1.0);
+
+    private static int StoreTrajectoryHeightForDb(int v) => v < 0 ? -1 : Math.Clamp(v, 0, 3);
+
+    private static int StoreNonNegativeOrSentinelForDb(int v) => v < 0 ? -1 : Math.Max(0, v);
+
+    private static int StoreReqLevelForDb(int v) => v < 0 ? -1 : Math.Max(0, v);
+
+    private static int StoreReqStatForDb(int v) => v < 0 ? -1 : Math.Max(0, v);
+
+    private static int StoreStatEffectForDb(int v) => v == -1 ? -1 : v;
 
     private static BattleWeaponBrowseRowDto ReadWeaponRow(NpgsqlDataReader reader)
     {
@@ -120,7 +179,8 @@ LIMIT 1;
             StatEffectAccuracy = reader.GetInt32(25),
             DamageType = reader.GetString(26),
             BurstRounds = reader.GetInt32(29),
-            BurstApCost = reader.GetInt32(30)
+            BurstApCost = reader.GetInt32(30),
+            InventorySlotWidth = reader.GetInt32(31)
         };
     }
 
@@ -140,8 +200,11 @@ LIMIT 1;
             WeaponCondition = 100,
             IsSniper = false,
             Category = "cold",
-            DamageType = "physical"
+            DamageType = "physical",
+            InventorySlotWidth = 1
         };
+
+    private static int StoreInventorySlotWidthForDb(int w) => w >= 2 ? 2 : 1;
 
     public void UpsertWeapon(BattleWeaponUpsertDto d)
     {
@@ -156,9 +219,10 @@ LIMIT 1;
             (dMin, dMax) = (dMax, dMin);
 
         string ik = string.IsNullOrWhiteSpace(d.IconKey) ? d.Code.Trim().ToLowerInvariant() : d.IconKey.Trim().ToLowerInvariant();
-        int ac = Math.Max(1, d.AttackApCost);
-        double sp = Math.Clamp(d.SpreadPenalty, 0.0, 1.0);
-        int th = Math.Clamp(d.TrajectoryHeight, 0, 3);
+        int rangeDb = StoreWeaponRangeForDb(d.Range);
+        int ac = StoreAttackApCostForDb(d.AttackApCost);
+        double sp = StoreSpreadPenaltyForDb(d.SpreadPenalty);
+        int th = StoreTrajectoryHeightForDb(d.TrajectoryHeight);
         int legacyDamage = dMax;
 
         using var connection = _database.DataSource.OpenConnection();
@@ -169,13 +233,13 @@ INSERT INTO weapons (
     mass, caliber, armor_pierce, magazine_size, reload_ap_cost, category,
     req_level, req_strength, req_endurance, req_accuracy, req_mastery_category,
     stat_effect_strength, stat_effect_endurance, stat_effect_accuracy,
-    damage_type, damage_min, damage_max, burst_rounds, burst_ap_cost)
+    damage_type, damage_min, damage_max, burst_rounds, burst_ap_cost, inventory_slot_width)
 VALUES (
     @code, @name, @damage, @range, @iconKey, @attackApCost, @spreadPenalty, @trajectoryHeight, @quality, @weaponCondition, @isSniper,
     @mass, @caliber, @armorPierce, @magazineSize, @reloadApCost, @category,
     @reqLevel, @reqStrength, @reqEndurance, @reqAccuracy, @reqMasteryCategory,
     @statEffectStrength, @statEffectEndurance, @statEffectAccuracy,
-    @damageType, @damageMin, @damageMax, @burstRounds, @burstApCost)
+    @damageType, @damageMin, @damageMax, @burstRounds, @burstApCost, @inventorySlotWidth)
 ON CONFLICT (code) DO UPDATE
 SET name = EXCLUDED.name,
     damage = EXCLUDED.damage,
@@ -205,12 +269,14 @@ SET name = EXCLUDED.name,
     damage_min = EXCLUDED.damage_min,
     damage_max = EXCLUDED.damage_max,
     burst_rounds = EXCLUDED.burst_rounds,
-    burst_ap_cost = EXCLUDED.burst_ap_cost;
+    burst_ap_cost = EXCLUDED.burst_ap_cost,
+    inventory_slot_width = EXCLUDED.inventory_slot_width;
 """;
+        int invW = StoreInventorySlotWidthForDb(d.InventorySlotWidth);
         command.Parameters.AddWithValue("code", d.Code.Trim().ToLowerInvariant());
         command.Parameters.AddWithValue("name", d.Name.Trim());
         command.Parameters.AddWithValue("damage", legacyDamage);
-        command.Parameters.AddWithValue("range", Math.Max(0, d.Range));
+        command.Parameters.AddWithValue("range", rangeDb);
         command.Parameters.AddWithValue("iconKey", ik);
         command.Parameters.AddWithValue("attackApCost", ac);
         command.Parameters.AddWithValue("spreadPenalty", sp);
@@ -220,23 +286,24 @@ SET name = EXCLUDED.name,
         command.Parameters.AddWithValue("isSniper", d.IsSniper);
         command.Parameters.AddWithValue("mass", d.Mass);
         command.Parameters.AddWithValue("caliber", d.Caliber ?? "");
-        command.Parameters.AddWithValue("armorPierce", d.ArmorPierce);
-        command.Parameters.AddWithValue("magazineSize", Math.Max(0, d.MagazineSize));
-        command.Parameters.AddWithValue("reloadApCost", Math.Max(0, d.ReloadApCost));
+        command.Parameters.AddWithValue("armorPierce", StoreNonNegativeOrSentinelForDb(d.ArmorPierce));
+        command.Parameters.AddWithValue("magazineSize", StoreNonNegativeOrSentinelForDb(d.MagazineSize));
+        command.Parameters.AddWithValue("reloadApCost", StoreNonNegativeOrSentinelForDb(d.ReloadApCost));
         command.Parameters.AddWithValue("category", NormalizeCategory(d.Category));
-        command.Parameters.AddWithValue("reqLevel", Math.Max(0, d.ReqLevel));
-        command.Parameters.AddWithValue("reqStrength", d.ReqStrength);
-        command.Parameters.AddWithValue("reqEndurance", d.ReqEndurance);
-        command.Parameters.AddWithValue("reqAccuracy", d.ReqAccuracy);
+        command.Parameters.AddWithValue("reqLevel", StoreReqLevelForDb(d.ReqLevel));
+        command.Parameters.AddWithValue("reqStrength", StoreReqStatForDb(d.ReqStrength));
+        command.Parameters.AddWithValue("reqEndurance", StoreReqStatForDb(d.ReqEndurance));
+        command.Parameters.AddWithValue("reqAccuracy", StoreReqStatForDb(d.ReqAccuracy));
         command.Parameters.AddWithValue("reqMasteryCategory", d.ReqMasteryCategory ?? "");
-        command.Parameters.AddWithValue("statEffectStrength", d.StatEffectStrength);
-        command.Parameters.AddWithValue("statEffectEndurance", d.StatEffectEndurance);
-        command.Parameters.AddWithValue("statEffectAccuracy", d.StatEffectAccuracy);
+        command.Parameters.AddWithValue("statEffectStrength", StoreStatEffectForDb(d.StatEffectStrength));
+        command.Parameters.AddWithValue("statEffectEndurance", StoreStatEffectForDb(d.StatEffectEndurance));
+        command.Parameters.AddWithValue("statEffectAccuracy", StoreStatEffectForDb(d.StatEffectAccuracy));
         command.Parameters.AddWithValue("damageType", string.IsNullOrWhiteSpace(d.DamageType) ? "physical" : d.DamageType.Trim());
         command.Parameters.AddWithValue("damageMin", dMin);
         command.Parameters.AddWithValue("damageMax", dMax);
-        command.Parameters.AddWithValue("burstRounds", Math.Max(0, d.BurstRounds));
-        command.Parameters.AddWithValue("burstApCost", Math.Max(0, d.BurstApCost));
+        command.Parameters.AddWithValue("burstRounds", StoreNonNegativeOrSentinelForDb(d.BurstRounds));
+        command.Parameters.AddWithValue("burstApCost", StoreNonNegativeOrSentinelForDb(d.BurstApCost));
+        command.Parameters.AddWithValue("inventorySlotWidth", invW);
         command.ExecuteNonQuery();
     }
 
@@ -383,9 +450,10 @@ ORDER BY 1;
             (dMin, dMax) = (dMax, dMin);
 
         string ik = string.IsNullOrWhiteSpace(d.IconKey) ? d.Code.Trim().ToLowerInvariant() : d.IconKey.Trim().ToLowerInvariant();
-        int ac = Math.Max(1, d.AttackApCost);
-        double sp = Math.Clamp(d.SpreadPenalty, 0.0, 1.0);
-        int th = Math.Clamp(d.TrajectoryHeight, 0, 3);
+        int rangeDb = StoreWeaponRangeForDb(d.Range);
+        int ac = StoreAttackApCostForDb(d.AttackApCost);
+        double sp = StoreSpreadPenaltyForDb(d.SpreadPenalty);
+        int th = StoreTrajectoryHeightForDb(d.TrajectoryHeight);
         int legacyDamage = dMax;
 
         using var command = connection.CreateCommand();
@@ -396,18 +464,19 @@ INSERT INTO weapons (
     mass, caliber, armor_pierce, magazine_size, reload_ap_cost, category,
     req_level, req_strength, req_endurance, req_accuracy, req_mastery_category,
     stat_effect_strength, stat_effect_endurance, stat_effect_accuracy,
-    damage_type, damage_min, damage_max, burst_rounds, burst_ap_cost)
+    damage_type, damage_min, damage_max, burst_rounds, burst_ap_cost, inventory_slot_width)
 VALUES (
     @code, @name, @damage, @range, @iconKey, @attackApCost, @spreadPenalty, @trajectoryHeight, @quality, @weaponCondition, @isSniper,
     @mass, @caliber, @armorPierce, @magazineSize, @reloadApCost, @category,
     @reqLevel, @reqStrength, @reqEndurance, @reqAccuracy, @reqMasteryCategory,
     @statEffectStrength, @statEffectEndurance, @statEffectAccuracy,
-    @damageType, @damageMin, @damageMax, @burstRounds, @burstApCost);
+    @damageType, @damageMin, @damageMax, @burstRounds, @burstApCost, @inventorySlotWidth);
 """;
+        int invWInsert = StoreInventorySlotWidthForDb(d.InventorySlotWidth);
         command.Parameters.AddWithValue("code", d.Code.Trim().ToLowerInvariant());
         command.Parameters.AddWithValue("name", d.Name.Trim());
         command.Parameters.AddWithValue("damage", legacyDamage);
-        command.Parameters.AddWithValue("range", Math.Max(0, d.Range));
+        command.Parameters.AddWithValue("range", rangeDb);
         command.Parameters.AddWithValue("iconKey", ik);
         command.Parameters.AddWithValue("attackApCost", ac);
         command.Parameters.AddWithValue("spreadPenalty", sp);
@@ -417,23 +486,24 @@ VALUES (
         command.Parameters.AddWithValue("isSniper", d.IsSniper);
         command.Parameters.AddWithValue("mass", d.Mass);
         command.Parameters.AddWithValue("caliber", d.Caliber ?? "");
-        command.Parameters.AddWithValue("armorPierce", d.ArmorPierce);
-        command.Parameters.AddWithValue("magazineSize", Math.Max(0, d.MagazineSize));
-        command.Parameters.AddWithValue("reloadApCost", Math.Max(0, d.ReloadApCost));
+        command.Parameters.AddWithValue("armorPierce", StoreNonNegativeOrSentinelForDb(d.ArmorPierce));
+        command.Parameters.AddWithValue("magazineSize", StoreNonNegativeOrSentinelForDb(d.MagazineSize));
+        command.Parameters.AddWithValue("reloadApCost", StoreNonNegativeOrSentinelForDb(d.ReloadApCost));
         command.Parameters.AddWithValue("category", NormalizeCategory(d.Category));
-        command.Parameters.AddWithValue("reqLevel", Math.Max(0, d.ReqLevel));
-        command.Parameters.AddWithValue("reqStrength", d.ReqStrength);
-        command.Parameters.AddWithValue("reqEndurance", d.ReqEndurance);
-        command.Parameters.AddWithValue("reqAccuracy", d.ReqAccuracy);
+        command.Parameters.AddWithValue("reqLevel", StoreReqLevelForDb(d.ReqLevel));
+        command.Parameters.AddWithValue("reqStrength", StoreReqStatForDb(d.ReqStrength));
+        command.Parameters.AddWithValue("reqEndurance", StoreReqStatForDb(d.ReqEndurance));
+        command.Parameters.AddWithValue("reqAccuracy", StoreReqStatForDb(d.ReqAccuracy));
         command.Parameters.AddWithValue("reqMasteryCategory", d.ReqMasteryCategory ?? "");
-        command.Parameters.AddWithValue("statEffectStrength", d.StatEffectStrength);
-        command.Parameters.AddWithValue("statEffectEndurance", d.StatEffectEndurance);
-        command.Parameters.AddWithValue("statEffectAccuracy", d.StatEffectAccuracy);
+        command.Parameters.AddWithValue("statEffectStrength", StoreStatEffectForDb(d.StatEffectStrength));
+        command.Parameters.AddWithValue("statEffectEndurance", StoreStatEffectForDb(d.StatEffectEndurance));
+        command.Parameters.AddWithValue("statEffectAccuracy", StoreStatEffectForDb(d.StatEffectAccuracy));
         command.Parameters.AddWithValue("damageType", string.IsNullOrWhiteSpace(d.DamageType) ? "physical" : d.DamageType.Trim());
         command.Parameters.AddWithValue("damageMin", dMin);
         command.Parameters.AddWithValue("damageMax", dMax);
-        command.Parameters.AddWithValue("burstRounds", Math.Max(0, d.BurstRounds));
-        command.Parameters.AddWithValue("burstApCost", Math.Max(0, d.BurstApCost));
+        command.Parameters.AddWithValue("burstRounds", StoreNonNegativeOrSentinelForDb(d.BurstRounds));
+        command.Parameters.AddWithValue("burstApCost", StoreNonNegativeOrSentinelForDb(d.BurstApCost));
+        command.Parameters.AddWithValue("inventorySlotWidth", invWInsert);
         command.ExecuteNonQuery();
     }
 
@@ -452,7 +522,7 @@ VALUES (
             sb.Append("mass, caliber, armor_pierce, magazine_size, reload_ap_cost, category, ");
             sb.Append("req_level, req_strength, req_endurance, req_accuracy, req_mastery_category, ");
             sb.Append("stat_effect_strength, stat_effect_endurance, stat_effect_accuracy, ");
-            sb.Append("damage_type, damage_min, damage_max, burst_rounds, burst_ap_cost) VALUES (");
+            sb.Append("damage_type, damage_min, damage_max, burst_rounds, burst_ap_cost, inventory_slot_width) VALUES (");
             sb.Append(SqlString(w.Code)).Append(", ");
             sb.Append(SqlString(w.Name)).Append(", ");
             sb.Append(w.DamageMax.ToString(CultureInfo.InvariantCulture)).Append(", ");
@@ -482,7 +552,8 @@ VALUES (
             sb.Append(w.DamageMin.ToString(CultureInfo.InvariantCulture)).Append(", ");
             sb.Append(w.DamageMax.ToString(CultureInfo.InvariantCulture)).Append(", ");
             sb.Append(w.BurstRounds.ToString(CultureInfo.InvariantCulture)).Append(", ");
-            sb.Append(w.BurstApCost.ToString(CultureInfo.InvariantCulture));
+            sb.Append(w.BurstApCost.ToString(CultureInfo.InvariantCulture)).Append(", ");
+            sb.Append(StoreInventorySlotWidthForDb(w.InventorySlotWidth).ToString(CultureInfo.InvariantCulture));
             sb.AppendLine(");");
         }
 

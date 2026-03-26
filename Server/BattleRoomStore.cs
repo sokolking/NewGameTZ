@@ -11,18 +11,20 @@ public class BattleRoomStore
     private readonly BattleWeaponDatabase _weaponDb;
     private readonly BattleObstacleBalanceDatabase _obstacleDb;
     private readonly BattleBodyPartDatabase _bodyPartDb;
+    private readonly BattleUserDatabase _userDb;
     /// <summary>Очередь ожидающих (один игрок). Как только второй присоединился — создаём бой из двух.</summary>
     private string? _waitingBattleId;
 
     private readonly Dictionary<string, BattleRoom> _rooms = new();
 
-    public BattleRoomStore(BattleHistoryDatabase battleHistoryDb, BattleTurnDatabase battleTurnDb, BattleWeaponDatabase weaponDb, BattleObstacleBalanceDatabase obstacleDb, BattleBodyPartDatabase bodyPartDb)
+    public BattleRoomStore(BattleHistoryDatabase battleHistoryDb, BattleTurnDatabase battleTurnDb, BattleWeaponDatabase weaponDb, BattleObstacleBalanceDatabase obstacleDb, BattleBodyPartDatabase bodyPartDb, BattleUserDatabase userDb)
     {
         _battleHistoryDb = battleHistoryDb;
         _battleTurnDb = battleTurnDb;
         _weaponDb = weaponDb;
         _obstacleDb = obstacleDb;
         _bodyPartDb = bodyPartDb;
+        _userDb = userDb;
     }
 
     /// <summary>Таймер раундов (вызывать из фона).</summary>
@@ -44,7 +46,7 @@ public class BattleRoomStore
             {
                 var bid = Guid.NewGuid().ToString("N")[..8];
                 _waitingBattleId = bid;
-                var room = new BattleRoom(bid, _weaponDb, _obstacleDb, _bodyPartDb);
+                var room = new BattleRoom(bid, _weaponDb, _obstacleDb, _bodyPartDb, _userDb);
                 int p1c = Math.Clamp(startCol, 0, HexSpawn.DefaultGridWidth - 1);
                 int p1r = Math.Clamp(startRow, 0, HexSpawn.DefaultGridLength - 1);
                 room.AddPlayer("P1", p1c, p1r);
@@ -133,7 +135,7 @@ public class BattleRoomStore
             }
 
             var bid = Guid.NewGuid().ToString("N")[..8];
-            var r = new BattleRoom(bid, _weaponDb, _obstacleDb, _bodyPartDb);
+            var r = new BattleRoom(bid, _weaponDb, _obstacleDb, _bodyPartDb, _userDb);
             int pc = Math.Clamp(startCol, 0, HexSpawn.DefaultGridWidth - 1);
             int pr = Math.Clamp(startRow, 0, HexSpawn.DefaultGridLength - 1);
             r.AddPlayer("P1", pc, pr);

@@ -39,7 +39,7 @@ public static class BattleWeaponsDashboardPage
     </div>
     <div class="panel">
       <h3>Create / update weapon</h3>
-      <p class="hint">Row <strong>Save</strong> uses <code>POST /api/db/weapons</code>. <strong>Save table to DB</strong> calls <code>PUT /api/db/weapons/replace</code> (truncates <code>weapons</code> and inserts all visible rows — the set must include <code>fist</code>). <strong>Download SQL</strong> / import: <code>GET/POST /api/db/weapons/sql-export|sql-import</code>. Damage type and category use dropdowns from distinct DB values (current cell value kept if not in list).</p>
+      <p class="hint">Row <strong>Save</strong> uses <code>POST /api/db/weapons</code>. <strong>Save table to DB</strong> calls <code>PUT /api/db/weapons/replace</code> (truncates <code>weapons</code> and inserts all visible rows — the set must include <code>fist</code>). <strong>Download SQL</strong> / import: <code>GET/POST /api/db/weapons/sql-export|sql-import</code>. Damage type and category use dropdowns from distinct DB values (current cell value kept if not in list). Numeric <strong>-1</strong> in most combat columns means <em>not applicable</em> (stored as-is; battle code substitutes safe defaults — e.g. melee range 1, spread 0). For stat-effect columns, only exactly <strong>-1</strong> is N/A (other negatives can be real penalties).</p>
       <div class="row" id="createBar">
         <input id="c_code" placeholder="code" />
         <input id="c_name" placeholder="name" />
@@ -87,6 +87,7 @@ public static class BattleWeaponsDashboardPage
       { k: 'damageMax', label: 'dmg↑', title: 'Damage max' },
       { k: 'damageType', label: 'dmg type', title: 'Damage type', type: 'selectMeta', metaList: 'damageTypes', wide: true },
       { k: 'range', label: 'range', title: 'Range (hexes)' },
+      { k: 'inventorySlotWidth', label: 'inv W', title: 'Inventory grid width: 1 or 2 cells' },
       { k: 'attackApCost', label: 'AP shot', title: 'Single shot AP cost' },
       { k: 'burstRounds', label: 'burst N', title: 'Burst: rounds per use' },
       { k: 'burstApCost', label: 'burst AP', title: 'Burst: AP cost' },
@@ -222,6 +223,7 @@ public static class BattleWeaponsDashboardPage
       if (k === 'trajectoryHeight') return 1;
       if (k === 'reqLevel') return 1;
       if (k === 'damageMin' || k === 'damageMax') return 1;
+      if (k === 'inventorySlotWidth') return 1;
       return 0;
     }
 

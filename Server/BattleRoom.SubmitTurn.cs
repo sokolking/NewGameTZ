@@ -27,7 +27,7 @@ public partial class BattleRoom
                     UnitType = UnitType.Player,
                     Col = pos.col,
                     Row = pos.row,
-                    MaxAp = MaxAp,
+                    MaxAp = DefaultPlayerMaxAp,
                     CurrentAp = GetUnitRoundStartAp(UnitType.Player, 0f),
                     PenaltyFraction = 0f,
                     MaxHp = DefaultPlayerMaxHp,

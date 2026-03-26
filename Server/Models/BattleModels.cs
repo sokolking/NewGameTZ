@@ -84,13 +84,14 @@ public class BattleWeaponBrowseRowDto
     /// <summary>Диапазон урона в бою (случайное целое inclusive).</summary>
     public int DamageMin { get; set; } = 1;
     public int DamageMax { get; set; } = 1;
+    /// <summary>Weapon range in hexes. In DB/API list, <c>-1</c> means not applicable; combat resolves to adjacent melee (1).</summary>
     public int Range { get; set; }
     public string IconKey { get; set; } = "";
-    /// <summary>Одиночный выстрел: стоимость в ОД.</summary>
+    /// <summary>Single attack AP cost. In DB, <c>-1</c> means N/A; combat uses 1.</summary>
     public int AttackApCost { get; set; } = 1;
-    /// <summary>Штраф кучности (0…1), вычитается из p попадания после дистанции и укрытий.</summary>
+    /// <summary>Spread penalty (0…1). In DB, negative (e.g. <c>-1</c>) means N/A; combat uses 0.</summary>
     public double SpreadPenalty { get; set; }
-    /// <summary>Высота траектории 0…2 для правил ЛС (см. сервер 7.20).</summary>
+    /// <summary>Trajectory height for LoS (0…3). In DB, <c>-1</c> means N/A; combat uses 0.</summary>
     public int TrajectoryHeight { get; set; } = 1;
     /// <summary>Только БД; в бой пока не входит.</summary>
     public int Quality { get; set; } = 100;
@@ -100,27 +101,34 @@ public class BattleWeaponBrowseRowDto
     public bool IsSniper { get; set; }
     public double Mass { get; set; }
     public string Caliber { get; set; } = "";
+    /// <summary>In DB, <c>-1</c> means N/A; combat uses 0.</summary>
     public int ArmorPierce { get; set; }
+    /// <summary>In DB, <c>-1</c> means N/A; combat uses 0.</summary>
     public int MagazineSize { get; set; }
-    /// <summary>Перезарядка (ОД).</summary>
+    /// <summary>Reload AP cost. In DB, <c>-1</c> means N/A; combat uses 0.</summary>
     public int ReloadApCost { get; set; }
     public string Category { get; set; } = "cold";
-    /// <summary>Мин. уровень персонажа (= уровень оружия).</summary>
+    /// <summary>Min character level. In DB, <c>-1</c> means N/A; combat uses 0 (no level gate).</summary>
     public int ReqLevel { get; set; } = 1;
+    /// <summary>In DB, <c>-1</c> means N/A; combat uses 0.</summary>
     public int ReqStrength { get; set; }
+    /// <summary>In DB, <c>-1</c> means N/A; combat uses 0.</summary>
     public int ReqEndurance { get; set; }
+    /// <summary>In DB, <c>-1</c> means N/A; combat uses 0.</summary>
     public int ReqAccuracy { get; set; }
     /// <summary>Владение по категории (ключ навыка).</summary>
     public string ReqMasteryCategory { get; set; } = "";
-    /// <summary>Дельты к характеристикам (негативные эффекты оружия).</summary>
+    /// <summary>Stat deltas. Exactly <c>-1</c> in DB means N/A (combat uses 0); other values (including negatives) are kept.</summary>
     public int StatEffectStrength { get; set; }
     public int StatEffectEndurance { get; set; }
     public int StatEffectAccuracy { get; set; }
     public string DamageType { get; set; } = "physical";
-    /// <summary>Очередь: число пуль за один режим (0 — режим не задан).</summary>
+    /// <summary>Burst rounds per use. In DB, <c>-1</c> means N/A; combat uses 0.</summary>
     public int BurstRounds { get; set; }
-    /// <summary>Очередь: стоимость в ОД.</summary>
+    /// <summary>Burst AP cost. In DB, <c>-1</c> means N/A; combat uses 0.</summary>
     public int BurstApCost { get; set; }
+    /// <summary>Inventory grid width: 1 or 2 cells (server clamps).</summary>
+    public int InventorySlotWidth { get; set; } = 1;
 }
 
 /// <summary>Distinct <c>damage_type</c> / <c>category</c> values for weapons admin UI.</summary>
@@ -162,6 +170,8 @@ public sealed class BattleWeaponUpsertDto
     public string DamageType { get; set; } = "physical";
     public int BurstRounds { get; set; }
     public int BurstApCost { get; set; }
+    /// <summary>1 or 2 inventory cells per instance.</summary>
+    public int InventorySlotWidth { get; set; } = 1;
 }
 
 public class ExecutedBattleActionDto
@@ -310,6 +320,7 @@ public class BattleStartedPayloadDto
     public int[]? SpawnCols { get; set; }
     public int[]? SpawnRows { get; set; }
     public int[]? SpawnCurrentAps { get; set; }
+    public int[]? SpawnMaxAps { get; set; }
     public int[]? SpawnMaxHps { get; set; }
     public int[]? SpawnCurrentHps { get; set; }
     public string[]? SpawnCurrentPostures { get; set; }
@@ -392,6 +403,8 @@ public class BattleUserBrowseRowDto
     public int Accuracy { get; set; }
     public int MaxHp { get; set; }
     public int MaxAp { get; set; }
+    /// <summary>Equipped weapon code from <c>user_inventory_items</c> (<c>fist</c> if none).</summary>
+    public string WeaponCode { get; set; } = "fist";
 }
 
 /// <summary>Обновление пользователя из админки /users (игрок сам характеристики не меняет). Пароль: null — не менять.</summary>
@@ -406,7 +419,6 @@ public class UserUpdateRequest
     public int Accuracy { get; set; }
     public int MaxHp { get; set; }
     public int MaxAp { get; set; }
-    public string WeaponCode { get; set; } = "fist";
 }
 
 /// <summary>Публичный срез прогресса. Характеристики меняются только через БД/админку, не игроком.</summary>
@@ -416,6 +428,7 @@ public class UserProgressProfileDto
     public int Experience { get; set; }
     public int Level { get; set; }
     public int Strength { get; set; }
+    public int Agility { get; set; }
     public int Endurance { get; set; }
     public int Accuracy { get; set; }
     public int MaxHp { get; set; }
@@ -434,4 +447,36 @@ public class UserInventorySlotDto
     public int Range { get; set; }
     public string IconKey { get; set; } = "fist";
     public int AttackApCost { get; set; }
+    /// <summary>Primary cell of a multi-slot item: width (1 or 2). Continuation cells use 0.</summary>
+    public int SlotSpan { get; set; }
+    /// <summary>True when this stack is currently equipped (primary cell only).</summary>
+    public bool Equipped { get; set; }
+    /// <summary>Second cell of a 2-slot weapon.</summary>
+    public bool Continuation { get; set; }
+}
+
+/// <summary>Row in <c>user_inventory_items</c> for admin GET/PUT.</summary>
+public sealed class UserInventoryItemAdminDto
+{
+    public long Id { get; set; }
+    public int StartSlot { get; set; }
+    public string WeaponCode { get; set; } = "";
+    public int SlotWidth { get; set; } = 1;
+    public bool IsEquipped { get; set; }
+}
+
+/// <summary>Payload item for replacing a user&apos;s inventory (no <see cref="UserInventoryItemAdminDto.Id"/>).</summary>
+public sealed class UserInventoryItemReplaceDto
+{
+    public int StartSlot { get; set; }
+    public string WeaponCode { get; set; } = "";
+    /// <summary>Ignored on save: width comes from <c>weapons.inventory_slot_width</c>.</summary>
+    public int SlotWidth { get; set; } = 1;
+    public bool IsEquipped { get; set; }
+}
+
+/// <summary>HTTP body for <c>PUT /api/db/users/{{id}}/inventory</c>.</summary>
+public sealed class UserInventoryReplaceHttpBody
+{
+    public List<UserInventoryItemReplaceDto> Items { get; set; } = new();
 }

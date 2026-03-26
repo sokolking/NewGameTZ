@@ -294,6 +294,8 @@ public sealed class InventoryUI : MonoBehaviour
             if (s == null)
             {
                 SetImageIcon(_cellImages[i], null, CellIconSize);
+                if (_cellImages[i] != null)
+                    _cellImages[i].color = Color.white;
                 continue;
             }
 
@@ -306,11 +308,18 @@ public sealed class InventoryUI : MonoBehaviour
             if (string.IsNullOrWhiteSpace(key))
             {
                 SetImageIcon(_cellImages[i], null, CellIconSize);
+                if (_cellImages[i] != null)
+                    _cellImages[i].color = Color.white;
                 continue;
             }
 
             var sp = WeaponIconHelper.LoadInventoryIcon(key);
             SetImageIcon(_cellImages[i], sp, CellIconSize);
+            if (_cellImages[i] != null)
+            {
+                bool dim = s.continuation;
+                _cellImages[i].color = dim ? new Color(1f, 1f, 1f, 0.55f) : Color.white;
+            }
         }
     }
 
@@ -457,6 +466,11 @@ public sealed class InventoryUI : MonoBehaviour
 
         var s = _slots[slotIndex];
         if (s == null || string.IsNullOrWhiteSpace(s.weaponCode))
+            return;
+        if (s.continuation)
+            return;
+        if (_player != null && s.equipped &&
+            string.Equals(s.weaponCode, _player.WeaponCode, StringComparison.OrdinalIgnoreCase))
             return;
 
         var session = GameSession.Active != null

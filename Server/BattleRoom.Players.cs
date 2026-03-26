@@ -88,7 +88,7 @@ public partial class BattleRoom
         if (PlayerCombatProfiles.TryGetValue(playerId, out var prof))
             PlayerCombatProfiles[playerId] = (prof.Item1, prof.Item2, code, unit.WeaponDamageMin, unit.WeaponDamage, unit.WeaponRange, unit.WeaponAttackApCost, prof.Item7, unit.WeaponSpreadPenalty, unit.WeaponTrajectoryHeight, unit.WeaponIsSniper);
         else
-            PlayerCombatProfiles[playerId] = (DefaultPlayerMaxHp, MaxAp, code, unit.WeaponDamageMin, unit.WeaponDamage, unit.WeaponRange, unit.WeaponAttackApCost, 10, unit.WeaponSpreadPenalty, unit.WeaponTrajectoryHeight, unit.WeaponIsSniper);
+            PlayerCombatProfiles[playerId] = (DefaultPlayerMaxHp, DefaultPlayerMaxAp, code, unit.WeaponDamageMin, unit.WeaponDamage, unit.WeaponRange, unit.WeaponAttackApCost, 10, unit.WeaponSpreadPenalty, unit.WeaponTrajectoryHeight, unit.WeaponIsSniper);
 
         return true;
     }

@@ -29,6 +29,25 @@ public sealed class BattlePostgresDatabase : IDisposable
             command.CommandText = """
 DROP TABLE IF EXISTS user_inventory_slots CASCADE;
 
+CREATE TABLE IF NOT EXISTS user_inventory_items (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    start_slot SMALLINT NOT NULL,
+    weapon_code TEXT NOT NULL,
+    slot_width SMALLINT NOT NULL DEFAULT 1,
+    is_equipped BOOLEAN NOT NULL DEFAULT FALSE,
+    CONSTRAINT chk_user_inv_start_slot CHECK (start_slot >= 0 AND start_slot < 12),
+    CONSTRAINT chk_user_inv_slot_width CHECK (slot_width IN (1, 2))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_user_inventory_one_equipped
+    ON user_inventory_items (user_id) WHERE is_equipped;
+
+CREATE INDEX IF NOT EXISTS ix_user_inventory_items_user_id ON user_inventory_items (user_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_user_inv_user_weapon_lower
+    ON user_inventory_items (user_id, lower(weapon_code));
+
 CREATE TABLE IF NOT EXISTS battles (
     battle_id TEXT PRIMARY KEY,
     created_utc TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -70,6 +89,8 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS experience INT NOT NULL DEFAULT 0;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS strength INT NOT NULL DEFAULT 10;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS endurance INT NOT NULL DEFAULT 10;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS accuracy INT NOT NULL DEFAULT 10;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS intuition INT NOT NULL DEFAULT 0;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS intellect INT NOT NULL DEFAULT 0;
 ALTER TABLE users DROP COLUMN IF EXISTS weapon_code;
 
 INSERT INTO users (username, password, experience, strength, endurance, accuracy, max_hp, max_ap)
@@ -84,11 +105,6 @@ SET password = EXCLUDED.password,
     accuracy = EXCLUDED.accuracy,
     max_hp = EXCLUDED.max_hp,
     max_ap = EXCLUDED.max_ap;
-
-UPDATE users
-SET
-    max_hp = GREATEST(1, strength * 2),
-    max_ap = GREATEST(1, endurance * 2);
 
 CREATE TABLE IF NOT EXISTS battle_obstacle_balance (
     id INT PRIMARY KEY,
@@ -162,6 +178,8 @@ ALTER TABLE weapons ADD COLUMN IF NOT EXISTS damage_min INT NOT NULL DEFAULT 1;
 ALTER TABLE weapons ADD COLUMN IF NOT EXISTS damage_max INT NOT NULL DEFAULT 1;
 ALTER TABLE weapons ADD COLUMN IF NOT EXISTS burst_rounds INT NOT NULL DEFAULT 0;
 ALTER TABLE weapons ADD COLUMN IF NOT EXISTS burst_ap_cost INT NOT NULL DEFAULT 0;
+ALTER TABLE weapons ADD COLUMN IF NOT EXISTS inventory_slot_width INT NOT NULL DEFAULT 1;
+UPDATE weapons SET inventory_slot_width = 1 WHERE inventory_slot_width IS NULL OR inventory_slot_width < 1 OR inventory_slot_width > 2;
 
 UPDATE weapons SET damage_min = GREATEST(0, damage), damage_max = GREATEST(0, damage), damage = GREATEST(0, damage)
 WHERE damage > 1 AND damage_min = 1 AND damage_max = 1;
@@ -184,6 +202,11 @@ INSERT INTO body_parts (id, code) VALUES
     (4, 'left_arm'),
     (5, 'right_arm')
 ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO user_inventory_items (user_id, start_slot, weapon_code, slot_width, is_equipped)
+SELECT u.id, 0, 'fist', 1, TRUE
+FROM users u
+WHERE NOT EXISTS (SELECT 1 FROM user_inventory_items x WHERE x.user_id = u.id);
 """;
             command.ExecuteNonQuery();
         }
