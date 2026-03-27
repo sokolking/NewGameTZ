@@ -133,6 +133,16 @@ public class BattleWeaponBrowseRowDto
     public int InventorySlotWidth { get; set; } = 1;
     /// <summary>Hand slots consumed by item in inventory grid: 0, 1 or 2.</summary>
     public int InventoryGrid { get; set; } = 1;
+    /// <summary>Universal effect type (for example hp, ap).</summary>
+    public string EffectType { get; set; } = "";
+    /// <summary>Effect sign: positive or negative.</summary>
+    public string EffectSign { get; set; } = "positive";
+    /// <summary>Effect roll lower bound.</summary>
+    public int EffectMin { get; set; }
+    /// <summary>Effect roll upper bound.</summary>
+    public int EffectMax { get; set; }
+    /// <summary>Effect target: self or enemy.</summary>
+    public string EffectTarget { get; set; } = "enemy";
 }
 
 /// <summary>Distinct <c>damage_type</c> / <c>category</c> values for weapons admin UI.</summary>
@@ -179,6 +189,11 @@ public sealed class BattleWeaponUpsertDto
     public int InventorySlotWidth { get; set; } = 1;
     /// <summary>Hand slots consumed by item in inventory grid: 0, 1 or 2.</summary>
     public int InventoryGrid { get; set; } = 1;
+    public string EffectType { get; set; } = "";
+    public string EffectSign { get; set; } = "positive";
+    public int EffectMin { get; set; }
+    public int EffectMax { get; set; }
+    public string EffectTarget { get; set; } = "enemy";
 }
 
 public class ExecutedBattleActionDto
@@ -195,6 +210,7 @@ public class ExecutedBattleActionDto
     public int BodyPart { get; set; }
     public string? Posture { get; set; }
     public int Damage { get; set; }
+    public int Healed { get; set; }
     public bool TargetDied { get; set; }
     /// <summary>Итоговая вероятность попадания (0…1) после дистанции, укрытия и меткости; null если броска не было (стена, промах валидации и т.п.).</summary>
     public double? HitProbability { get; set; }
@@ -440,6 +456,7 @@ public class BattleUserBrowseRowDto
     public int Endurance { get; set; }
     public int Accuracy { get; set; }
     public int MaxHp { get; set; }
+    public int CurrentHp { get; set; }
     public int MaxAp { get; set; }
     /// <summary>Equipped weapon code from <c>user_inventory_items</c> (<c>fist</c> if none).</summary>
     public string WeaponCode { get; set; } = "fist";
@@ -457,6 +474,12 @@ public class UserUpdateRequest
     public int Accuracy { get; set; }
     public int MaxHp { get; set; }
     public int MaxAp { get; set; }
+}
+
+public class UserDebugHpRequest
+{
+    public int MaxHp { get; set; }
+    public int CurrentHp { get; set; }
 }
 
 /// <summary>Публичный срез прогресса. Характеристики меняются только через БД/админку, не игроком.</summary>

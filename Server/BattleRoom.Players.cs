@@ -21,6 +21,13 @@ public partial class BattleRoom
         PlayerLevels[playerId] = Math.Max(1, level);
     }
 
+    public void SetPlayerCurrentHpOverride(string playerId, int currentHp)
+    {
+        if (string.IsNullOrWhiteSpace(playerId) || !Players.ContainsKey(playerId))
+            return;
+        PlayerCurrentHpOverrides[playerId] = Math.Max(0, currentHp);
+    }
+
     /// <param name="weaponTightness">Кучность оружия 0…1 (выше — кучнее); в профиле хранится то же <c>T</c>.</param>
     public void SetPlayerCombatProfile(string playerId, int maxHp, int maxAp, string weaponCode, int weaponDamageMin, int weaponDamageMax, int weaponRange, int weaponAttackApCost, int accuracy, double weaponTightness = 1, int weaponTrajectoryHeight = 1, bool weaponIsSniper = false)
     {

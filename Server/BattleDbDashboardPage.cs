@@ -199,6 +199,10 @@ public static class BattleDbDashboardPage
       <input id="battleSearch" type="search" placeholder="Search battleId">
       <input id="turnSearch" type="search" placeholder="Search turnId / resolve reason">
       <button id="refreshBtn" type="button">Refresh</button>
+      <input id="backupKey" type="password" autocomplete="off" placeholder="Backup key (if DatabaseBackup:Secret is set)" style="min-width:260px;background:var(--panel);border:1px solid var(--border);color:var(--text);border-radius:10px;padding:9px 12px;">
+      <button id="exportBackupBtn" type="button">Export full DB (JSON)</button>
+      <input id="importBackupFile" type="file" accept="application/json,.json" style="display:none">
+      <button id="importBackupBtn" type="button">Import full DB…</button>
       <div id="status" class="status">loading...</div>
     </div>
   </div>
@@ -230,6 +234,93 @@ public static class BattleDbDashboardPage
     const turnSearchEl = document.getElementById('turnSearch');
     const refreshBtnEl = document.getElementById('refreshBtn');
     const statusEl = document.getElementById('status');
+    const backupKeyEl = document.getElementById('backupKey');
+    const exportBackupBtnEl = document.getElementById('exportBackupBtn');
+    const importBackupBtnEl = document.getElementById('importBackupBtn');
+    const importBackupFileEl = document.getElementById('importBackupFile');
+
+    function backupHeaders(extra) {
+      const h = Object.assign({}, extra || {});
+      const k = backupKeyEl.value.trim();
+      if (k) h['X-Database-Backup-Key'] = k;
+      return h;
+    }
+
+    exportBackupBtnEl.addEventListener('click', async () => {
+      setStatus('exporting backup...');
+      try {
+        const res = await fetch('/api/db/backup/export', { headers: backupHeaders() });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          setStatus('export failed: ' + (err.error || res.status));
+          return;
+        }
+        const blob = await res.blob();
+        const cd = res.headers.get('Content-Disposition');
+        let name = 'hope-battle-db.json';
+        if (cd) {
+          const q = /filename="([^"]+)"/i.exec(cd);
+          const star = /filename\\*=UTF-8''([^;]+)/i.exec(cd);
+          if (q) name = q[1];
+          else if (star) name = decodeURIComponent(star[1].trim());
+        }
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = name;
+        a.click();
+        URL.revokeObjectURL(a.href);
+        setStatus('backup downloaded');
+      } catch (e) {
+        console.error(e);
+        setStatus('export failed');
+      }
+    });
+
+    importBackupBtnEl.addEventListener('click', () => importBackupFileEl.click());
+
+    importBackupFileEl.addEventListener('change', async () => {
+      const file = importBackupFileEl.files && importBackupFileEl.files[0];
+      importBackupFileEl.value = '';
+      if (!file) return;
+      if (!confirm('Replace the entire database with this backup? Active battles in memory may be out of sync until server restart.')) {
+        setStatus('import cancelled');
+        return;
+      }
+      setStatus('importing...');
+      try {
+        const text = await file.text();
+        const res = await fetch('/api/db/backup/import', {
+          method: 'POST',
+          headers: backupHeaders({ 'Content-Type': 'application/json' }),
+          body: text
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          let detail = data.error || '';
+          if (!detail && res.status === 413)
+            detail = '413 body too large — on nginx set client_max_body_size 200m; for this location (or use curl from the server).';
+          else if (!detail)
+            detail = String(res.status);
+          setStatus('import failed: ' + detail);
+          return;
+        }
+        const rc = data.rowCounts || {};
+        const summary = Object.keys(rc).length
+          ? ' rows ' + Object.entries(rc).map(([k,v]) => k + ':' + v).join(', ')
+          : '';
+        setStatus('import OK (bytes ' + (data.bodyBytes ?? '?') + ', totalRows ' + (data.totalRows ?? '?') + ')' + summary + ' — lists reloaded');
+        battles = [];
+        turns = [];
+        selectedBattleId = null;
+        selectedTurnId = null;
+        renderTurns();
+        renderTurnDetail(null);
+        await loadBattles();
+      } catch (e) {
+        console.error(e);
+        setStatus('import failed');
+      }
+    });
 
     let battles = [];
     let turns = [];

@@ -778,6 +778,26 @@ public class Player : MonoBehaviour
         return true;
     }
 
+    public bool QueueUseItemAction(int cost = 1)
+    {
+        int safeCost = Mathf.Max(1, cost);
+        if (_currentAp < safeCost)
+            return false;
+
+        if (_turnActions == null)
+            _turnActions = new List<BattleQueuedAction>();
+
+        _turnActions.Add(new BattleQueuedAction
+        {
+            actionType = "UseItem",
+            posture = MovementPostureUtility.ToId(_currentPosture),
+            cost = safeCost
+        });
+        _apSpentThisTurn += safeCost;
+        _currentAp -= safeCost;
+        return true;
+    }
+
     /// <summary>Смена оружия в очереди хода (<see cref="WeaponCatalog.EquipWeaponSwapApCost"/> ОД); сервер применяет EquipWeapon при закрытии раунда.</summary>
     /// <param name="costOverride">Если задано — переопределяет стоимость смены (по умолчанию 2 ОД).</param>
     /// <param name="weaponAttackApCost">Стоимость атаки новым оружием из БД (weapons.attack_ap_cost).</param>
@@ -897,7 +917,8 @@ public class Player : MonoBehaviour
 
         if (string.Equals(type, "Wait", StringComparison.OrdinalIgnoreCase)
             || string.Equals(type, "Reload", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(type, "Attack", StringComparison.OrdinalIgnoreCase))
+            || string.Equals(type, "Attack", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(type, "UseItem", StringComparison.OrdinalIgnoreCase))
         {
             int cost = Mathf.Max(0, last.cost);
             _currentAp += cost;

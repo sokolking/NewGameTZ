@@ -85,6 +85,7 @@ public class BattleExecutedAction
     public int bodyPart;
     public string posture;
     public int damage;
+    public int healed;
     public bool targetDied;
     /// <summary>Сервер: итоговая вероятность попадания (0…1); null если броска не было (например, только стена).</summary>
     [JsonProperty("hitProbability")]
@@ -324,10 +325,18 @@ public class WeaponDbRowPayload
     public long id;
     public string code;
     public string name;
+    public int range;
+    public int attackApCost;
+    public string category;
     public string caliber;
     public int magazineSize;
     public int reloadApCost;
     public int inventoryGrid;
+    public string effectType;
+    public string effectSign;
+    public int effectMin;
+    public int effectMax;
+    public string effectTarget;
 }
 
 [Serializable]

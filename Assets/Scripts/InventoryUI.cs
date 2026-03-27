@@ -720,6 +720,13 @@ public sealed class InventoryUI : MonoBehaviour
 
         int mag = Mathf.Max(0, w.magazineSize);
         string cal = (w.caliber ?? string.Empty).Trim().ToLowerInvariant();
+        bool isMedicine = string.Equals((w.category ?? string.Empty).Trim(), "medicine", StringComparison.OrdinalIgnoreCase);
+        if (isMedicine)
+        {
+            // Self-use items should hide both ammo donut and ammo count.
+            SetAmmoUiVisible(false);
+            return;
+        }
         bool weaponUsesAmmo = mag > 0 && !string.IsNullOrEmpty(cal);
         if (!weaponUsesAmmo)
         {
@@ -804,6 +811,26 @@ public sealed class InventoryUI : MonoBehaviour
         if (_weaponRowsByCode.TryGetValue(weaponCode, out var w) && w != null)
             return Mathf.Max(1, w.reloadApCost);
         return Mathf.Max(1, _lastKnownReloadApCost);
+    }
+
+    public int GetCurrentActiveItemUseApCost()
+    {
+        if (_player == null)
+            _player = FindFirstObjectByType<Player>();
+        string weaponCode = _player != null ? WeaponCatalog.NormalizeWeaponCode(_player.WeaponCode) : WeaponCatalog.DefaultWeaponCode;
+        if (_weaponRowsByCode.TryGetValue(weaponCode, out var w) && w != null)
+            return Mathf.Max(1, w.attackApCost);
+        return 1;
+    }
+
+    public bool IsActiveItemMedicine()
+    {
+        if (_player == null)
+            _player = FindFirstObjectByType<Player>();
+        string weaponCode = _player != null ? WeaponCatalog.NormalizeWeaponCode(_player.WeaponCode) : WeaponCatalog.DefaultWeaponCode;
+        if (!_weaponRowsByCode.TryGetValue(weaponCode, out var w) || w == null)
+            return false;
+        return string.Equals((w.category ?? string.Empty).Trim(), "medicine", StringComparison.OrdinalIgnoreCase);
     }
 
     private void OnAmmoDonutValueChanged(float value01)

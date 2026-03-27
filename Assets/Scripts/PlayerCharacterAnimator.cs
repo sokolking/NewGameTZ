@@ -56,6 +56,15 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
     [SerializeField] private UnityEngine.Object _attackColdHead;
     [SerializeField] private UnityEngine.Object _attackColdBody;
     [SerializeField] private UnityEngine.Object _attackColdLegs;
+    [Header("Items")]
+    [Tooltip("One-shot self-use animation for medicine item actions.")]
+    [SerializeField] private UnityEngine.Object _useItemMedicine;
+    [Tooltip("Playback speed for medicine use animation (>1 = faster).")]
+    [SerializeField] [Range(0.25f, 5f)] private float _medicineUsePlaybackSpeed = 1f;
+    [Tooltip("Keep rig local Y while medicine clip plays to avoid sinking into floor from root/hips translation.")]
+    [SerializeField] private bool _lockLocalRigYDuringMedicineUse = true;
+    [Tooltip("If mesh bounds still go below baseline during medicine clip, lift model up to keep feet above ground.")]
+    [SerializeField] private bool _preventMeshSinkingDuringMedicineUse = true;
     [Tooltip("Playback speed for cold melee attack clips (>1 = faster).")]
     [SerializeField] [Range(0.5f, 4f)] private float _coldMeleeAttackPlaybackSpeed = 2f;
     [Header("Posture transitions (Walk/Run ↔ Sit/Hide)")]
@@ -90,12 +99,15 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
     private AnimationClip _cachedClipAttackColdHead;
     private AnimationClip _cachedClipAttackColdBody;
     private AnimationClip _cachedClipAttackColdLegs;
+    private AnimationClip _cachedClipUseItemMedicine;
     private AnimationClip _cachedClipStandToSit;
     private AnimationClip _cachedClipSitToStand;
     private bool _clipsCached;
 
     /// <summary>Blocks locomotion graph swaps while a one-shot melee clip plays.</summary>
     private bool _meleeAttackActive;
+    /// <summary>Blocks locomotion graph swaps while a one-shot item-use clip plays.</summary>
+    private bool _itemUseActive;
 
     private MovementPosture _previousPostureTracked;
     private Coroutine _postureTransitionCoroutine;
@@ -126,6 +138,7 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
     private AnimationClip ClipAttackColdHead { get { if (!_clipsCached) CacheClipReferences(); return _cachedClipAttackColdHead; } }
     private AnimationClip ClipAttackColdBody { get { if (!_clipsCached) CacheClipReferences(); return _cachedClipAttackColdBody; } }
     private AnimationClip ClipAttackColdLegs { get { if (!_clipsCached) CacheClipReferences(); return _cachedClipAttackColdLegs; } }
+    private AnimationClip ClipUseItemMedicine { get { if (!_clipsCached) CacheClipReferences(); return _cachedClipUseItemMedicine; } }
 
     private void CacheClipReferences()
     {
@@ -144,6 +157,7 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
         _cachedClipAttackColdHead = _attackColdHead as AnimationClip;
         _cachedClipAttackColdBody = _attackColdBody as AnimationClip;
         _cachedClipAttackColdLegs = _attackColdLegs as AnimationClip;
+        _cachedClipUseItemMedicine = _useItemMedicine as AnimationClip;
         _cachedClipStandToSit = _standToSit as AnimationClip;
         _cachedClipSitToStand = _sitToStand as AnimationClip;
         _clipsCached = true;
@@ -167,6 +181,7 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
         _moveFaceMinSqr = source._moveFaceMinSqr;
         _locomotionCycleFractionPerHex = source._locomotionCycleFractionPerHex;
         _coldMeleeAttackPlaybackSpeed = source._coldMeleeAttackPlaybackSpeed;
+        _medicineUsePlaybackSpeed = source._medicineUsePlaybackSpeed;
 
         _idle = source._idle;
         _walk = source._walk;
@@ -183,6 +198,7 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
         _attackColdHead = source._attackColdHead;
         _attackColdBody = source._attackColdBody;
         _attackColdLegs = source._attackColdLegs;
+        _useItemMedicine = source._useItemMedicine;
         _standToSit = source._standToSit;
         _sitToStand = source._sitToStand;
 
@@ -237,6 +253,8 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
     public void NotifyHexStepStarted(float stepDurationSeconds)
     {
         if (_meleeAttackActive)
+            return;
+        if (_itemUseActive)
             return;
         if (_postureTransitionActive)
             return;
@@ -321,6 +339,7 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
         _attackColdHead = CoerceClipReference(_attackColdHead, new[] { "head", "atack", "attack", "cold" });
         _attackColdBody = CoerceClipReference(_attackColdBody, new[] { "body", "atack", "attack", "cold" });
         _attackColdLegs = CoerceClipReference(_attackColdLegs, new[] { "leg", "legs", "atack", "attack", "cold" });
+        _useItemMedicine = CoerceClipReference(_useItemMedicine, new[] { "medkit", "medicine", "use", "heal" });
 
         if (recordUndo)
             EditorUtility.SetDirty(this);
@@ -401,6 +420,7 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
         ValidateClipSlot(nameof(_attackColdHead), _attackColdHead);
         ValidateClipSlot(nameof(_attackColdBody), _attackColdBody);
         ValidateClipSlot(nameof(_attackColdLegs), _attackColdLegs);
+        ValidateClipSlot(nameof(_useItemMedicine), _useItemMedicine);
     }
 
     /// <summary>Animator is usually on a child mesh; <see cref="GetComponent{T}"/> on the rig root is often null.</summary>
@@ -769,6 +789,8 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
     {
         if (_meleeAttackActive)
             return;
+        if (_itemUseActive)
+            return;
         if (_postureTransitionActive)
             return;
 
@@ -858,5 +880,83 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
 
         _meleeAttackActive = false;
         _resolvedClipDirty = true;
+    }
+
+    /// <summary>One-shot self-use animation for medicine actions.</summary>
+    public IEnumerator RunUseItemMedicineRoutine()
+    {
+        AnimationClip clip = ClipUseItemMedicine;
+        if (clip == null || clip.length <= 1e-5f || _animator == null)
+            yield break;
+
+        _itemUseActive = true;
+        float useSpeed = Mathf.Clamp(_medicineUsePlaybackSpeed, 0.25f, 5f);
+        PlayClipInternal(clip, useSpeed, 0.0, applyFootIk: true);
+        Transform rig = _animator.transform;
+        float lockY = rig != null ? rig.localPosition.y : 0f;
+        Transform modelRoot = transform;
+        float startModelWorldY = modelRoot != null ? modelRoot.position.y : 0f;
+        float baselineMinY = GetVisualMinWorldY(out bool hasBaseline);
+        float len = Mathf.Clamp((float)clip.length / useSpeed, 0.02f, 30f);
+        float t = 0f;
+        while (t < len)
+        {
+            if (_lockLocalRigYDuringMedicineUse && rig != null)
+            {
+                Vector3 lp = rig.localPosition;
+                if (!Mathf.Approximately(lp.y, lockY))
+                {
+                    lp.y = lockY;
+                    rig.localPosition = lp;
+                }
+            }
+            if (_preventMeshSinkingDuringMedicineUse && modelRoot != null && hasBaseline)
+            {
+                float currentMinY = GetVisualMinWorldY(out bool hasCurrent);
+                if (hasCurrent)
+                {
+                    float lift = baselineMinY - currentMinY;
+                    if (lift > 1e-4f)
+                    {
+                        Vector3 p = modelRoot.position;
+                        p.y += lift;
+                        modelRoot.position = p;
+                    }
+                }
+            }
+            t += Time.deltaTime;
+            yield return null;
+        }
+
+        if (_preventMeshSinkingDuringMedicineUse && modelRoot != null)
+        {
+            Vector3 endPos = modelRoot.position;
+            endPos.y = startModelWorldY;
+            modelRoot.position = endPos;
+        }
+        _itemUseActive = false;
+        _resolvedClipDirty = true;
+    }
+
+    private float GetVisualMinWorldY(out bool ok)
+    {
+        ok = false;
+        float minY = 0f;
+        var renderers = GetComponentsInChildren<Renderer>(true);
+        for (int i = 0; i < renderers.Length; i++)
+        {
+            Renderer r = renderers[i];
+            if (r == null || !r.enabled)
+                continue;
+            Bounds b = r.bounds;
+            if (!ok)
+            {
+                minY = b.min.y;
+                ok = true;
+            }
+            else if (b.min.y < minY)
+                minY = b.min.y;
+        }
+        return minY;
     }
 }

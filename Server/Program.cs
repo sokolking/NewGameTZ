@@ -1,13 +1,17 @@
 using BattleServer;
 using BattleServer.Models;
 using System.IO;
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.StaticFiles;
+using Npgsql;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
 var builder = WebApplication.CreateBuilder(args);
+// Large JSON backup uploads: nginx/Caddy must allow the same (e.g. client_max_body_size 200m;).
+builder.WebHost.ConfigureKestrel(o => o.Limits.MaxRequestBodySize = BattleDatabaseBackup.MaxBackupImportBodyBytes);
 
 // ContentRoot часто /opt/battle/Server, а DMG в /opt/battle/wwwroot/downloads. Пустая Server/wwwroot/downloads не должна перехватывать запрос.
 static bool DownloadsHasDmg(string downloadsPath)
@@ -129,6 +133,18 @@ Console.SetError(new BattleLogConsoleWriter(Console.Error, logStore, isError: tr
 
 var app = builder.Build();
 app.UseCors();
+// Must run before the endpoint reads the body; otherwise Kestrel may reject large POST bodies before the handler runs.
+app.Use(async (ctx, next) =>
+{
+    if (HttpMethods.IsPost(ctx.Request.Method) &&
+        ctx.Request.Path.Equals("/api/db/backup/import", StringComparison.OrdinalIgnoreCase))
+    {
+        if (ctx.Features.Get<IHttpMaxRequestBodySizeFeature>() is { } maxBody)
+            maxBody.MaxRequestBodySize = BattleDatabaseBackup.MaxBackupImportBodyBytes;
+    }
+
+    await next();
+});
 // .dmg не в списке MIME по умолчанию — без этого ответ 404 даже при верном WebRoot.
 app.UseStaticFiles(new StaticFileOptions
 {
@@ -242,7 +258,7 @@ app.MapPost("/api/battle/join", (BattleRoomStore s, JoinRequest? body) =>
     string password = body?.password ?? "";
     if (!battleUserDb.ValidateCredentials(username, password))
         return Results.Json(new ErrorResponse { Error = "Invalid username or password." }, jsonOpt, statusCode: 401);
-    battleUserDb.TryGetCombatProfile(username, out int playerMaxHp, out int playerMaxAp, out int accuracy, out int levelFromDb);
+    battleUserDb.TryGetCombatProfile(username, out int playerMaxHp, out int playerCurrentHp, out int playerMaxAp, out int accuracy, out int levelFromDb);
     battleUserDb.TryGetEquippedWeaponCodeForUser(username, out string equippedCode);
     string weaponCode = string.IsNullOrWhiteSpace(equippedCode) ? "fist" : equippedCode.Trim().ToLowerInvariant();
     if (!battleWeaponDb.TryGetWeaponByCode(weaponCode, out var weapon))
@@ -258,6 +274,7 @@ app.MapPost("/api/battle/join", (BattleRoomStore s, JoinRequest? body) =>
         startRow,
         solo,
         playerMaxHp,
+        playerCurrentHp,
         playerMaxAp,
         weaponCode,
         weapon.DamageMin,
@@ -509,6 +526,17 @@ app.MapPut("/api/db/users", (BattleUserDatabase users, UserUpdateRequest? body) 
     return Results.Ok(new { ok = true });
 });
 
+app.MapPost("/api/db/users/{userId:long}/debug-hp", (long userId, BattleUserDatabase users, UserDebugHpRequest? body) =>
+{
+    if (userId <= 0)
+        return Results.Json(new { error = "invalid id" }, jsonOpt, statusCode: 400);
+    if (body == null)
+        return Results.Json(new { error = "body required" }, jsonOpt, statusCode: 400);
+    if (!users.TrySetUserDebugHp(userId, body.MaxHp, body.CurrentHp, out var err))
+        return Results.Json(new { error = err ?? "update failed" }, jsonOpt, statusCode: 400);
+    return Results.Ok(new { ok = true });
+});
+
 app.MapGet("/api/db/users/{userId:long}/items", (long userId, BattleUserDatabase users) =>
 {
     if (!users.TryGetUserItemsForAdmin(userId, out var items, out var error))
@@ -671,6 +699,65 @@ app.MapPut("/api/db/obstacle-balance", (BattleObstacleBalanceDatabase db, Battle
         return Results.Json(new { error = "body required" }, jsonOpt, statusCode: 400);
     db.UpsertBalance(body);
     return Results.Ok(new { ok = true });
+});
+
+app.MapGet("/api/db/backup/export", async (BattlePostgresDatabase db, IConfiguration cfg, HttpRequest req) =>
+{
+    if (!BattleDatabaseBackup.BackupAuthorizationOk(cfg, req))
+    {
+        return Results.Json(
+            new { error = "Set header X-Database-Backup-Key or query key to match DatabaseBackup:Secret." },
+            jsonOpt,
+            statusCode: 401);
+    }
+
+    await using NpgsqlConnection conn = await db.DataSource.OpenConnectionAsync();
+    string json = await BattleDatabaseBackup.ExportJsonAsync(conn);
+    string name = $"hope-battle-db-{DateTime.UtcNow:yyyyMMdd-HHmmss}.json";
+    return Results.File(Encoding.UTF8.GetBytes(json), "application/json; charset=utf-8", name);
+});
+
+app.MapPost("/api/db/backup/import", async (HttpContext ctx, BattlePostgresDatabase db, BattleBodyPartDatabase bodyParts, IConfiguration cfg) =>
+{
+    if (!BattleDatabaseBackup.BackupAuthorizationOk(cfg, ctx.Request))
+    {
+        return Results.Json(
+            new { error = "Set header X-Database-Backup-Key or query key to match DatabaseBackup:Secret." },
+            jsonOpt,
+            statusCode: 401);
+    }
+
+    string body;
+    using (var reader = new StreamReader(ctx.Request.Body, Encoding.UTF8, leaveOpen: true))
+        body = await reader.ReadToEndAsync();
+
+    if (string.IsNullOrWhiteSpace(body))
+    {
+        long? cl = ctx.Request.ContentLength;
+        string hint = cl is { } n && n > 0
+            ? " Body was empty but Content-Length was set — check reverse proxy (nginx: client_max_body_size) or TLS termination."
+            : "";
+        return Results.Json(new { error = "JSON body required." + hint }, jsonOpt, statusCode: 400);
+    }
+
+    BattleDatabaseBackup.LogDatabaseTarget(cfg);
+
+    try
+    {
+        await using NpgsqlConnection conn = await db.DataSource.OpenConnectionAsync();
+        DatabaseBackupImportResult result = await BattleDatabaseBackup.ImportJsonAsync(conn, body);
+        int total = result.RowCounts.Values.Sum();
+        Console.WriteLine(
+            $"[Backup] Import OK: bodyBytes={body.Length}, totalRows={total}, " +
+            string.Join(", ", result.RowCounts.Select(kv => $"{kv.Key}={kv.Value}")));
+        bodyParts.RefreshCache();
+        return Results.Json(new { ok = true, bodyBytes = body.Length, rowCounts = result.RowCounts, totalRows = total }, jsonOpt);
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"[Backup] Import failed: {ex.Message}");
+        return Results.Json(new { error = ex.Message }, jsonOpt, statusCode: 400);
+    }
 });
 
 app.MapGet("/api/logs/recent", (BattleLogStore logs, int? take) =>
@@ -883,6 +970,11 @@ public class WeaponUpsertRequest
     public int inventorySlotWidth { get; set; } = 1;
     /// <summary>Hand occupancy marker: 0, 1 or 2.</summary>
     public int inventoryGrid { get; set; } = 1;
+    public string? effectType { get; set; }
+    public string? effectSign { get; set; }
+    public int effectMin { get; set; }
+    public int effectMax { get; set; }
+    public string? effectTarget { get; set; }
 
     public BattleWeaponUpsertDto ToUpsertDto()
     {
@@ -941,7 +1033,12 @@ public class WeaponUpsertRequest
             DamageType = damageType ?? "physical",
             BurstRounds = burstRounds,
             BurstApCost = burstApCost,
-            InventoryGrid = inventoryGrid
+            InventoryGrid = inventoryGrid,
+            EffectType = effectType ?? "",
+            EffectSign = effectSign ?? "positive",
+            EffectMin = effectMin,
+            EffectMax = effectMax,
+            EffectTarget = effectTarget ?? "enemy"
         };
     }
 }

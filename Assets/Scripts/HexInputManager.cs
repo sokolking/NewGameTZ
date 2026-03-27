@@ -30,6 +30,7 @@ public class HexInputManager : MonoBehaviour
     private MovementPosture _lastHoverPosture = MovementPosture.Walk;
     private HoldTargetIndicator _holdIndicator;
     private RemoteBattleUnitView _heldRemoteTarget;
+    private bool _heldSelfTarget;
     private Vector2 _holdIndicatorAnchorScreen;
     private bool _hasHoldIndicatorAnchor;
 
@@ -442,6 +443,7 @@ public class HexInputManager : MonoBehaviour
         if (_hexGridCamera != null && _hexGridCamera.ThirdPersonOrbitSuppressAttackHold)
         {
             _heldRemoteTarget = null;
+            _heldSelfTarget = false;
             _hasHoldIndicatorAnchor = false;
             SetHoldIndicatorVisible(false);
             IsHoldingRemoteTargetWithLeftMouse = false;
@@ -452,6 +454,7 @@ public class HexInputManager : MonoBehaviour
         if (mouse.rightButton.isPressed)
         {
             _heldRemoteTarget = null;
+            _heldSelfTarget = false;
             _hasHoldIndicatorAnchor = false;
             SetHoldIndicatorVisible(false);
             IsHoldingRemoteTargetWithLeftMouse = false;
@@ -464,7 +467,11 @@ public class HexInputManager : MonoBehaviour
             if (_heldRemoteTarget != null && _holdIndicator != null &&
                 _holdIndicator.HoveredPart != HoldTargetIndicator.BodyPartKind.None)
                 ApplyAttackOnRelease(_heldRemoteTarget, _holdIndicator.HoveredPart, kb);
+            else if (_heldSelfTarget && _holdIndicator != null &&
+                     _holdIndicator.HoveredPart != HoldTargetIndicator.BodyPartKind.None)
+                GameSession.Active?.TryUseSelfItem();
             _heldRemoteTarget = null;
+            _heldSelfTarget = false;
             _hasHoldIndicatorAnchor = false;
             SetHoldIndicatorVisible(false);
             IsHoldingRemoteTargetWithLeftMouse = false;
@@ -474,6 +481,7 @@ public class HexInputManager : MonoBehaviour
         if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject())
         {
             _heldRemoteTarget = null;
+            _heldSelfTarget = false;
             _hasHoldIndicatorAnchor = false;
             SetHoldIndicatorVisible(false);
             IsHoldingRemoteTargetWithLeftMouse = false;
@@ -481,11 +489,15 @@ public class HexInputManager : MonoBehaviour
         }
 
         bool shouldCaptureAnchor = mouse.leftButton.wasPressedThisFrame || !_hasHoldIndicatorAnchor;
+        bool selfItemActive = IsSelfItemActive();
         Vector3 remoteHitPoint = Vector3.zero;
-        RemoteBattleUnitView remote = shouldCaptureAnchor ? GetRemoteUnitUnderCursor(mouse, out remoteHitPoint) : null;
+        RemoteBattleUnitView remote = (shouldCaptureAnchor && !selfItemActive)
+            ? GetRemoteUnitUnderCursor(mouse, out remoteHitPoint)
+            : null;
         if (remote != null)
         {
             _heldRemoteTarget = remote;
+            _heldSelfTarget = false;
             // Вариант A: anchor в пикселях экрана — ровно там, куда кликнул курсор.
             // Не зависит от угла камеры, глубины, угла обзора.
             _holdIndicatorAnchorScreen = mouse.position.ReadValue();
@@ -493,8 +505,28 @@ public class HexInputManager : MonoBehaviour
             if (mouse.leftButton.wasPressedThisFrame)
                 GameSession.Active?.ApplyLocalPlayerRangedFacingTowardTargetHex(remote.CurrentCol, remote.CurrentRow);
         }
+        else if (shouldCaptureAnchor && mouse.leftButton.wasPressedThisFrame)
+        {
+            if (selfItemActive && (IsLocalPlayerUnderCursor(mouse) || IsLocalPlayerHexUnderCursor(mouse)))
+            {
+                _heldRemoteTarget = null;
+                _heldSelfTarget = true;
+                _holdIndicatorAnchorScreen = mouse.position.ReadValue();
+                _hasHoldIndicatorAnchor = true;
+            }
+            else if (selfItemActive)
+            {
+                // Self item: disallow target indicator for any non-self unit.
+                _heldRemoteTarget = null;
+                _heldSelfTarget = false;
+                _hasHoldIndicatorAnchor = false;
+                SetHoldIndicatorVisible(false);
+                IsHoldingRemoteTargetWithLeftMouse = false;
+                return;
+            }
+        }
 
-        if (_heldRemoteTarget == null)
+        if (_heldRemoteTarget == null && !_heldSelfTarget)
         {
             IsHoldingRemoteTargetWithLeftMouse = false;
             SetHoldIndicatorVisible(false);
@@ -513,6 +545,7 @@ public class HexInputManager : MonoBehaviour
             ? _holdIndicatorAnchorScreen
             : mouse.position.ReadValue();
         _holdIndicator.SetScreenCenter(screenCenter);
+        _holdIndicator.SetWholeBodyHighlightMode(_heldSelfTarget);
         _holdIndicator.UpdateBodyPartHighlight(mouse.position.ReadValue(), mouse.leftButton.wasPressedThisFrame);
         _holdIndicator.SetVisible(true);
         if (_hexGridCamera != null)
@@ -583,6 +616,51 @@ public class HexInputManager : MonoBehaviour
             return null;
         hitPoint = bestPt;
         return best;
+    }
+
+    private bool IsLocalPlayerUnderCursor(Mouse mouse)
+    {
+        if (_camera == null || _player == null)
+            return false;
+        Vector2 pos = mouse.position.ReadValue();
+        Ray ray = _camera.ScreenPointToRay(new Vector3(pos.x, pos.y, 0f));
+        int n = Physics.RaycastNonAlloc(ray, _remoteHoldRaycastHits, 1000f, Physics.DefaultRaycastLayers, QueryTriggerInteraction.Collide);
+        if (n <= 0)
+            return false;
+        if (n > MaxRaycastHitsToProcess)
+            n = MaxRaycastHitsToProcess;
+
+        for (int i = 0; i < n; i++)
+        {
+            Collider col = _remoteHoldRaycastHits[i].collider;
+            if (col == null)
+                continue;
+            Player hitPlayer = col.GetComponentInParent<Player>();
+            if (hitPlayer != null && hitPlayer == _player)
+                return true;
+        }
+
+        return false;
+    }
+
+    private bool IsLocalPlayerHexUnderCursor(Mouse mouse)
+    {
+        if (_player == null)
+            return false;
+        HexCell cell = GetHexUnderCursor(mouse);
+        if (cell == null)
+            return false;
+        return cell.Col == _player.CurrentCol && cell.Row == _player.CurrentRow;
+    }
+
+    private bool IsSelfItemActive()
+    {
+#if UNITY_2023_1_OR_NEWER
+        InventoryUI inv = UnityEngine.Object.FindFirstObjectByType<InventoryUI>();
+#else
+        InventoryUI inv = UnityEngine.Object.FindObjectOfType<InventoryUI>();
+#endif
+        return inv != null && inv.IsActiveItemMedicine();
     }
 
     private void EnsureHoldIndicator()

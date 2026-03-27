@@ -1,5 +1,6 @@
 using TMPro;
 using UnityEngine;
+using UnityEngine.UI;
 
 /// <summary>
 /// Плашка урона над юнитом (по образу CharacterNameplate, но без HP-бара).
@@ -20,6 +21,7 @@ public sealed class DamagePopupView : MonoBehaviour
     [Tooltip("Extra upward offset in world units (damage queue stacking).")]
     [SerializeField] private float _stackRiseWorld = 0f;
     [SerializeField] private RectTransform _panelRect;
+    [SerializeField] private Image _backgroundImage;
 
     private Transform _follow;
     private Camera _camera;
@@ -29,6 +31,8 @@ public sealed class DamagePopupView : MonoBehaviour
     {
         if (_camera == null)
             _camera = Camera.main;
+        if (_backgroundImage == null)
+            _backgroundImage = GetComponentInChildren<Image>(true);
     }
 
     public void Bind(Transform follow)
@@ -44,6 +48,19 @@ public sealed class DamagePopupView : MonoBehaviour
             _damageText.text = "-" + damage;
             _damageText.color = Color.yellow;
         }
+        if (_backgroundImage != null)
+            _backgroundImage.color = new Color(0.75f, 0.15f, 0.15f, 0.92f);
+    }
+
+    public void ShowHeal(int heal)
+    {
+        if (_damageText != null)
+        {
+            _damageText.text = "+" + heal;
+            _damageText.color = Color.white;
+        }
+        if (_backgroundImage != null)
+            _backgroundImage.color = new Color(0.2f, 0.72f, 0.26f, 0.92f);
     }
 
     public void SetStackRiseWorld(float riseWorld)

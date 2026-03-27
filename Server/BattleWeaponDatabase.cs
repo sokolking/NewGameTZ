@@ -30,7 +30,8 @@ w.id, w.item_id, w.code, COALESCE(i.name, w.name) AS name, w.damage, w.range, CO
 COALESCE(i.mass, w.mass) AS mass, w.caliber, w.armor_pierce, w.magazine_size, w.reload_ap_cost, w.category,
 w.req_level, w.req_strength, w.req_endurance, w.req_accuracy, w.req_mastery_category,
 w.stat_effect_strength, w.stat_effect_endurance, w.stat_effect_accuracy,
-w.damage_type, w.damage_min, w.damage_max, w.burst_rounds, w.burst_ap_cost, w.inventory_slot_width, COALESCE(i.inventorygrid, 1) AS inventorygrid
+w.damage_type, w.damage_min, w.damage_max, w.burst_rounds, w.burst_ap_cost, w.inventory_slot_width, COALESCE(i.inventorygrid, 1) AS inventorygrid,
+w.effect_type, w.effect_sign, w.effect_min, w.effect_max, w.effect_target
 """;
 
     public IReadOnlyList<BattleWeaponBrowseRowDto> ListWeapons(int take)
@@ -183,7 +184,12 @@ LIMIT 1;
             BurstRounds = reader.GetInt32(30),
             BurstApCost = reader.GetInt32(31),
             InventorySlotWidth = reader.GetInt32(32),
-            InventoryGrid = reader.GetInt32(33)
+            InventoryGrid = reader.GetInt32(33),
+            EffectType = reader.GetString(34),
+            EffectSign = reader.GetString(35),
+            EffectMin = reader.GetInt32(36),
+            EffectMax = reader.GetInt32(37),
+            EffectTarget = reader.GetString(38)
         };
     }
 
@@ -204,7 +210,9 @@ LIMIT 1;
             IsSniper = false,
             Category = "cold",
             DamageType = "physical",
-            InventorySlotWidth = 1
+            InventorySlotWidth = 1,
+            EffectSign = "positive",
+            EffectTarget = "enemy"
         };
 
     private static int StoreInventorySlotWidthForDb(int w) => w >= 2 ? 2 : 1;
@@ -240,13 +248,15 @@ INSERT INTO weapons (
     mass, caliber, armor_pierce, magazine_size, reload_ap_cost, category,
     req_level, req_strength, req_endurance, req_accuracy, req_mastery_category,
     stat_effect_strength, stat_effect_endurance, stat_effect_accuracy,
-    damage_type, damage_min, damage_max, burst_rounds, burst_ap_cost, inventory_slot_width)
+    damage_type, damage_min, damage_max, burst_rounds, burst_ap_cost, inventory_slot_width,
+    effect_type, effect_sign, effect_min, effect_max, effect_target)
 VALUES (
     @itemId, @code, @name, @damage, @range, @iconKey, @attackApCost, @spreadPenalty, @trajectoryHeight, @quality, @weaponCondition, @isSniper,
     @mass, @caliber, @armorPierce, @magazineSize, @reloadApCost, @category,
     @reqLevel, @reqStrength, @reqEndurance, @reqAccuracy, @reqMasteryCategory,
     @statEffectStrength, @statEffectEndurance, @statEffectAccuracy,
-    @damageType, @damageMin, @damageMax, @burstRounds, @burstApCost, @inventorySlotWidth)
+    @damageType, @damageMin, @damageMax, @burstRounds, @burstApCost, @inventorySlotWidth,
+    @effectType, @effectSign, @effectMin, @effectMax, @effectTarget)
 ON CONFLICT (code) DO UPDATE
 SET item_id = EXCLUDED.item_id,
     name = EXCLUDED.name,
@@ -278,7 +288,12 @@ SET item_id = EXCLUDED.item_id,
     damage_max = EXCLUDED.damage_max,
     burst_rounds = EXCLUDED.burst_rounds,
     burst_ap_cost = EXCLUDED.burst_ap_cost,
-    inventory_slot_width = EXCLUDED.inventory_slot_width;
+    inventory_slot_width = EXCLUDED.inventory_slot_width,
+    effect_type = EXCLUDED.effect_type,
+    effect_sign = EXCLUDED.effect_sign,
+    effect_min = EXCLUDED.effect_min,
+    effect_max = EXCLUDED.effect_max,
+    effect_target = EXCLUDED.effect_target;
 """;
         int invW = StoreInventorySlotWidthForDb(d.InventorySlotWidth);
         command.Parameters.AddWithValue("itemId", itemId);
@@ -313,6 +328,27 @@ SET item_id = EXCLUDED.item_id,
         command.Parameters.AddWithValue("burstRounds", StoreNonNegativeOrSentinelForDb(d.BurstRounds));
         command.Parameters.AddWithValue("burstApCost", StoreNonNegativeOrSentinelForDb(d.BurstApCost));
         command.Parameters.AddWithValue("inventorySlotWidth", invW);
+        string effectType = (d.EffectType ?? "").Trim().ToLowerInvariant();
+        string effectSign = (d.EffectSign ?? "positive").Trim().ToLowerInvariant();
+        string effectTarget = (d.EffectTarget ?? "enemy").Trim().ToLowerInvariant();
+        int effectMin = d.EffectMin;
+        int effectMax = d.EffectMax;
+        if (effectMin > effectMax)
+            (effectMin, effectMax) = (effectMax, effectMin);
+        if (category == "medicine")
+        {
+            effectType = "hp";
+            effectSign = "positive";
+            effectTarget = "self";
+            rangeDb = 0;
+            effectMin = Math.Max(0, effectMin);
+            effectMax = Math.Max(effectMin, effectMax);
+        }
+        command.Parameters.AddWithValue("effectType", effectType);
+        command.Parameters.AddWithValue("effectSign", effectSign);
+        command.Parameters.AddWithValue("effectMin", effectMin);
+        command.Parameters.AddWithValue("effectMax", effectMax);
+        command.Parameters.AddWithValue("effectTarget", effectTarget);
         command.ExecuteNonQuery();
         tx.Commit();
     }
@@ -476,13 +512,15 @@ INSERT INTO weapons (
     mass, caliber, armor_pierce, magazine_size, reload_ap_cost, category,
     req_level, req_strength, req_endurance, req_accuracy, req_mastery_category,
     stat_effect_strength, stat_effect_endurance, stat_effect_accuracy,
-    damage_type, damage_min, damage_max, burst_rounds, burst_ap_cost, inventory_slot_width)
+    damage_type, damage_min, damage_max, burst_rounds, burst_ap_cost, inventory_slot_width,
+    effect_type, effect_sign, effect_min, effect_max, effect_target)
 VALUES (
     @itemId, @code, @name, @damage, @range, @iconKey, @attackApCost, @spreadPenalty, @trajectoryHeight, @quality, @weaponCondition, @isSniper,
     @mass, @caliber, @armorPierce, @magazineSize, @reloadApCost, @category,
     @reqLevel, @reqStrength, @reqEndurance, @reqAccuracy, @reqMasteryCategory,
     @statEffectStrength, @statEffectEndurance, @statEffectAccuracy,
-    @damageType, @damageMin, @damageMax, @burstRounds, @burstApCost, @inventorySlotWidth);
+    @damageType, @damageMin, @damageMax, @burstRounds, @burstApCost, @inventorySlotWidth,
+    @effectType, @effectSign, @effectMin, @effectMax, @effectTarget);
 """;
         int invWInsert = StoreInventorySlotWidthForDb(d.InventorySlotWidth);
         command.Parameters.AddWithValue("itemId", itemId);
@@ -517,6 +555,27 @@ VALUES (
         command.Parameters.AddWithValue("burstRounds", StoreNonNegativeOrSentinelForDb(d.BurstRounds));
         command.Parameters.AddWithValue("burstApCost", StoreNonNegativeOrSentinelForDb(d.BurstApCost));
         command.Parameters.AddWithValue("inventorySlotWidth", invWInsert);
+        string effectType = (d.EffectType ?? "").Trim().ToLowerInvariant();
+        string effectSign = (d.EffectSign ?? "positive").Trim().ToLowerInvariant();
+        string effectTarget = (d.EffectTarget ?? "enemy").Trim().ToLowerInvariant();
+        int effectMin = d.EffectMin;
+        int effectMax = d.EffectMax;
+        if (effectMin > effectMax)
+            (effectMin, effectMax) = (effectMax, effectMin);
+        if (category == "medicine")
+        {
+            effectType = "hp";
+            effectSign = "positive";
+            effectTarget = "self";
+            rangeDb = 0;
+            effectMin = Math.Max(0, effectMin);
+            effectMax = Math.Max(effectMin, effectMax);
+        }
+        command.Parameters.AddWithValue("effectType", effectType);
+        command.Parameters.AddWithValue("effectSign", effectSign);
+        command.Parameters.AddWithValue("effectMin", effectMin);
+        command.Parameters.AddWithValue("effectMax", effectMax);
+        command.Parameters.AddWithValue("effectTarget", effectTarget);
         command.ExecuteNonQuery();
     }
 

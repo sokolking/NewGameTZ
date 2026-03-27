@@ -90,6 +90,7 @@ CREATE TABLE IF NOT EXISTS users (
     endurance INT NOT NULL DEFAULT 10,
     accuracy INT NOT NULL DEFAULT 10,
     max_hp INT NOT NULL DEFAULT 10,
+    current_hp INT NOT NULL DEFAULT 10,
     max_ap INT NOT NULL DEFAULT 100
 );
 
@@ -112,6 +113,7 @@ CREATE INDEX IF NOT EXISTS ix_battle_turn_links_battle_id_turn_index
     ON battle_turn_links (battle_id, turn_index);
 
 ALTER TABLE users ADD COLUMN IF NOT EXISTS max_hp INT NOT NULL DEFAULT 10;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS current_hp INT NOT NULL DEFAULT 10;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS max_ap INT NOT NULL DEFAULT 100;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS experience INT NOT NULL DEFAULT 0;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS strength INT NOT NULL DEFAULT 10;
@@ -120,6 +122,7 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS accuracy INT NOT NULL DEFAULT 10;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS intuition INT NOT NULL DEFAULT 0;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS intellect INT NOT NULL DEFAULT 0;
 ALTER TABLE users DROP COLUMN IF EXISTS weapon_code;
+UPDATE users SET current_hp = max_hp WHERE current_hp IS NULL OR current_hp < 0 OR current_hp > max_hp;
 
 CREATE TABLE IF NOT EXISTS user_ammo_packs (
     id BIGSERIAL PRIMARY KEY,
@@ -199,7 +202,12 @@ CREATE TABLE IF NOT EXISTS weapons (
     damage_min INT NOT NULL DEFAULT 1,
     damage_max INT NOT NULL DEFAULT 1,
     burst_rounds INT NOT NULL DEFAULT 0,
-    burst_ap_cost INT NOT NULL DEFAULT 0
+    burst_ap_cost INT NOT NULL DEFAULT 0,
+    effect_type TEXT NOT NULL DEFAULT '',
+    effect_sign TEXT NOT NULL DEFAULT 'positive',
+    effect_min INT NOT NULL DEFAULT 0,
+    effect_max INT NOT NULL DEFAULT 0,
+    effect_target TEXT NOT NULL DEFAULT 'enemy'
 );
 ALTER TABLE weapons ADD COLUMN IF NOT EXISTS item_id BIGINT REFERENCES items(id) ON DELETE SET NULL;
 
@@ -228,6 +236,11 @@ ALTER TABLE weapons ADD COLUMN IF NOT EXISTS damage_max INT NOT NULL DEFAULT 1;
 ALTER TABLE weapons ADD COLUMN IF NOT EXISTS burst_rounds INT NOT NULL DEFAULT 0;
 ALTER TABLE weapons ADD COLUMN IF NOT EXISTS burst_ap_cost INT NOT NULL DEFAULT 0;
 ALTER TABLE weapons ADD COLUMN IF NOT EXISTS inventory_slot_width INT NOT NULL DEFAULT 1;
+ALTER TABLE weapons ADD COLUMN IF NOT EXISTS effect_type TEXT NOT NULL DEFAULT '';
+ALTER TABLE weapons ADD COLUMN IF NOT EXISTS effect_sign TEXT NOT NULL DEFAULT 'positive';
+ALTER TABLE weapons ADD COLUMN IF NOT EXISTS effect_min INT NOT NULL DEFAULT 0;
+ALTER TABLE weapons ADD COLUMN IF NOT EXISTS effect_max INT NOT NULL DEFAULT 0;
+ALTER TABLE weapons ADD COLUMN IF NOT EXISTS effect_target TEXT NOT NULL DEFAULT 'enemy';
 UPDATE weapons SET inventory_slot_width = 1 WHERE inventory_slot_width IS NULL OR inventory_slot_width < 1 OR inventory_slot_width > 2;
 
 UPDATE weapons SET damage_min = GREATEST(0, damage), damage_max = GREATEST(0, damage), damage = GREATEST(0, damage)

@@ -295,6 +295,7 @@ public static class BattleUsersDashboardPage
     let users = [];
     let weaponList = [];
     let ammoTypeList = [];
+    let medicineWeaponList = [];
     let itemsUserId = null;
 
     function setStatus(text) {
@@ -332,17 +333,43 @@ public static class BattleUsersDashboardPage
               <span>end ${user.endurance}</span>
               <span>acc ${user.accuracy}</span>
               <span>maxHp ${user.maxHp}</span>
+              <span>curHp ${user.currentHp}</span>
               <span>maxAp ${user.maxAp}</span>
               <span>weapon ${escapeHtml(user.weaponCode || '')}</span>
             </div>
           </div>
           <button type="button" class="edit-btn">Edit</button>
+          <button type="button" class="edit-btn" data-act="hp">Debug HP</button>
           <button type="button" class="edit-btn" data-act="items">Items</button>
         `;
         row.querySelector('.edit-btn').addEventListener('click', () => openEdit(user));
+        row.querySelector('[data-act="hp"]').addEventListener('click', () => debugSetHp(user));
         row.querySelector('[data-act="items"]').addEventListener('click', () => openItemsEditor(user));
         userListEl.appendChild(row);
       }
+    }
+
+    async function debugSetHp(user) {
+      const maxInput = prompt('Set max HP:', String(Number(user.maxHp || 1)));
+      if (maxInput == null) return;
+      const maxHp = Math.max(1, Number(maxInput) || 1);
+      const baseCurrent = user.currentHp != null ? Number(user.currentHp) : Number(user.maxHp || 1);
+      const curInput = prompt('Set current HP:', String(Math.min(maxHp, baseCurrent)));
+      if (curInput == null) return;
+      const currentHp = Math.max(0, Math.min(maxHp, Number(curInput) || 0));
+      setStatus('updating max/current HP for user ' + user.id + '...');
+      const resp = await fetch('/api/db/users/' + user.id + '/debug-hp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ maxHp, currentHp })
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        setStatus('debug HP update failed: ' + (data.error || resp.status));
+        return;
+      }
+      setStatus('max/current HP updated');
+      await loadUsers();
     }
 
     function weaponSlotWidth(code) {
@@ -419,8 +446,11 @@ public static class BattleUsersDashboardPage
         row.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;align-items:center;border:1px solid var(--border);border-radius:8px;padding:8px;';
 
         const type = document.createElement('select');
-        type.innerHTML = '<option value="weapon">weapon</option><option value="ammo">ammo</option>';
-        type.value = (it.itemType || 'weapon').toLowerCase() === 'ammo' ? 'ammo' : 'weapon';
+        type.innerHTML = '<option value="weapon">weapon</option><option value="ammo">ammo</option><option value="medicine">medicine</option>';
+        {
+          const t = (it.itemType || 'weapon').toLowerCase();
+          type.value = (t === 'ammo' || t === 'medicine') ? t : 'weapon';
+        }
 
         const code = document.createElement('select');
         const slot = document.createElement('input');
@@ -460,7 +490,7 @@ public static class BattleUsersDashboardPage
             const weaponDef = weaponList.find(x => x.code === code.value);
             const hand = weaponDef && weaponDef.inventoryGrid != null ? Number(weaponDef.inventoryGrid) : 1;
             info.textContent = 'uses ' + weaponSlotWidth(code.value) + ' cell(s), hand ' + hand + ', mag ' + magSize;
-          } else {
+          } else if (type.value === 'ammo') {
             addAmmoOptions(code, it.code || '');
             slot.disabled = false;
             qty.disabled = false;
@@ -471,6 +501,32 @@ public static class BattleUsersDashboardPage
             const ammoDef = ammoTypeList.find(x => x.caliber === code.value);
             const hand = ammoDef && ammoDef.inventoryGrid != null ? Number(ammoDef.inventoryGrid) : 1;
             info.textContent = 'stackable item, 1 cell, hand ' + hand;
+          } else {
+            code.innerHTML = '';
+            for (const w of medicineWeaponList) {
+              const opt = document.createElement('option');
+              opt.value = w.code;
+              opt.textContent = w.code + ' - ' + w.name;
+              code.appendChild(opt);
+            }
+            const medCode = (it.code || '').trim().toLowerCase();
+            if (medCode && ![...code.options].some(o => o.value === medCode)) {
+              const opt = document.createElement('option');
+              opt.value = medCode;
+              opt.textContent = medCode + ' (missing in medicine list)';
+              code.appendChild(opt);
+            }
+            if (code.options.length && !medCode) code.value = code.options[0].value;
+            else code.value = medCode;
+            slot.disabled = false;
+            qty.disabled = false;
+            chamber.disabled = true;
+            chamber.value = '0';
+            eq.checked = false;
+            eqLab.style.display = 'none';
+            const medDef = medicineWeaponList.find(x => x.code === code.value);
+            const hand = medDef && medDef.inventoryGrid != null ? Number(medDef.inventoryGrid) : 1;
+            info.textContent = 'medicine stack, hand ' + hand;
           }
         }
 
@@ -494,10 +550,14 @@ public static class BattleUsersDashboardPage
             const weaponDef = weaponList.find(x => x.code === code.value);
             const hand = weaponDef && weaponDef.inventoryGrid != null ? Number(weaponDef.inventoryGrid) : 1;
             info.textContent = 'uses ' + weaponSlotWidth(code.value) + ' cell(s), hand ' + hand + ', mag ' + magSize;
-          } else {
+          } else if (type.value === 'ammo') {
             const ammoDef = ammoTypeList.find(x => x.caliber === code.value);
             const hand = ammoDef && ammoDef.inventoryGrid != null ? Number(ammoDef.inventoryGrid) : 1;
             info.textContent = 'stackable item, 1 cell, hand ' + hand;
+          } else {
+            const medDef = medicineWeaponList.find(x => x.code === code.value);
+            const hand = medDef && medDef.inventoryGrid != null ? Number(medDef.inventoryGrid) : 1;
+            info.textContent = 'medicine stack, hand ' + hand;
           }
         });
         syncUi();
@@ -531,8 +591,11 @@ public static class BattleUsersDashboardPage
         const chamberEl = inputs[2];
         const eqEl = inputs[3];
         if (!typeEl || !codeEl || !slotEl || !qtyEl || !chamberEl || !eqEl) continue;
+        let outType = typeEl.value;
+        if (outType === 'medicine')
+          outType = 'medicine';
         out.push({
-          itemType: typeEl.value,
+          itemType: outType,
           code: (codeEl.value || '').trim(),
           quantity: Math.max(0, Number(qtyEl.value || 0)),
           chamberRounds: Math.max(0, Number(chamberEl.value || 0)),
@@ -630,6 +693,8 @@ public static class BattleUsersDashboardPage
       users = await usersResp.json();
       weaponList = await weaponsResp.json();
       ammoTypeList = await ammoResp.json();
+      medicineWeaponList = (Array.isArray(weaponList) ? weaponList : [])
+        .filter(w => String(w?.category || '').toLowerCase() === 'medicine');
       renderUsers();
       setStatus(`loaded ${users.length} users`);
     }

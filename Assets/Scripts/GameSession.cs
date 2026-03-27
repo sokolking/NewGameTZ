@@ -405,6 +405,30 @@ public class GameSession : MonoBehaviour
         return true;
     }
 
+    public bool TryUseSelfItem()
+    {
+        if (_battleFinished) return false;
+        var local = LocalPlayer;
+        if (local == null) return false;
+#if UNITY_2023_1_OR_NEWER
+        InventoryUI inv = UnityEngine.Object.FindFirstObjectByType<InventoryUI>();
+#else
+        InventoryUI inv = UnityEngine.Object.FindObjectOfType<InventoryUI>();
+#endif
+        if (inv == null || !inv.IsActiveItemMedicine())
+            return false;
+
+        int useCost = Mathf.Max(1, inv.GetCurrentActiveItemUseApCost());
+        if (!local.QueueUseItemAction(useCost))
+        {
+            OnNetworkMessage?.Invoke(Loc.T("ui.not_enough_ap"));
+            return false;
+        }
+
+        OnNetworkMessage?.Invoke("Self item queued");
+        return true;
+    }
+
     /// <summary>Ctrl+клик по гексу: дальнобойный выстрел по направлению (стена на ЛС / враг на клетке).</summary>
     public bool TryPerformHexAimAttack(int col, int row, bool shiftRepeat = false)
     {
@@ -934,6 +958,29 @@ public class GameSession : MonoBehaviour
             if (pause > 0f)
                 yield return new WaitForSecondsRealtime(pause);
         }
+        else if (action.actionType == "UseItem")
+        {
+            yield return PlayUseItemMedicineAnimation(result, action);
+            if (action.succeeded && action.healed > 0)
+                ShowHealPopupForAction(result, action);
+        }
+    }
+
+    private IEnumerator PlayUseItemMedicineAnimation(TurnResultPayload result, BattleExecutedAction action)
+    {
+        if (action == null || !action.succeeded || string.IsNullOrEmpty(action.unitId))
+            yield break;
+        if (!TryResolveAnimatedUnit(result, action.unitId, out object unit, out bool isLocal))
+            yield break;
+
+        PlayerCharacterAnimator anim = null;
+        if (isLocal && unit is Player pl)
+            anim = pl.GetComponentInChildren<PlayerCharacterAnimator>();
+        else if (unit is RemoteBattleUnitView remote)
+            anim = remote.GetComponentInChildren<PlayerCharacterAnimator>();
+
+        if (anim != null)
+            yield return StartCoroutine(anim.RunUseItemMedicineRoutine());
     }
 
     /// <summary>Гекс попадания в стену по журналу mapUpdates: тот же тик, что у Attack, и ближайший к стрелку гекс на линии выстрела.</summary>
@@ -2352,6 +2399,21 @@ public class GameSession : MonoBehaviour
         if (queue == null)
             queue = target.gameObject.AddComponent<DamagePopupQueue>();
         queue.ShowDamage(action.damage);
+    }
+
+    private void ShowHealPopupForAction(TurnResultPayload result, BattleExecutedAction action)
+    {
+        if (action == null || !action.succeeded || action.healed <= 0 || string.IsNullOrEmpty(action.unitId))
+            return;
+
+        Transform target = ResolveDamagePopupTarget(result, action.unitId);
+        if (target == null)
+            return;
+
+        DamagePopupQueue queue = target.GetComponent<DamagePopupQueue>();
+        if (queue == null)
+            queue = target.gameObject.AddComponent<DamagePopupQueue>();
+        queue.ShowHeal(action.healed);
     }
 
     private Transform ResolveDamagePopupTarget(TurnResultPayload result, string targetUnitId)

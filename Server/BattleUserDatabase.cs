@@ -43,7 +43,7 @@ LIMIT 1;
         using var connection = _database.DataSource.OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = """
-SELECT u.id, u.username, u.password, u.experience, u.strength, u.endurance, u.accuracy, u.max_hp, u.max_ap,
+SELECT u.id, u.username, u.password, u.experience, u.strength, u.endurance, u.accuracy, u.max_hp, u.current_hp, u.max_ap,
        COALESCE((
            SELECT ii.weapon_code FROM user_inventory_items ii
            WHERE ii.user_id = u.id AND ii.is_equipped
@@ -69,8 +69,9 @@ LIMIT @take;
                 Endurance = reader.GetInt32(5),
                 Accuracy = reader.GetInt32(6),
                 MaxHp = reader.GetInt32(7),
-                MaxAp = reader.GetInt32(8),
-                WeaponCode = reader.IsDBNull(9) ? "fist" : reader.GetString(9)
+                CurrentHp = reader.GetInt32(8),
+                MaxAp = reader.GetInt32(9),
+                WeaponCode = reader.IsDBNull(10) ? "fist" : reader.GetString(10)
             });
             var last = rows[^1];
             last.Level = ComputeLevel(last.Experience);
@@ -79,9 +80,10 @@ LIMIT @take;
         return rows;
     }
 
-    public bool TryGetCombatProfile(string username, out int maxHp, out int maxAp, out int accuracy, out int level)
+    public bool TryGetCombatProfile(string username, out int maxHp, out int currentHp, out int maxAp, out int accuracy, out int level)
     {
         maxHp = PlayerLevelStatsTable.BaseMaxHp;
+        currentHp = maxHp;
         maxAp = PlayerLevelStatsTable.BaseMaxAp;
         accuracy = 0;
         level = 1;
@@ -91,7 +93,7 @@ LIMIT @take;
         using var connection = _database.DataSource.OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = """
-SELECT experience, strength, endurance, accuracy
+SELECT experience, strength, endurance, accuracy, max_hp, current_hp
 FROM users
 WHERE username = @username
 LIMIT 1;
@@ -105,9 +107,12 @@ LIMIT 1;
         _ = reader.GetInt32(1);
         _ = reader.GetInt32(2);
         _ = reader.GetInt32(3);
+        int hpFromDb = reader.GetInt32(4);
+        int currentHpFromDb = reader.GetInt32(5);
         level = ComputeLevel(exp);
         PlayerLevelStatsRow stats = PlayerLevelStatsTable.GetForLevel(level);
-        maxHp = PlayerLevelStatsTable.GetMaxHpForLevel(level);
+        maxHp = Math.Max(1, hpFromDb);
+        currentHp = Math.Clamp(currentHpFromDb, 0, maxHp);
         maxAp = PlayerLevelStatsTable.GetMaxApForLevel(level);
         accuracy = Math.Max(0, stats.Accuracy);
         return true;
@@ -335,28 +340,55 @@ LIMIT 1;
                 continue;
             }
 
-            if (type == "ammo")
+            if (type == "ammo" || type == "medicine")
             {
                 string caliber = (row.Code ?? "").Trim();
                 if (string.IsNullOrWhiteSpace(caliber))
                 {
-                    error = "caliber required for each ammo item";
+                    error = type == "medicine"
+                        ? "code required for each medicine item"
+                        : "caliber required for each ammo item";
                     return false;
                 }
                 if (!ammoCalibersSeen.Add(caliber))
                 {
-                    error = "duplicate caliber: " + caliber;
+                    error = "duplicate stackable code: " + caliber;
                     return false;
                 }
                 if (!_ammo.TryGetAmmoTypeByCaliber(caliber, out var ammo))
                 {
-                    error = "unknown caliber: " + caliber;
-                    return false;
+                    if (type == "medicine" && _weapons.TryGetWeaponByCode(caliber, out var medWpn)
+                        && string.Equals(medWpn.Category, "medicine", StringComparison.OrdinalIgnoreCase))
+                    {
+                        var upsert = new AmmoTypeUpsertRequest
+                        {
+                            Caliber = medWpn.Code,
+                            UnitWeight = Math.Max(0.0, medWpn.Mass),
+                            IconKey = medWpn.IconKey ?? "",
+                            Name = medWpn.Name ?? medWpn.Code,
+                            Quality = medWpn.Quality,
+                            Condition = medWpn.WeaponCondition,
+                            InventoryGrid = Math.Clamp(medWpn.InventoryGrid, 0, 2)
+                        };
+                        if (!_ammo.TryUpsertAmmoType(upsert, out var upsertErr)
+                            || !_ammo.TryGetAmmoTypeByCaliber(caliber, out ammo))
+                        {
+                            error = upsertErr ?? ("unknown medicine code: " + caliber);
+                            return false;
+                        }
+                    }
+                    else
+                    {
+                        error = type == "medicine"
+                            ? "unknown medicine code: " + caliber
+                            : "unknown caliber: " + caliber;
+                        return false;
+                    }
                 }
                 int startSlot = row.StartSlot;
                 if (startSlot < 0 || startSlot > 11)
                 {
-                    error = "ammo startSlot must be 0..11";
+                    error = "stackable item startSlot must be 0..11";
                     return false;
                 }
                 int rounds = Math.Max(0, row.Quantity);
@@ -529,6 +561,22 @@ ON CONFLICT (user_id, ammo_type_id) DO UPDATE SET
         return true;
     }
 
+    public bool TryConsumeUserItemQuantity(string username, string itemCode, int amount, out string? error)
+    {
+        error = null;
+        int safeAmount = Math.Max(0, amount);
+        if (safeAmount <= 0 || string.IsNullOrWhiteSpace(itemCode))
+            return true;
+        if (!TryGetUserAmmoRounds(username, itemCode, out int current))
+        {
+            error = "item quantity not found";
+            return false;
+        }
+
+        int next = Math.Max(0, current - safeAmount);
+        return TrySetUserAmmoRounds(username, itemCode, next, out error);
+    }
+
     /// <summary>Weapon allowed in battle equip when it exists in inventory or is <c>fist</c>.</summary>
     public bool TryValidateEquippedWeaponForRegisteredUser(string username, string weaponCode, out string? error)
     {
@@ -557,6 +605,24 @@ LIMIT 1;
         command.Parameters.AddWithValue("code", code);
         if (command.ExecuteScalar() == null)
         {
+            // Allow equipping stackable medicine items that are stored in user_ammo_packs by code/caliber.
+            if (_weapons.TryGetWeaponByCode(code, out var medWpn)
+                && string.Equals(medWpn.Category, "medicine", StringComparison.OrdinalIgnoreCase))
+            {
+                using var medCmd = connection.CreateCommand();
+                medCmd.CommandText = """
+SELECT 1
+FROM user_ammo_packs uap
+JOIN ammo_types at ON at.id = uap.ammo_type_id
+WHERE uap.user_id = @uid AND LOWER(at.caliber) = LOWER(@code) AND uap.rounds_count > 0
+LIMIT 1;
+""";
+                medCmd.Parameters.AddWithValue("uid", userId);
+                medCmd.Parameters.AddWithValue("code", code);
+                if (medCmd.ExecuteScalar() != null)
+                    return true;
+            }
+
             error = "weapon not in inventory";
             return false;
         }
@@ -571,6 +637,13 @@ LIMIT 1;
         string code = (weaponCode ?? "").Trim().ToLowerInvariant();
         if (string.IsNullOrEmpty(code))
             code = "fist";
+        if (_weapons.TryGetWeaponByCode(code, out var wpn)
+            && string.Equals(wpn.Category, "medicine", StringComparison.OrdinalIgnoreCase))
+        {
+            // Medicine is stackable and not persisted in user_inventory_items as equipped flag.
+            // Keep DB equipped weapon marker unchanged to avoid forcing fallback weapon.
+            return;
+        }
         if (!TryGetUserId(username.Trim(), out long userId))
             return;
 
@@ -1022,6 +1095,31 @@ WHERE username = @username;
 """;
         command.Parameters.AddWithValue("exp", expToAdd);
         command.Parameters.AddWithValue("username", user);
+        int n = command.ExecuteNonQuery();
+        if (n == 0)
+        {
+            error = "user not found";
+            return false;
+        }
+        return true;
+    }
+
+    public bool TrySetUserDebugHp(long userId, int maxHp, int currentHp, out string? error)
+    {
+        error = null;
+        int safeMaxHp = Math.Max(1, maxHp);
+        int safeCurrentHp = Math.Clamp(currentHp, 0, safeMaxHp);
+        using var connection = _database.DataSource.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+UPDATE users
+SET max_hp = @maxHp,
+    current_hp = @currentHp
+WHERE id = @id;
+""";
+        command.Parameters.AddWithValue("maxHp", safeMaxHp);
+        command.Parameters.AddWithValue("currentHp", safeCurrentHp);
+        command.Parameters.AddWithValue("id", userId);
         int n = command.ExecuteNonQuery();
         if (n == 0)
         {

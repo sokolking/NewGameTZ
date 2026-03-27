@@ -97,6 +97,7 @@ public partial class BattleRoom
         var runPenaltyHexCount = new Dictionary<string, int>();
         var apSpentByUnit = new Dictionary<string, int>();
         var reloadedByPlayerAndCaliber = new Dictionary<string, Dictionary<string, int>>(StringComparer.OrdinalIgnoreCase);
+        var consumedByPlayerAndItemCode = new Dictionary<string, Dictionary<string, int>>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var uid in order)
         {
@@ -195,6 +196,8 @@ public partial class BattleRoom
                             cost = Math.Max(1, action?.Cost ?? 1);
                         else if (string.Equals(queuedActionType, ActionEquipWeapon, StringComparison.OrdinalIgnoreCase))
                             cost = Math.Max(1, action?.Cost ?? 2);
+                        else if (string.Equals(queuedActionType, ActionUseItem, StringComparison.OrdinalIgnoreCase))
+                            cost = Math.Max(1, action?.Cost ?? 1);
                         else
                             cost = Math.Max(1, action?.Cost ?? 1);
                         if (actionBudget[uid] + 0.0001f < cost)
@@ -754,6 +757,68 @@ public partial class BattleRoom
                             }
                         }
                     }
+                    else if (string.Equals(actionType, ActionUseItem, StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (_weaponDb == null || !_weaponDb.TryGetWeaponByCode(unit.WeaponCode ?? DefaultWeaponCode, out var activeItem))
+                        {
+                            executed.FailureReason = "Active item not found";
+                        }
+                        else if (!string.Equals(activeItem.Category, "medicine", StringComparison.OrdinalIgnoreCase))
+                        {
+                            executed.FailureReason = "Active item is not usable";
+                        }
+                        else if (!string.Equals(activeItem.EffectType, "hp", StringComparison.OrdinalIgnoreCase)
+                            || !string.Equals(activeItem.EffectSign, "positive", StringComparison.OrdinalIgnoreCase)
+                            || !string.Equals(activeItem.EffectTarget, "self", StringComparison.OrdinalIgnoreCase))
+                        {
+                            executed.FailureReason = "Item affect config invalid";
+                        }
+                        else if (activeItem.EffectMax < activeItem.EffectMin)
+                        {
+                            executed.FailureReason = "Item affect range invalid";
+                        }
+                        else if (unit.UnitType != UnitType.Player)
+                        {
+                            executed.FailureReason = "Only players can use this item";
+                        }
+                        else if (_userDb == null)
+                        {
+                            executed.FailureReason = "User database unavailable";
+                        }
+                        else
+                        {
+                            string pid = PlayerToUnitId.FirstOrDefault(kv => kv.Value == uid).Key ?? uid;
+                            string username = PlayerDisplayNames.GetValueOrDefault(pid, pid);
+                            int availableQty = 0;
+                            _userDb.TryGetUserAmmoRounds(username, activeItem.Code, out availableQty);
+                            if (consumedByPlayerAndItemCode.TryGetValue(pid, out var consumedByCode)
+                                && consumedByCode.TryGetValue(activeItem.Code, out var alreadyConsumed))
+                            {
+                                availableQty = Math.Max(0, availableQty - alreadyConsumed);
+                            }
+                            if (availableQty <= 0)
+                            {
+                                executed.FailureReason = "Item quantity is empty";
+                            }
+                            else
+                            {
+                                int min = Math.Max(0, activeItem.EffectMin);
+                                int max = Math.Max(min, activeItem.EffectMax);
+                                int heal = _rng.Next(min, max + 1);
+                                int beforeHp = Math.Max(0, unit.CurrentHp);
+                                unit.CurrentHp = Math.Clamp(beforeHp + heal, 0, Math.Max(1, unit.MaxHp));
+                                executed.Healed = Math.Max(0, unit.CurrentHp - beforeHp);
+                                Units[uid] = unit;
+                                executed.Succeeded = true;
+                                if (!consumedByPlayerAndItemCode.TryGetValue(pid, out consumedByCode))
+                                {
+                                    consumedByCode = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                                    consumedByPlayerAndItemCode[pid] = consumedByCode;
+                                }
+                                consumedByCode[activeItem.Code] = consumedByCode.GetValueOrDefault(activeItem.Code) + 1;
+                            }
+                        }
+                    }
                     else
                     {
                         executed.FailureReason = "Unknown action type";
@@ -820,6 +885,13 @@ public partial class BattleRoom
                         _userDb?.TryGetUserAmmoRounds(username, kv.Key, out currentRounds);
                         int nextRounds = Math.Max(0, currentRounds - Math.Max(0, kv.Value));
                         _userDb?.TrySetUserAmmoRounds(username, kv.Key, nextRounds, out _);
+                    }
+                }
+                if (consumedByPlayerAndItemCode.TryGetValue(playerId, out var consumedByCode))
+                {
+                    foreach (var kv in consumedByCode)
+                    {
+                        _userDb?.TryConsumeUserItemQuantity(username, kv.Key, Math.Max(0, kv.Value), out _);
                     }
                 }
             }

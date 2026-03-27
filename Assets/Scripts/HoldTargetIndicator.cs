@@ -20,7 +20,9 @@ public class HoldTargetIndicator : MonoBehaviour
         Torso = 2,
         Legs = 3,
         LeftHand = 4,
-        RightHand = 5
+        RightHand = 5,
+        /// <summary>Whole silhouette (self-item / medicine hold).</summary>
+        Full = 6
     }
 
     [Tooltip("If unset: Resources/hold_indicator (Sprite or Texture2D).")]
@@ -41,7 +43,7 @@ public class HoldTargetIndicator : MonoBehaviour
     private Canvas        _canvas;
     private RectTransform _rootRect;   // "IndicatorRoot" внутри Canvas
     private Image         _baseImage;
-    private readonly Image[] _partImages = new Image[6];
+    private readonly Image[] _partImages = new Image[7];
 
     // ── Состояние ────────────────────────────────────────────────────────────
     private BodyPartKind _hoveredPart            = BodyPartKind.None;
@@ -49,6 +51,7 @@ public class HoldTargetIndicator : MonoBehaviour
     private Vector2      _lastHighlightMousePos  = new Vector2(float.NaN, float.NaN);
     private bool         _built;
     private bool         _ownedCanvas;   // true = мы создали Canvas сами, нужно удалить в OnDestroy
+    private bool         _wholeBodyMode; // self-item: only HoldBlock_Full, no per-part zones
 
     // ── Precomputed UV bounds ────────────────────────────────────────────────
     private float _headMinU,      _headMaxU,      _headMinV,      _headMaxV;
@@ -61,6 +64,19 @@ public class HoldTargetIndicator : MonoBehaviour
 
     public BodyPartKind HoveredPart    => _hoveredPart;
     public bool         HasValidVisuals => _baseImage != null && _baseImage.sprite != null;
+
+    /// <summary>
+    /// When true (self-item hold on local player), only <c>HoldBlock_Full</c> is shown and
+    /// highlight follows the whole silhouette; per-part blocks are hidden.
+    /// </summary>
+    public void SetWholeBodyHighlightMode(bool wholeBody)
+    {
+        if (_wholeBodyMode == wholeBody)
+            return;
+        _wholeBodyMode = wholeBody;
+        ApplyWholeBodyBlockVisibility();
+        ApplyPartColorsImpl(BodyPartKind.None);
+    }
 
     public void EnsureBuilt()
     {
@@ -76,7 +92,8 @@ public class HoldTargetIndicator : MonoBehaviour
             return;
 
         PrecomputeUvBounds();
-        ApplyPartColors(BodyPartKind.None);
+        ApplyWholeBodyBlockVisibility();
+        ApplyPartColorsImpl(BodyPartKind.None);
         _built = true;
     }
 
@@ -120,20 +137,40 @@ public class HoldTargetIndicator : MonoBehaviour
 
         if (_rootRect == null) { ApplyPartColors(BodyPartKind.None); return; }
 
-        Vector2 center = _rootRect.anchoredPosition;
-        Vector2 local  = mouseScreenPos - center;
-        float   hw     = _screenSizePx.x * 0.5f;
-        float   hh     = _screenSizePx.y * 0.5f;
+        // Screen → local (pivot-relative): anchoredPosition is NOT screen-space center of the rect.
+        Camera uiCam = null;
+        if (_canvas != null &&
+            (_canvas.renderMode == RenderMode.ScreenSpaceCamera ||
+             _canvas.renderMode == RenderMode.WorldSpace))
+            uiCam = _canvas.worldCamera;
 
-        if (hw < 1f || hh < 1f) { ApplyPartColors(BodyPartKind.None); return; }
+        if (!RectTransformUtility.ScreenPointToLocalPointInRectangle(
+                _rootRect, mouseScreenPos, uiCam, out Vector2 localPoint))
+        {
+            ApplyPartColors(BodyPartKind.None);
+            return;
+        }
 
-        float u = local.x / (hw * 2f) + 0.5f;
-        float v = local.y / (hh * 2f) + 0.5f;
+        Rect rr = _rootRect.rect;
+        float w = rr.width;
+        float h = rr.height;
+        if (w < 1f || h < 1f) { ApplyPartColors(BodyPartKind.None); return; }
 
-        if (u < 0f || u > 1f || v < 0f || v > 1f)
-        { ApplyPartColors(BodyPartKind.None); return; }
+        // Normalized coords along IndicatorRoot: u=0 left edge, u=1 right edge (may be <0 or >1 outside).
+        float u = (localPoint.x - rr.xMin) / w;
+        float v = (localPoint.y - rr.yMin) / h;
 
-        ApplyPartColors(ClassifyBodyPartFromUv(u, v));
+        // UV zones may extend outside [0,1] (e.g. hands); classify without clipping.
+        // Self-item Full highlight stays limited to the base rect [0,1]×[0,1].
+        if (_wholeBodyMode)
+        {
+            if (u < 0f || u > 1f || v < 0f || v > 1f)
+                ApplyPartColors(BodyPartKind.None);
+            else
+                ApplyPartColors(BodyPartKind.Full);
+        }
+        else
+            ApplyPartColors(ClassifyBodyPartFromUv(u, v));
     }
 
     // ── Подключение к существующей иерархии (из префаба) ────────────────────
@@ -179,6 +216,14 @@ public class HoldTargetIndicator : MonoBehaviour
             Image img = partT.GetComponent<Image>();
             if (img == null) return false;
             _partImages[p] = img;
+        }
+
+        Transform fullT = rootT.Find("HoldBlock_Full");
+        if (fullT != null)
+        {
+            Image fullImg = fullT.GetComponent<Image>();
+            if (fullImg != null)
+                _partImages[(int)BodyPartKind.Full] = fullImg;
         }
 
         _screenSizePx = _rootRect.sizeDelta;
@@ -240,12 +285,13 @@ public class HoldTargetIndicator : MonoBehaviour
         CreateBodyPartBlock(BodyPartKind.Legs,      _legsUvRect);
         CreateBodyPartBlock(BodyPartKind.LeftHand,  _leftHandUvRect);
         CreateBodyPartBlock(BodyPartKind.RightHand, _rightHandUvRect);
+        CreateBodyPartBlock(BodyPartKind.Full, new Rect(0f, 0f, 1f, 1f));
     }
 
     private void CreateBodyPartBlock(BodyPartKind part, Rect uvRect)
     {
-        float minU = Mathf.Clamp01(uvRect.xMin), maxU = Mathf.Clamp01(uvRect.xMax);
-        float minV = Mathf.Clamp01(uvRect.yMin), maxV = Mathf.Clamp01(uvRect.yMax);
+        float minU = uvRect.xMin, maxU = uvRect.xMax;
+        float minV = uvRect.yMin, maxV = uvRect.yMax;
 
         var go          = new GameObject("HoldBlock_" + part);
         go.transform.SetParent(_rootRect, false);
@@ -348,6 +394,7 @@ public class HoldTargetIndicator : MonoBehaviour
             PrefabEnsurePartBlock(rootGo.transform, BodyPartKind.Legs,      ind._legsUvRect,      ind._partBaseColor);
             PrefabEnsurePartBlock(rootGo.transform, BodyPartKind.LeftHand,  ind._leftHandUvRect,  ind._partBaseColor);
             PrefabEnsurePartBlock(rootGo.transform, BodyPartKind.RightHand, ind._rightHandUvRect, ind._partBaseColor);
+            PrefabEnsurePartBlock(rootGo.transform, BodyPartKind.Full, new Rect(0f, 0f, 1f, 1f), ind._partBaseColor);
 
             PrefabUtility.SaveAsPrefabAsset(prefabRoot, prefabPath);
             Debug.Log($"HoldTargetIndicator: Canvas hierarchy saved -> {prefabPath}");
@@ -363,8 +410,8 @@ public class HoldTargetIndicator : MonoBehaviour
     private static void PrefabEnsurePartBlock(
         Transform root, BodyPartKind part, Rect uvRect, Color baseColor)
     {
-        float minU = Mathf.Clamp01(uvRect.xMin), maxU = Mathf.Clamp01(uvRect.xMax);
-        float minV = Mathf.Clamp01(uvRect.yMin), maxV = Mathf.Clamp01(uvRect.yMax);
+        float minU = uvRect.xMin, maxU = uvRect.xMax;
+        float minV = uvRect.yMin, maxV = uvRect.yMax;
         PrefabEnsureImage(root, "HoldBlock_" + part,
             rt  => { rt.anchorMin = new Vector2(minU, minV);
                      rt.anchorMax = new Vector2(maxU, maxV);
@@ -411,16 +458,16 @@ public class HoldTargetIndicator : MonoBehaviour
 
     private void PrecomputeUvBounds()
     {
-        _headMinU  = Mathf.Clamp01(_headUvRect.xMin);  _headMaxU  = Mathf.Clamp01(_headUvRect.xMax);
-        _headMinV  = Mathf.Clamp01(_headUvRect.yMin);  _headMaxV  = Mathf.Clamp01(_headUvRect.yMax);
-        _torsoMinU = Mathf.Clamp01(_torsoUvRect.xMin); _torsoMaxU = Mathf.Clamp01(_torsoUvRect.xMax);
-        _torsoMinV = Mathf.Clamp01(_torsoUvRect.yMin); _torsoMaxV = Mathf.Clamp01(_torsoUvRect.yMax);
-        _legsMinU  = Mathf.Clamp01(_legsUvRect.xMin);  _legsMaxU  = Mathf.Clamp01(_legsUvRect.xMax);
-        _legsMinV  = Mathf.Clamp01(_legsUvRect.yMin);  _legsMaxV  = Mathf.Clamp01(_legsUvRect.yMax);
-        _leftHandMinU  = Mathf.Clamp01(_leftHandUvRect.xMin);  _leftHandMaxU  = Mathf.Clamp01(_leftHandUvRect.xMax);
-        _leftHandMinV  = Mathf.Clamp01(_leftHandUvRect.yMin);  _leftHandMaxV  = Mathf.Clamp01(_leftHandUvRect.yMax);
-        _rightHandMinU = Mathf.Clamp01(_rightHandUvRect.xMin); _rightHandMaxU = Mathf.Clamp01(_rightHandUvRect.xMax);
-        _rightHandMinV = Mathf.Clamp01(_rightHandUvRect.yMin); _rightHandMaxV = Mathf.Clamp01(_rightHandUvRect.yMax);
+        _headMinU  = _headUvRect.xMin;  _headMaxU  = _headUvRect.xMax;
+        _headMinV  = _headUvRect.yMin;  _headMaxV  = _headUvRect.yMax;
+        _torsoMinU = _torsoUvRect.xMin; _torsoMaxU = _torsoUvRect.xMax;
+        _torsoMinV = _torsoUvRect.yMin; _torsoMaxV = _torsoUvRect.yMax;
+        _legsMinU  = _legsUvRect.xMin;  _legsMaxU  = _legsUvRect.xMax;
+        _legsMinV  = _legsUvRect.yMin;  _legsMaxV  = _legsUvRect.yMax;
+        _leftHandMinU  = _leftHandUvRect.xMin;  _leftHandMaxU  = _leftHandUvRect.xMax;
+        _leftHandMinV  = _leftHandUvRect.yMin;  _leftHandMaxV  = _leftHandUvRect.yMax;
+        _rightHandMinU = _rightHandUvRect.xMin; _rightHandMaxU = _rightHandUvRect.xMax;
+        _rightHandMinV = _rightHandUvRect.yMin; _rightHandMaxV = _rightHandUvRect.yMax;
     }
 
     // ── Классификация части тела ─────────────────────────────────────────────
@@ -440,17 +487,50 @@ public class HoldTargetIndicator : MonoBehaviour
         return BodyPartKind.None;
     }
 
+    private void ApplyWholeBodyBlockVisibility()
+    {
+        for (int i = 1; i <= 5; i++)
+        {
+            Image img = _partImages[i];
+            if (img != null)
+                img.enabled = !_wholeBodyMode;
+        }
+
+        Image full = _partImages[(int)BodyPartKind.Full];
+        if (full != null)
+            full.enabled = _wholeBodyMode;
+    }
+
     private void ApplyPartColors(BodyPartKind highlightedPart)
     {
         if (_hoveredPart == highlightedPart)
             return;
-        _hoveredPart = highlightedPart;
-        int highlighted = (int)highlightedPart;
-        for (int i = 1; i < _partImages.Length; i++)
+        ApplyPartColorsImpl(highlightedPart);
+    }
+
+    private void ApplyPartColorsImpl(BodyPartKind highlightedPart)
+    {
+        if (_wholeBodyMode)
         {
-            Image img = _partImages[i];
-            if (img == null) continue;
-            img.color = i == highlighted ? _partHighlightColor : _partBaseColor;
+            Image full = _partImages[(int)BodyPartKind.Full];
+            if (full != null)
+                full.color = highlightedPart == BodyPartKind.Full ? _partHighlightColor : _partBaseColor;
         }
+        else
+        {
+            int highlighted = (int)highlightedPart;
+            for (int i = 1; i <= 5; i++)
+            {
+                Image img = _partImages[i];
+                if (img == null) continue;
+                img.color = i == highlighted ? _partHighlightColor : _partBaseColor;
+            }
+
+            Image full = _partImages[(int)BodyPartKind.Full];
+            if (full != null)
+                full.enabled = false;
+        }
+
+        _hoveredPart = highlightedPart;
     }
 }

@@ -82,6 +82,19 @@ public static class BattleWeaponsDashboardPage
       throwing: 'Метательное',
       medicine: 'Медицина'
     };
+    const MEDICINE_HIDDEN_FIELDS = new Set([
+      'damageMin',
+      'damageMax',
+      'damageType',
+      'burstRounds',
+      'burstApCost',
+      'tightness',
+      'trajectoryHeight',
+      'caliber',
+      'magazineSize',
+      'reloadApCost',
+      'isSniper'
+    ]);
 
     const COLS = [
       { k: 'id', label: 'id', ro: true, type: 'text' },
@@ -96,6 +109,11 @@ public static class BattleWeaponsDashboardPage
       { k: 'attackApCost', label: 'AP shot', title: 'Single shot AP cost' },
       { k: 'burstRounds', label: 'burst N', title: 'Burst: rounds per use' },
       { k: 'burstApCost', label: 'burst AP', title: 'Burst: AP cost' },
+      { k: 'effectType', label: 'eff type', title: 'Universal effect type (example: hp)', type: 'text', wide: true },
+      { k: 'effectSign', label: 'eff sign', title: 'Effect sign: positive or negative', type: 'text', wide: true },
+      { k: 'effectMin', label: 'eff min', title: 'Effect minimum roll value' },
+      { k: 'effectMax', label: 'eff max', title: 'Effect maximum roll value' },
+      { k: 'effectTarget', label: 'eff tgt', title: 'Effect target: self or enemy', type: 'text', wide: true },
       { k: 'tightness', label: 'tight', title: 'Tightness 0..1 (higher = tighter grouping, better hit chance)', step: 0.01, float: true },
       { k: 'trajectoryHeight', label: 'traj', title: 'Trajectory height 0..3' },
       { k: 'quality', label: 'qual', title: 'Quality' },
@@ -133,6 +151,11 @@ public static class BattleWeaponsDashboardPage
       attackApCost: 'Сколько очков действия (ОД) стоит один выстрел или удар.',
       burstRounds: 'Сколько выстрелов в одной очереди.',
       burstApCost: 'Сколько ОД стоит выстрел очередью целиком.',
+      effectType: 'Тип эффекта предмета (например hp). Для medicine используется hp.',
+      effectSign: 'Знак эффекта: positive или negative.',
+      effectMin: 'Минимальное значение эффекта (ролл).',
+      effectMax: 'Максимальное значение эффекта (ролл).',
+      effectTarget: 'Цель эффекта: self или enemy. Для medicine всегда self.',
       tightness: 'Кучность оружия от 0 до 1: чем выше — тем кучнее стрельба и тем выше шанс попадания (из итоговой вероятности вычитается 1 − кучность).',
       trajectoryHeight: 'Уровень «высоты» траектории для линии огня через стены (0…3). Чем больше число, тем реже преграда на пути блокирует выстрел.',
       quality: 'Показатель качества предмета (торговля, износ и связанные правила — по дизайну игры).',
@@ -289,6 +312,9 @@ public static class BattleWeaponsDashboardPage
       if (k === 'damageMin' || k === 'damageMax') return 1;
       if (k === 'inventorySlotWidth') return 1;
       if (k === 'tightness') return 1;
+      if (k === 'effectSign') return 'positive';
+      if (k === 'effectTarget') return 'enemy';
+      if (k === 'effectType') return '';
       return 0;
     }
 
@@ -340,9 +366,52 @@ public static class BattleWeaponsDashboardPage
         frag.appendChild(lab);
       });
       createFields.appendChild(frag);
+      applyMedicineVisibility(createFields, true);
     }
 
     buildCreatePanel();
+
+    function isMedicineRoot(root) {
+      const cat = root.querySelector('[data-field="category"]');
+      return String(cat?.value || '').toLowerCase() === 'medicine';
+    }
+
+    function applyMedicineVisibility(root, isCreatePanel) {
+      const medicine = isMedicineRoot(root);
+      MEDICINE_HIDDEN_FIELDS.forEach((k) => {
+        if (isCreatePanel) {
+          const field = root.querySelector('[data-field="' + k + '"]');
+          if (!field) return;
+          const label = field.closest('label');
+          if (label) label.style.display = medicine ? 'none' : 'inline-flex';
+          return;
+        }
+        const cell = root.querySelector('td[data-param-key="' + k + '"]');
+        if (!cell) return;
+        const field = cell.querySelector('[data-field="' + k + '"]');
+        if (field) field.style.display = medicine ? 'none' : '';
+        if (medicine) {
+          let mark = cell.querySelector('.medicine-hidden-mark');
+          if (!mark) {
+            mark = document.createElement('span');
+            mark.className = 'medicine-hidden-mark';
+            mark.textContent = '—';
+            mark.style.color = '#7f8ea3';
+            cell.appendChild(mark);
+          }
+        } else {
+          const mark = cell.querySelector('.medicine-hidden-mark');
+          if (mark) mark.remove();
+        }
+      });
+    }
+
+    function attachCategoryVisibilityBehavior(root, isCreatePanel) {
+      const categoryEl = root.querySelector('[data-field="category"]');
+      if (!categoryEl) return;
+      categoryEl.addEventListener('change', () => applyMedicineVisibility(root, isCreatePanel));
+      applyMedicineVisibility(root, isCreatePanel);
+    }
 
     function collectWeaponFields(root) {
       const o = {};
@@ -358,6 +427,10 @@ public static class BattleWeaponsDashboardPage
       });
       if (String(o.category || '').toLowerCase() === 'cold')
         o.range = 1;
+      if (String(o.category || '').toLowerCase() === 'medicine') {
+        o.range = 0;
+        o.effectTarget = 'self';
+      }
       return o;
     }
 
@@ -458,6 +531,7 @@ public static class BattleWeaponsDashboardPage
         if (val === undefined || val === null) val = defaultForKey(c.k);
         tr.appendChild(inputFor(c, val, !!c.ro));
       });
+      attachCategoryVisibilityBehavior(tr, false);
       return tr;
     }
 
@@ -465,6 +539,7 @@ public static class BattleWeaponsDashboardPage
       statusEl.textContent = 'loading...';
       await refreshMeta();
       buildCreatePanel();
+      attachCategoryVisibilityBehavior(createFields, true);
       const resp = await fetch('/api/db/weapons?take=500', { cache: 'no-store' });
       let list = await resp.json();
       if (initialCategory) {

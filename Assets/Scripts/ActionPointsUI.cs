@@ -319,6 +319,8 @@ public class ActionPointsUI : MonoBehaviour
             TryEndTurn(animate: true);
         else if (Keyboard.current.rKey.wasPressedThisFrame)
             TryQueueReload();
+        else if (Keyboard.current.hKey.wasPressedThisFrame)
+            TryQueueUseItem();
 
         if (_player.TurnTimeExpired)
         {
@@ -590,6 +592,21 @@ public class ActionPointsUI : MonoBehaviour
             _inventoryUi = FindFirstObjectByType<InventoryUI>();
         int reloadCost = _inventoryUi != null ? _inventoryUi.GetCurrentWeaponReloadApCost() : 1;
         if (!_player.QueueReloadAction(reloadCost))
+            AppendLog(Loc.T("ui.not_enough_ap"));
+    }
+
+    private void TryQueueUseItem()
+    {
+        if (_player == null || _roundWaitVisible || IsModalDialogOpen)
+            return;
+        if (_gameSession != null && (_gameSession.IsWaitingForServerRoundResolve || _gameSession.IsBattleFinished))
+            return;
+        if (_inventoryUi == null)
+            _inventoryUi = FindFirstObjectByType<InventoryUI>();
+        if (_inventoryUi == null || !_inventoryUi.IsActiveItemMedicine())
+            return;
+        int useCost = _inventoryUi.GetCurrentActiveItemUseApCost();
+        if (!_player.QueueUseItemAction(useCost))
             AppendLog(Loc.T("ui.not_enough_ap"));
     }
 

@@ -42,6 +42,30 @@ public sealed class DamagePopupQueue : MonoBehaviour
         });
     }
 
+    public void ShowHeal(int healed)
+    {
+        if (healed <= 0)
+            return;
+
+        CleanupExpired();
+        ShiftExistingUp();
+
+        if (_entries.Count >= Mathf.Max(1, _maxEntries))
+            RemoveOldest();
+
+        DamagePopupView view = CreateView();
+        if (view == null)
+            return;
+
+        view.SetStackRiseWorld(0f);
+        view.ShowHeal(healed);
+        _entries.Insert(0, new Entry
+        {
+            View = view,
+            ExpireAt = Time.unscaledTime + Mathf.Max(0.1f, _entryLifetimeSeconds)
+        });
+    }
+
     private void Update()
     {
         if (_entries.Count == 0)

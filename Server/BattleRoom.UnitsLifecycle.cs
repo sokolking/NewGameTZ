@@ -31,7 +31,7 @@ public partial class BattleRoom
                 CurrentAp = profile.Item2,
                 PenaltyFraction = 0f,
                 MaxHp = profile.Item1,
-                CurrentHp = profile.Item1,
+                CurrentHp = Math.Clamp(PlayerCurrentHpOverrides.GetValueOrDefault(playerId, profile.Item1), 0, Math.Max(1, profile.Item1)),
                 WeaponCode = profile.Item3,
                 WeaponDamageMin = profile.Item4,
                 WeaponDamage = profile.Item5,

@@ -17,6 +17,7 @@ public partial class BattleRoom
     private const string ActionWait = "Wait";
     private const string ActionReload = "Reload";
     private const string ActionEquipWeapon = "EquipWeapon";
+    private const string ActionUseItem = "UseItem";
     private const int ChangePostureCost = 2;
     private const float RunCostMultiplier = 0.5f;
     private const float SitCostMultiplier = 1.5f;
@@ -85,6 +86,7 @@ public partial class BattleRoom
     public Dictionary<string, PlayerBattleState> CurrentState { get; } = new();
     /// <summary>Кортеж: … weaponDamageMin, weaponDamageMax, weaponRange, attackApCost, accuracy, tightness T, traj, sniper.</summary>
     public Dictionary<string, (int maxHp, int maxAp, string weaponCode, int weaponDamageMin, int weaponDamageMax, int weaponRange, int weaponAttackApCost, int accuracy, double weaponTightness, int weaponTrajectoryHeight, bool weaponIsSniper)> PlayerCombatProfiles { get; } = new();
+    public Dictionary<string, int> PlayerCurrentHpOverrides { get; } = new();
 
     /// <summary>Порядок отправки хода в текущем раунде (кто раньше отправил — выше приоритет на клетку).</summary>
     public List<string> SubmissionOrder { get; } = new();
