@@ -31,7 +31,7 @@ COALESCE(i.mass, w.mass) AS mass, w.caliber, w.armor_pierce, w.magazine_size, w.
 w.req_level, w.req_strength, w.req_endurance, w.req_accuracy, w.req_mastery_category,
 w.stat_effect_strength, w.stat_effect_endurance, w.stat_effect_accuracy,
 w.damage_type, w.damage_min, w.damage_max, w.burst_rounds, w.burst_ap_cost, w.inventory_slot_width, COALESCE(i.inventorygrid, 1) AS inventorygrid,
-w.effect_type, w.effect_sign, w.effect_min, w.effect_max, w.effect_target
+w.effect_type, w.effect_sign, w.effect_min, w.effect_max, w.effect_target, COALESCE(i.is_equippable, FALSE) AS is_equippable
 """;
 
     public IReadOnlyList<BattleWeaponBrowseRowDto> ListWeapons(int take)
@@ -189,7 +189,8 @@ LIMIT 1;
             EffectSign = reader.GetString(35),
             EffectMin = reader.GetInt32(36),
             EffectMax = reader.GetInt32(37),
-            EffectTarget = reader.GetString(38)
+            EffectTarget = reader.GetString(38),
+            IsEquippable = reader.GetBoolean(39)
         };
     }
 
@@ -212,7 +213,8 @@ LIMIT 1;
             DamageType = "physical",
             InventorySlotWidth = 1,
             EffectSign = "positive",
-            EffectTarget = "enemy"
+            EffectTarget = "enemy",
+            IsEquippable = true
         };
 
     private static int StoreInventorySlotWidthForDb(int w) => w >= 2 ? 2 : 1;
@@ -584,8 +586,8 @@ VALUES (
         using var cmd = connection.CreateCommand();
         cmd.Transaction = tx;
         cmd.CommandText = """
-INSERT INTO items (name, mass, quality, condition, icon_key, type, inventorygrid)
-VALUES (@name, @mass, @quality, @condition, @iconKey, 'weapon', @inventorygrid)
+INSERT INTO items (name, mass, quality, condition, icon_key, type, is_equippable, inventorygrid)
+VALUES (@name, @mass, @quality, @condition, @iconKey, 'weapon', @isEquippable, @inventorygrid)
 ON CONFLICT DO NOTHING;
 SELECT id FROM items
 WHERE type = 'weapon' AND name = @name AND icon_key = @iconKey
@@ -598,6 +600,7 @@ LIMIT 1;
         cmd.Parameters.AddWithValue("condition", Math.Clamp(d.WeaponCondition, 0, 9999));
         string ik = string.IsNullOrWhiteSpace(d.IconKey) ? d.Code.Trim().ToLowerInvariant() : d.IconKey.Trim().ToLowerInvariant();
         cmd.Parameters.AddWithValue("iconKey", ik);
+        cmd.Parameters.AddWithValue("isEquippable", d.IsEquippable);
         cmd.Parameters.AddWithValue("inventorygrid", Math.Clamp(d.InventoryGrid, 0, 2));
         object? scalar = cmd.ExecuteScalar();
         if (scalar is long id)

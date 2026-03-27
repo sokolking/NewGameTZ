@@ -463,6 +463,8 @@ public sealed class InventoryUI : MonoBehaviour
     {
         for (int i = 0; i < 12; i++)
         {
+            if (_cellButtons[i] != null)
+                _cellButtons[i].interactable = false;
             if (_cellImages[i] == null)
                 continue;
             var s = _slots[i];
@@ -490,12 +492,14 @@ public sealed class InventoryUI : MonoBehaviour
             SetImageIcon(_cellImages[i], sp, CellIconSize);
             if (_cellImages[i] != null)
             {
-                bool dim = s.continuation;
+                bool dim = s.continuation || !s.isEquippable;
                 _cellImages[i].color = dim ? new Color(1f, 1f, 1f, 0.55f) : Color.white;
             }
             int displayQty = GetDisplayedItemQuantity(s);
             bool showCount = s.stackable && !s.continuation && displayQty > 0;
             SetCellCountVisible(i, showCount, showCount ? FormatStackCount(displayQty) : "");
+            if (_cellButtons[i] != null)
+                _cellButtons[i].interactable = !s.continuation && s.isEquippable && !string.IsNullOrWhiteSpace(s.weaponCode);
         }
     }
 
@@ -641,6 +645,9 @@ public sealed class InventoryUI : MonoBehaviour
     {
         if (string.IsNullOrWhiteSpace(weaponCode))
             weaponCode = WeaponCatalog.DefaultWeaponCode;
+        string norm = WeaponCatalog.NormalizeWeaponCode(weaponCode);
+        if (_weaponRowsByCode.TryGetValue(norm, out var w) && w != null && w.attackApCost > 0)
+            return w.attackApCost;
         for (int i = 0; i < 12; i++)
         {
             var s = _slots[i];
@@ -914,6 +921,8 @@ public sealed class InventoryUI : MonoBehaviour
         if (s == null || string.IsNullOrWhiteSpace(s.weaponCode))
             return;
         if (s.continuation)
+            return;
+        if (!s.isEquippable)
             return;
         if (_player != null && s.equipped &&
             string.Equals(s.weaponCode, _player.WeaponCode, StringComparison.OrdinalIgnoreCase))

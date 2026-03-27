@@ -77,6 +77,8 @@ LIMIT 1;
         command.CommandText = """
 SELECT u.id, u.username, u.password, u.experience, u.strength, u.endurance, u.accuracy, u.max_hp, u.current_hp, u.max_ap,
        COALESCE((
+           SELECT NULLIF(TRIM(u.equipped_item_code), '')
+       ), (
            SELECT ii.weapon_code FROM user_inventory_items ii
            WHERE ii.user_id = u.id AND ii.is_equipped
            LIMIT 1
@@ -322,8 +324,13 @@ LIMIT 1;
         using var connection = _database.DataSource.OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = """
-SELECT weapon_code FROM user_inventory_items
-WHERE user_id = @uid AND is_equipped
+SELECT COALESCE(NULLIF(TRIM(u.equipped_item_code), ''), (
+    SELECT ii.weapon_code FROM user_inventory_items ii
+    WHERE ii.user_id = u.id AND ii.is_equipped
+    LIMIT 1
+), 'fist')
+FROM users u
+WHERE u.id = @uid
 LIMIT 1;
 """;
         command.Parameters.AddWithValue("uid", userId);
@@ -394,11 +401,25 @@ LIMIT 1;
         }
 
         EnsureUserInventoryBaseline(connection, userId);
+        string equippedCode = "fist";
+        using (var equippedCmd = connection.CreateCommand())
+        {
+            equippedCmd.CommandText = """
+SELECT COALESCE(NULLIF(TRIM(equipped_item_code), ''), 'fist')
+FROM users
+WHERE id = @uid
+LIMIT 1;
+""";
+            equippedCmd.Parameters.AddWithValue("uid", userId);
+            if (equippedCmd.ExecuteScalar() is string selected && !string.IsNullOrWhiteSpace(selected))
+                equippedCode = selected.Trim().ToLowerInvariant();
+        }
         var inv = LoadInventoryItems(connection, userId);
         foreach (var x in inv)
         {
             if (!_weapons.TryGetWeaponByCode(x.WeaponCode, out var wpn))
                 continue;
+            bool isEquippable = IsItemCodeEquippable(connection, x.WeaponCode);
             items.Add(new UserItemAdminDto
             {
                 ItemType = "weapon",
@@ -412,7 +433,8 @@ LIMIT 1;
                 Quantity = 1,
                 ChamberRounds = Math.Max(0, x.ChamberRounds),
                 StartSlot = x.StartSlot,
-                IsEquipped = x.IsEquipped,
+                IsEquipped = isEquippable && string.Equals(x.WeaponCode, equippedCode, StringComparison.OrdinalIgnoreCase),
+                IsEquippable = isEquippable,
                 IsStackable = false,
                 SlotWidth = x.SlotWidth >= 2 ? 2 : 1
             });
@@ -421,6 +443,7 @@ LIMIT 1;
         var ammo = LoadAmmoPacks(connection, userId);
         foreach (var x in ammo)
         {
+            bool isEquippable = IsAmmoCaliberEquippable(connection, x.Caliber);
             items.Add(new UserItemAdminDto
             {
                 ItemType = "ammo",
@@ -434,7 +457,8 @@ LIMIT 1;
                 Quantity = Math.Max(0, x.RoundsCount),
                 ChamberRounds = 0,
                 StartSlot = Math.Clamp(x.StartSlot, 0, 11),
-                IsEquipped = false,
+                IsEquipped = isEquippable && string.Equals(x.Caliber, equippedCode, StringComparison.OrdinalIgnoreCase),
+                IsEquippable = isEquippable,
                 IsStackable = true,
                 SlotWidth = 0
             });
@@ -460,9 +484,11 @@ LIMIT 1;
 
         var weaponRows = new List<(int start, string code, int width, int chamber, bool eq)>();
         var ammoRows = new List<(long ammoTypeId, int startSlot, int rounds)>();
+        var equippableUpdates = new List<(string type, string code, bool isEquippable)>();
         var weaponCodesSeen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var ammoCalibersSeen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         int equippedCount = 0;
+        string equippedCode = "fist";
         bool hasFist = false;
         foreach (var row in rawItems)
         {
@@ -493,8 +519,16 @@ LIMIT 1;
                     return false;
                 }
                 bool eq = row.IsEquipped;
+                if (eq && !row.IsEquippable)
+                {
+                    error = "equipped requires isEquippable=true";
+                    return false;
+                }
                 if (eq)
+                {
                     equippedCount++;
+                    equippedCode = wpn.Code;
+                }
                 if (wpn.Code == "fist")
                     hasFist = true;
                 int chamber = Math.Max(0, row.ChamberRounds);
@@ -503,6 +537,7 @@ LIMIT 1;
                 else
                     chamber = Math.Clamp(chamber, 0, Math.Max(0, wpn.MagazineSize));
                 weaponRows.Add((start, wpn.Code, width, chamber, eq));
+                equippableUpdates.Add(("weapon", wpn.Code, row.IsEquippable));
                 continue;
             }
 
@@ -560,6 +595,17 @@ LIMIT 1;
                 int rounds = Math.Max(0, row.Quantity);
                 if (rounds > 0)
                     ammoRows.Add((ammo.Id, startSlot, rounds));
+                if (row.IsEquipped && !row.IsEquippable)
+                {
+                    error = "equipped requires isEquippable=true";
+                    return false;
+                }
+                if (row.IsEquipped)
+                {
+                    equippedCount++;
+                    equippedCode = ammo.Caliber;
+                }
+                equippableUpdates.Add(("ammo", ammo.Caliber, row.IsEquippable));
                 continue;
             }
 
@@ -579,7 +625,7 @@ LIMIT 1;
         }
         if (equippedCount != 1)
         {
-            error = "exactly one weapon item must have isEquipped true";
+            error = "exactly one equippable item must have isEquipped true";
             return false;
         }
 
@@ -649,6 +695,38 @@ VALUES (@uid, @start, @code, @width, @chamber, @eq);
             ins.ExecuteNonQuery();
         }
 
+        foreach (var update in equippableUpdates)
+        {
+            if (update.type == "weapon")
+            {
+                using var eqW = connection.CreateCommand();
+                eqW.Transaction = tx;
+                eqW.CommandText = """
+UPDATE items i
+SET is_equippable = @isEquippable
+FROM weapons w
+WHERE w.item_id = i.id AND LOWER(w.code) = LOWER(@code);
+""";
+                eqW.Parameters.AddWithValue("isEquippable", update.isEquippable);
+                eqW.Parameters.AddWithValue("code", update.code);
+                eqW.ExecuteNonQuery();
+            }
+            else
+            {
+                using var eqA = connection.CreateCommand();
+                eqA.Transaction = tx;
+                eqA.CommandText = """
+UPDATE items i
+SET is_equippable = @isEquippable
+FROM ammo_types at
+WHERE at.item_id = i.id AND LOWER(at.caliber) = LOWER(@code);
+""";
+                eqA.Parameters.AddWithValue("isEquippable", update.isEquippable);
+                eqA.Parameters.AddWithValue("code", update.code);
+                eqA.ExecuteNonQuery();
+            }
+        }
+
         foreach (var row in ammoRows)
         {
             using var ins = connection.CreateCommand();
@@ -662,6 +740,15 @@ VALUES (@uid, @ammoTypeId, @startSlot, 0, @rounds);
             ins.Parameters.AddWithValue("startSlot", row.startSlot);
             ins.Parameters.AddWithValue("rounds", row.rounds);
             ins.ExecuteNonQuery();
+        }
+
+        using (var equipped = connection.CreateCommand())
+        {
+            equipped.Transaction = tx;
+            equipped.CommandText = "UPDATE users SET equipped_item_code = @code WHERE id = @uid;";
+            equipped.Parameters.AddWithValue("uid", userId);
+            equipped.Parameters.AddWithValue("code", equippedCode);
+            equipped.ExecuteNonQuery();
         }
 
         tx.Commit();
@@ -741,7 +828,7 @@ ON CONFLICT (user_id, ammo_type_id) DO UPDATE SET
         return TrySetUserAmmoRounds(userId, itemCode, next, out error);
     }
 
-    /// <summary>Weapon allowed in battle equip when it exists in inventory or is <c>fist</c>.</summary>
+    /// <summary>Weapon/item allowed in battle equip when it is equippable and present in player's inventory/stack.</summary>
     public bool TryValidateEquippedWeaponForRegisteredUser(long userId, string weaponCode, out string? error)
     {
         error = null;
@@ -756,39 +843,18 @@ ON CONFLICT (user_id, ammo_type_id) DO UPDATE SET
             return true;
 
         using var connection = _database.DataSource.OpenConnection();
-        using var command = connection.CreateCommand();
-        command.CommandText = """
-SELECT 1 FROM user_inventory_items
-WHERE user_id = @uid AND LOWER(weapon_code) = LOWER(@code)
-LIMIT 1;
-""";
-        command.Parameters.AddWithValue("uid", userId);
-        command.Parameters.AddWithValue("code", code);
-        if (command.ExecuteScalar() == null)
+        if (!IsItemCodeEquippable(connection, code))
         {
-            // Allow equipping stackable medicine items that are stored in user_ammo_packs by code/caliber.
-            if (_weapons.TryGetWeaponByCode(code, out var medWpn)
-                && string.Equals(medWpn.Category, "medicine", StringComparison.OrdinalIgnoreCase))
-            {
-                using var medCmd = connection.CreateCommand();
-                medCmd.CommandText = """
-SELECT 1
-FROM user_ammo_packs uap
-JOIN ammo_types at ON at.id = uap.ammo_type_id
-WHERE uap.user_id = @uid AND LOWER(at.caliber) = LOWER(@code) AND uap.rounds_count > 0
-LIMIT 1;
-""";
-                medCmd.Parameters.AddWithValue("uid", userId);
-                medCmd.Parameters.AddWithValue("code", code);
-                if (medCmd.ExecuteScalar() != null)
-                    return true;
-            }
-
-            error = "weapon not in inventory";
+            error = "item cannot be equipped";
             return false;
         }
+        if (HasWeaponRowInInventory(connection, userId, code))
+            return true;
+        if (HasStackableRounds(connection, userId, code))
+            return true;
 
-        return true;
+        error = "item not in inventory";
+        return false;
     }
 
     public void SyncEquippedWeaponForRegisteredUser(long userId, string weaponCode)
@@ -798,16 +864,16 @@ LIMIT 1;
         string code = (weaponCode ?? "").Trim().ToLowerInvariant();
         if (string.IsNullOrEmpty(code))
             code = "fist";
-        if (_weapons.TryGetWeaponByCode(code, out var wpn)
-            && string.Equals(wpn.Category, "medicine", StringComparison.OrdinalIgnoreCase))
-        {
-            // Medicine is stackable and not persisted in user_inventory_items as equipped flag.
-            // Keep DB equipped weapon marker unchanged to avoid forcing fallback weapon.
-            return;
-        }
-
         using var connection = _database.DataSource.OpenConnection();
         using var tx = connection.BeginTransaction();
+        using (var selected = connection.CreateCommand())
+        {
+            selected.Transaction = tx;
+            selected.CommandText = "UPDATE users SET equipped_item_code = @code WHERE id = @uid;";
+            selected.Parameters.AddWithValue("uid", userId);
+            selected.Parameters.AddWithValue("code", code);
+            selected.ExecuteNonQuery();
+        }
         using (var clear = connection.CreateCommand())
         {
             clear.Transaction = tx;
@@ -919,8 +985,13 @@ LIMIT 1;
         using var connection = _database.DataSource.OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = """
-SELECT weapon_code FROM user_inventory_items
-WHERE user_id = @uid AND is_equipped
+SELECT COALESCE(NULLIF(TRIM(u.equipped_item_code), ''), (
+    SELECT ii.weapon_code FROM user_inventory_items ii
+    WHERE ii.user_id = u.id AND ii.is_equipped
+    LIMIT 1
+), 'fist')
+FROM users u
+WHERE u.id = @uid
 LIMIT 1;
 """;
         command.Parameters.AddWithValue("uid", userId);
@@ -942,6 +1013,61 @@ LIMIT 1;
         command.CommandText = "SELECT 1 FROM users WHERE id = @id LIMIT 1;";
         command.Parameters.AddWithValue("id", userId);
         return command.ExecuteScalar() != null;
+    }
+
+    private static bool IsItemCodeEquippable(NpgsqlConnection connection, string code)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+SELECT COALESCE(MAX(CASE WHEN i.is_equippable THEN 1 ELSE 0 END), 0)
+FROM items i
+WHERE LOWER(i.name) = LOWER(@code);
+""";
+        command.Parameters.AddWithValue("code", code);
+        int equippable = Convert.ToInt32(command.ExecuteScalar() ?? 0);
+        return equippable == 1;
+    }
+
+    private static bool HasWeaponRowInInventory(NpgsqlConnection connection, long userId, string code)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+SELECT 1 FROM user_inventory_items
+WHERE user_id = @uid AND LOWER(weapon_code) = LOWER(@code)
+LIMIT 1;
+""";
+        command.Parameters.AddWithValue("uid", userId);
+        command.Parameters.AddWithValue("code", code);
+        return command.ExecuteScalar() != null;
+    }
+
+    private static bool HasStackableRounds(NpgsqlConnection connection, long userId, string code)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+SELECT 1
+FROM user_ammo_packs uap
+JOIN ammo_types at ON at.id = uap.ammo_type_id
+WHERE uap.user_id = @uid AND LOWER(at.caliber) = LOWER(@code) AND uap.rounds_count > 0
+LIMIT 1;
+""";
+        command.Parameters.AddWithValue("uid", userId);
+        command.Parameters.AddWithValue("code", code);
+        return command.ExecuteScalar() != null;
+    }
+
+    private static bool IsAmmoCaliberEquippable(NpgsqlConnection connection, string caliber)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+SELECT COALESCE(MAX(CASE WHEN i.is_equippable THEN 1 ELSE 0 END), 0)
+FROM ammo_types at
+JOIN items i ON i.id = at.item_id
+WHERE LOWER(at.caliber) = LOWER(@caliber);
+""";
+        command.Parameters.AddWithValue("caliber", caliber);
+        int equippable = Convert.ToInt32(command.ExecuteScalar() ?? 0);
+        return equippable == 1;
     }
 
     /// <summary>Resolve <c>users.id</c> from <c>users.username</c> alone (no password). Used for equips/profile keyed by login name.</summary>
@@ -1093,6 +1219,7 @@ ORDER BY LOWER(at.caliber), uap.id;
                 if (idx < 0 || idx >= 12)
                     continue;
                 bool primary = k == 0;
+                bool isEquippable = IsItemCodeEquippable(connection, w.Code);
                 slots[idx] = new UserInventorySlotDto
                 {
                     SlotIndex = idx,
@@ -1108,7 +1235,8 @@ ORDER BY LOWER(at.caliber), uap.id;
                     Continuation = !primary,
                     Stackable = false,
                     Quantity = 1,
-                    ChamberRounds = primary ? Math.Clamp(item.ChamberRounds, 0, Math.Max(0, w.MagazineSize)) : 0
+                    ChamberRounds = primary ? Math.Clamp(item.ChamberRounds, 0, Math.Max(0, w.MagazineSize)) : 0,
+                    IsEquippable = isEquippable
                 };
                 occupied[idx] = true;
             }
@@ -1125,6 +1253,7 @@ ORDER BY LOWER(at.caliber), uap.id;
             if (occupied[idx])
                 continue;
             string iconKey = !string.IsNullOrWhiteSpace(ammo.IconKey) ? ammo.IconKey : ammo.Caliber;
+            bool ammoEquippable = IsAmmoCaliberEquippable(connection, ammo.Caliber);
             slots[idx] = new UserInventorySlotDto
             {
                 SlotIndex = idx,
@@ -1140,7 +1269,8 @@ ORDER BY LOWER(at.caliber), uap.id;
                 Continuation = false,
                 Stackable = true,
                 Quantity = count,
-                ChamberRounds = 0
+                ChamberRounds = 0,
+                IsEquippable = ammoEquippable
             };
             occupied[idx] = true;
         }

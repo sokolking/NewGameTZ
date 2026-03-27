@@ -375,6 +375,7 @@ public class UserInventorySlotPayload
     public bool stackable;
     public int quantity;
     public int chamberRounds;
+    public bool isEquippable;
 }
 
 /// <summary>Newtonsoft + Unity: надёжный разбор <c>double?</c> из Integer/Float/String.</summary>

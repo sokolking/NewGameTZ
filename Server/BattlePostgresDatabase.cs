@@ -59,9 +59,14 @@ CREATE TABLE IF NOT EXISTS items (
     condition INT NOT NULL DEFAULT 100,
     icon_key TEXT NOT NULL DEFAULT '',
     type TEXT NOT NULL,
+    is_equippable BOOLEAN NOT NULL DEFAULT FALSE,
     inventorygrid SMALLINT NOT NULL DEFAULT 1,
     CONSTRAINT chk_items_inventorygrid CHECK (inventorygrid IN (0, 1, 2))
 );
+ALTER TABLE items ADD COLUMN IF NOT EXISTS is_equippable BOOLEAN NOT NULL DEFAULT FALSE;
+UPDATE items
+SET is_equippable = TRUE
+WHERE type = 'weapon';
 
 CREATE TABLE IF NOT EXISTS ammo_types (
     id BIGSERIAL PRIMARY KEY,
@@ -125,6 +130,15 @@ ALTER TABLE users DROP COLUMN IF EXISTS weapon_code;
 UPDATE users SET current_hp = max_hp WHERE current_hp IS NULL OR current_hp < 0 OR current_hp > max_hp;
 
 ALTER TABLE users ADD COLUMN IF NOT EXISTS active_session_jti TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS equipped_item_code TEXT NOT NULL DEFAULT 'fist';
+UPDATE users u
+SET equipped_item_code = COALESCE((
+    SELECT ii.weapon_code
+    FROM user_inventory_items ii
+    WHERE ii.user_id = u.id AND ii.is_equipped
+    LIMIT 1
+), 'fist')
+WHERE COALESCE(TRIM(u.equipped_item_code), '') = '';
 
 CREATE TABLE IF NOT EXISTS user_ammo_packs (
     id BIGSERIAL PRIMARY KEY,
@@ -266,8 +280,8 @@ VALUES ('fist', 'Fist', 1, 1, 'fist', 3, 1.0, 1, 100, 100, FALSE,
     0, '', 0, 0, 0, 'cold', 1, 'physical', 1, 1)
 ON CONFLICT (code) DO NOTHING;
 
-INSERT INTO items (name, mass, quality, condition, icon_key, type, inventorygrid)
-SELECT w.name, w.mass, w.quality, w.weapon_condition, w.icon_key, 'weapon', LEAST(2, GREATEST(0, w.inventory_slot_width))
+INSERT INTO items (name, mass, quality, condition, icon_key, type, is_equippable, inventorygrid)
+SELECT w.name, w.mass, w.quality, w.weapon_condition, w.icon_key, 'weapon', TRUE, LEAST(2, GREATEST(0, w.inventory_slot_width))
 FROM weapons w
 WHERE w.item_id IS NULL
 ON CONFLICT DO NOTHING;
@@ -286,8 +300,8 @@ FROM weapons w
 WHERE TRIM(w.caliber) <> ''
 ON CONFLICT (caliber) DO NOTHING;
 
-INSERT INTO items (name, mass, quality, condition, icon_key, type, inventorygrid)
-SELECT at.caliber, at.unit_weight, 100, 100, at.icon_key, 'ammo', 1
+INSERT INTO items (name, mass, quality, condition, icon_key, type, is_equippable, inventorygrid)
+SELECT at.caliber, at.unit_weight, 100, 100, at.icon_key, 'ammo', FALSE, 1
 FROM ammo_types at
 WHERE at.item_id IS NULL
 ON CONFLICT DO NOTHING;
@@ -299,6 +313,14 @@ WHERE at.item_id IS NULL
   AND i.type = 'ammo'
   AND i.name = at.caliber
   AND i.icon_key = at.icon_key;
+
+UPDATE items i
+SET is_equippable = TRUE
+WHERE EXISTS (
+    SELECT 1
+    FROM weapons w
+    WHERE LOWER(w.code) = LOWER(i.name)
+);
 
 CREATE TABLE IF NOT EXISTS body_parts (
     id SMALLINT PRIMARY KEY CHECK (id > 0),

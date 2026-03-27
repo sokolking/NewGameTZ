@@ -463,8 +463,15 @@ public static class BattleUsersDashboardPage
         eqLab.style.cssText = 'display:inline-flex;align-items:center;gap:4px;font-size:12px;';
         const eq = document.createElement('input');
         eq.type = 'checkbox';
+        eq.dataset.role = 'equipped';
         eqLab.appendChild(eq);
         eqLab.appendChild(document.createTextNode('equipped'));
+        const canEqLab = document.createElement('label');
+        canEqLab.style.cssText = 'display:inline-flex;align-items:center;gap:4px;font-size:12px;';
+        const canEq = document.createElement('input');
+        canEq.type = 'checkbox';
+        canEqLab.appendChild(canEq);
+        canEqLab.appendChild(document.createTextNode('equippable'));
         const info = document.createElement('span');
         info.className = 'hint';
         info.style.fontSize = '11px';
@@ -486,7 +493,9 @@ public static class BattleUsersDashboardPage
             chamber.max = String(Math.max(0, magSize));
             if (chamber.disabled) chamber.value = '0';
             else chamber.value = String(Math.min(Math.max(0, Number(it.chamberRounds || chamber.value || 0)), magSize));
-            eqLab.style.display = '';
+            if (!canEq.checked) eq.checked = false;
+            eqLab.style.display = canEq.checked ? '' : 'none';
+            canEqLab.style.display = '';
             const weaponDef = weaponList.find(x => x.code === code.value);
             const hand = weaponDef && weaponDef.inventoryGrid != null ? Number(weaponDef.inventoryGrid) : 1;
             info.textContent = 'uses ' + weaponSlotWidth(code.value) + ' cell(s), hand ' + hand + ', mag ' + magSize;
@@ -496,8 +505,9 @@ public static class BattleUsersDashboardPage
             qty.disabled = false;
             chamber.disabled = true;
             chamber.value = '0';
-            eq.checked = false;
-            eqLab.style.display = 'none';
+            if (!canEq.checked) eq.checked = false;
+            eqLab.style.display = canEq.checked ? '' : 'none';
+            canEqLab.style.display = '';
             const ammoDef = ammoTypeList.find(x => x.caliber === code.value);
             const hand = ammoDef && ammoDef.inventoryGrid != null ? Number(ammoDef.inventoryGrid) : 1;
             info.textContent = 'stackable item, 1 cell, hand ' + hand;
@@ -522,8 +532,9 @@ public static class BattleUsersDashboardPage
             qty.disabled = false;
             chamber.disabled = true;
             chamber.value = '0';
-            eq.checked = false;
-            eqLab.style.display = 'none';
+            if (!canEq.checked) eq.checked = false;
+            eqLab.style.display = canEq.checked ? '' : 'none';
+            canEqLab.style.display = '';
             const medDef = medicineWeaponList.find(x => x.code === code.value);
             const hand = medDef && medDef.inventoryGrid != null ? Number(medDef.inventoryGrid) : 1;
             info.textContent = 'medicine stack, hand ' + hand;
@@ -534,9 +545,15 @@ public static class BattleUsersDashboardPage
         qty.value = String(Math.max(0, Number(it.quantity != null ? it.quantity : 1)));
         chamber.value = String(Math.max(0, Number(it.chamberRounds != null ? it.chamberRounds : 0)));
         eq.checked = !!it.isEquipped;
+        canEq.checked = !!it.isEquippable;
         eq.addEventListener('change', () => {
-          if (!eq.checked || type.value !== 'weapon') return;
-          itemsRowsEl.querySelectorAll('div input[type="checkbox"]').forEach(x => { if (x !== eq) x.checked = false; });
+          if (!eq.checked) return;
+          itemsRowsEl.querySelectorAll('input[data-role="equipped"]').forEach(x => { if (x !== eq) x.checked = false; });
+        });
+        canEq.addEventListener('change', () => {
+          if (!canEq.checked)
+            eq.checked = false;
+          eqLab.style.display = canEq.checked ? '' : 'none';
         });
         type.addEventListener('change', syncUi);
         code.addEventListener('change', () => {
@@ -573,6 +590,7 @@ public static class BattleUsersDashboardPage
         row.appendChild(document.createTextNode('chamber'));
         row.appendChild(chamber);
         row.appendChild(eqLab);
+        row.appendChild(canEqLab);
         row.appendChild(info);
         row.appendChild(rm);
         itemsRowsEl.appendChild(row);
@@ -590,7 +608,8 @@ public static class BattleUsersDashboardPage
         const qtyEl = inputs[1];
         const chamberEl = inputs[2];
         const eqEl = inputs[3];
-        if (!typeEl || !codeEl || !slotEl || !qtyEl || !chamberEl || !eqEl) continue;
+        const canEqEl = inputs[4];
+        if (!typeEl || !codeEl || !slotEl || !qtyEl || !chamberEl || !eqEl || !canEqEl) continue;
         let outType = typeEl.value;
         if (outType === 'medicine')
           outType = 'medicine';
@@ -600,7 +619,8 @@ public static class BattleUsersDashboardPage
           quantity: Math.max(0, Number(qtyEl.value || 0)),
           chamberRounds: Math.max(0, Number(chamberEl.value || 0)),
           startSlot: Number(slotEl.value || -1),
-          isEquipped: !!eqEl.checked
+          isEquipped: !!eqEl.checked,
+          isEquippable: !!canEqEl.checked
         });
       }
       return out;
@@ -615,7 +635,7 @@ public static class BattleUsersDashboardPage
         return;
       }
       const items = Array.isArray(data.items) ? data.items : [];
-      const defaults = items.length ? items : [{ itemType: 'weapon', code: 'fist', quantity: 1, startSlot: 0, isEquipped: true }];
+      const defaults = items.length ? items : [{ itemType: 'weapon', code: 'fist', quantity: 1, startSlot: 0, isEquipped: true, isEquippable: true }];
       renderItemsRows(defaults);
       itemsDialog.showModal();
       setStatus('items loaded');
@@ -623,7 +643,7 @@ public static class BattleUsersDashboardPage
 
     itemsAddRowBtn.addEventListener('click', () => {
       const cur = collectItemsRowsFromDom();
-      cur.push({ itemType: 'weapon', code: 'fist', quantity: 1, startSlot: 0, isEquipped: false });
+      cur.push({ itemType: 'weapon', code: 'fist', quantity: 1, startSlot: 0, isEquipped: false, isEquippable: true });
       renderItemsRows(cur);
     });
 

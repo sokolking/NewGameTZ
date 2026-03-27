@@ -153,6 +153,7 @@ public class HexGridCamera : MonoBehaviour
         if (_followThirdPersonActive && _followTarget != null)
             return;
         if (_cam == null || !_cam.orthographic) return;
+        EnsureStableTopDownRotation();
         if (Mouse.current == null) return;
         if (GameplayMapInputBlock.IsBlocked)
             return;
@@ -174,6 +175,22 @@ public class HexGridCamera : MonoBehaviour
 
         if (panNeedsWork)
             UpdatePan();
+    }
+
+    private static readonly Quaternion TopDownRotation = Quaternion.LookRotation(Vector3.down, Vector3.forward);
+
+    /// <summary>
+    /// Defensive clamp: in planning mode camera must stay top-down.
+    /// Prevents occasional drift to invalid euler combinations after mode switches.
+    /// </summary>
+    private void EnsureStableTopDownRotation()
+    {
+        if (_followThirdPersonActive || ThirdPersonFollowActive)
+            return;
+        if (_cam == null || !_cam.orthographic)
+            return;
+        if (Quaternion.Angle(transform.rotation, TopDownRotation) > 0.1f)
+            transform.rotation = TopDownRotation;
     }
 
     private void UpdateZoom(float scroll)
@@ -568,10 +585,11 @@ public class HexGridCamera : MonoBehaviour
         ThirdPersonFollowActive = false;
         HexCell.RefreshHoverAfterThirdPersonCamera();
 
-        transform.SetPositionAndRotation(_savedPosition, _savedRotation);
-        _cam.orthographic = _savedOrthographic;
-        _cam.orthographicSize = _savedOrthoSize;
+        transform.SetPositionAndRotation(_savedPosition, TopDownRotation);
+        _cam.orthographic = true;
+        _cam.orthographicSize = _savedOrthoSize > 0.01f ? _savedOrthoSize : Mathf.Max(1f, _orthoMax);
         _cam.fieldOfView = _savedFieldOfView;
+        ClampPanToMap();
     }
 
     /// <summary>Мгновенный сброс (прерывание, ForceStopMovement).</summary>
@@ -593,10 +611,11 @@ public class HexGridCamera : MonoBehaviour
         if (_cam == null) _cam = GetComponent<Camera>();
         if (_cam == null) return;
 
-        transform.SetPositionAndRotation(_savedPosition, _savedRotation);
-        _cam.orthographic = _savedOrthographic;
-        _cam.orthographicSize = _savedOrthoSize;
+        transform.SetPositionAndRotation(_savedPosition, TopDownRotation);
+        _cam.orthographic = true;
+        _cam.orthographicSize = _savedOrthoSize > 0.01f ? _savedOrthoSize : Mathf.Max(1f, _orthoMax);
         _cam.fieldOfView = _savedFieldOfView;
+        ClampPanToMap();
     }
 
     /// <summary>Устар.: используйте <see cref="EnterThirdPersonFollowRoutine"/>.</summary>

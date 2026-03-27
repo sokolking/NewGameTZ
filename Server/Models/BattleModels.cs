@@ -143,6 +143,8 @@ public class BattleWeaponBrowseRowDto
     public int EffectMax { get; set; }
     /// <summary>Effect target: self or enemy.</summary>
     public string EffectTarget { get; set; } = "enemy";
+    /// <summary>Common item flag from <c>items.is_equippable</c>.</summary>
+    public bool IsEquippable { get; set; }
 }
 
 /// <summary>Distinct <c>damage_type</c> / <c>category</c> values for weapons admin UI.</summary>
@@ -194,6 +196,7 @@ public sealed class BattleWeaponUpsertDto
     public int EffectMin { get; set; }
     public int EffectMax { get; set; }
     public string EffectTarget { get; set; } = "enemy";
+    public bool IsEquippable { get; set; } = true;
 }
 
 public class ExecutedBattleActionDto
@@ -522,6 +525,8 @@ public class UserInventorySlotDto
     public int Quantity { get; set; }
     /// <summary>Rounds currently loaded in weapon chamber/magazine for this inventory item.</summary>
     public int ChamberRounds { get; set; }
+    /// <summary>Whether this item can be equipped in hand.</summary>
+    public bool IsEquippable { get; set; }
 }
 
 /// <summary>Row in <c>user_inventory_items</c> for admin GET/PUT.</summary>
@@ -591,6 +596,7 @@ public sealed class UserItemAdminDto
     public int ChamberRounds { get; set; }
     public int StartSlot { get; set; } = -1;
     public bool IsEquipped { get; set; }
+    public bool IsEquippable { get; set; }
     public bool IsStackable { get; set; }
     public int SlotWidth { get; set; }
 }
@@ -603,6 +609,7 @@ public sealed class UserItemReplaceDto
     public int ChamberRounds { get; set; }
     public int StartSlot { get; set; } = -1;
     public bool IsEquipped { get; set; }
+    public bool IsEquippable { get; set; }
 }
 
 public sealed class UserItemsReplaceHttpBody

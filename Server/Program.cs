@@ -1096,6 +1096,7 @@ public class WeaponUpsertRequest
     public int effectMin { get; set; }
     public int effectMax { get; set; }
     public string? effectTarget { get; set; }
+    public bool isEquippable { get; set; } = true;
 
     public BattleWeaponUpsertDto ToUpsertDto()
     {
@@ -1159,7 +1160,8 @@ public class WeaponUpsertRequest
             EffectSign = effectSign ?? "positive",
             EffectMin = effectMin,
             EffectMax = effectMax,
-            EffectTarget = effectTarget ?? "enemy"
+            EffectTarget = effectTarget ?? "enemy",
+            IsEquippable = isEquippable
         };
     }
 }

@@ -103,16 +103,28 @@ LIMIT 1;
         int quality = Math.Clamp(req.Quality, 0, 9999);
         int condition = Math.Clamp(req.Condition, 0, 9999);
         int inventoryGrid = Math.Clamp(req.InventoryGrid, 0, 2);
-
         using var connection = _database.DataSource.OpenConnection();
         using var tx = connection.BeginTransaction();
+        bool isEquippable;
+        using (var eqCommand = connection.CreateCommand())
+        {
+            eqCommand.Transaction = tx;
+            eqCommand.CommandText = """
+SELECT 1
+FROM weapons
+WHERE LOWER(code) = LOWER(@code)
+LIMIT 1;
+""";
+            eqCommand.Parameters.AddWithValue("code", caliber);
+            isEquippable = eqCommand.ExecuteScalar() != null;
+        }
         long itemId;
         using (var itemCommand = connection.CreateCommand())
         {
             itemCommand.Transaction = tx;
             itemCommand.CommandText = """
-INSERT INTO items (name, mass, quality, condition, icon_key, type, inventorygrid)
-VALUES (@name, @mass, @quality, @condition, @iconKey, 'ammo', @inventorygrid)
+INSERT INTO items (name, mass, quality, condition, icon_key, type, is_equippable, inventorygrid)
+VALUES (@name, @mass, @quality, @condition, @iconKey, 'ammo', @isEquippable, @inventorygrid)
 ON CONFLICT DO NOTHING;
 SELECT id FROM items
 WHERE type = 'ammo' AND name = @name AND icon_key = @iconKey
@@ -124,6 +136,7 @@ LIMIT 1;
             itemCommand.Parameters.AddWithValue("quality", quality);
             itemCommand.Parameters.AddWithValue("condition", condition);
             itemCommand.Parameters.AddWithValue("iconKey", iconKey);
+            itemCommand.Parameters.AddWithValue("isEquippable", isEquippable);
             itemCommand.Parameters.AddWithValue("inventorygrid", inventoryGrid);
             object? scalar = itemCommand.ExecuteScalar();
             itemId = scalar is long id ? id : Convert.ToInt64(scalar);

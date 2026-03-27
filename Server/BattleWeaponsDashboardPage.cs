@@ -132,6 +132,7 @@ public static class BattleWeaponsDashboardPage
       { k: 'statEffectStrength', label: 'ΔStr', title: 'Stat effect strength' },
       { k: 'statEffectEndurance', label: 'ΔEnd', title: 'Stat effect endurance' },
       { k: 'statEffectAccuracy', label: 'ΔAcc', title: 'Stat effect accuracy' },
+      { k: 'isEquippable', label: 'equippable', title: 'Common item flag: may this item be equipped in hand', type: 'cb' },
       { k: 'isSniper', label: 'snp', title: 'Sniper range curve (p)', type: 'cb' },
       { k: 'iconKey', label: 'icon', title: 'icon_key', type: 'text' },
       { k: '_del', label: '', type: 'del' },
@@ -174,6 +175,7 @@ public static class BattleWeaponsDashboardPage
       statEffectStrength: 'Бонус или штраф к силе при экипировке. Для колонок stat-effect только −1 означает «не применимо».',
       statEffectEndurance: 'Бонус или штраф к выносливости при экипировке. Только −1 = «не применимо».',
       statEffectAccuracy: 'Бонус или штраф к меткости при экипировке. Только −1 = «не применимо».',
+      isEquippable: 'Общий флаг предмета из items.is_equippable: можно ли брать предмет в руку.',
       isSniper: 'Если включено, для шанса попадания используется отдельная (снайперская) зависимость от дистанции.',
       iconKey: 'Имя ключа иконки на клиенте.',
       _del: 'Удалить это оружие из базы (после подтверждения в диалоге).',
@@ -336,6 +338,7 @@ public static class BattleWeaponsDashboardPage
         if (c.type === 'cb') {
           const cb = document.createElement('input');
           cb.type = 'checkbox';
+          if (c.k === 'isEquippable') cb.checked = true;
           cb.setAttribute('data-field', c.k);
           cb.dataset.paramKey = c.k;
           if (c.title) cb.title = c.title;
