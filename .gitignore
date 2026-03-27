@@ -62,3 +62,6 @@ Server/wwwroot/backups/
 
 # FBX персонажа ~110MB каждый — лимит GitHub 100MB; держите локально или используйте Git LFS
 Assets/Art/Player/*.fbx
+
+Assets/Scripts/Hope.code-workspace
+Assets/Scripts/Hope.code-workspace.meta

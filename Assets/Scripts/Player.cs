@@ -691,7 +691,8 @@ public class Player : MonoBehaviour
     /// <param name="bodyPartId">Server <see cref="BodyPartIds"/> / body_parts.id; 0 = unspecified.</param>
     public bool QueueAttackAction(string targetUnitId, int bodyPartId, int cost = 1)
     {
-        if (_magazineCapacity > 0 && _currentMagazineRounds <= 0)
+        bool usesMagazine = _weaponRangeHexes > 1 && _magazineCapacity > 0;
+        if (usesMagazine && _currentMagazineRounds <= 0)
             return false;
         int safeCost = Mathf.Max(1, cost);
         if (_currentAp < safeCost)
@@ -711,7 +712,7 @@ public class Player : MonoBehaviour
         });
         _apSpentThisTurn += safeCost;
         _currentAp -= safeCost;
-        if (_magazineCapacity > 0)
+        if (usesMagazine)
             _currentMagazineRounds = Mathf.Max(0, _currentMagazineRounds - 1);
         OnEquippedWeaponChanged?.Invoke();
         return true;
@@ -720,7 +721,8 @@ public class Player : MonoBehaviour
     /// <summary>Выстрел по гексу прицела (Ctrl+клик): без targetUnitId, с <see cref="BattleQueuedAction.targetPosition"/> — урон по стене на ЛС, см. сервер.</summary>
     public bool QueueHexAttackAction(int col, int row, int cost = 1)
     {
-        if (_magazineCapacity > 0 && _currentMagazineRounds <= 0)
+        bool usesMagazine = _weaponRangeHexes > 1 && _magazineCapacity > 0;
+        if (usesMagazine && _currentMagazineRounds <= 0)
             return false;
         int safeCost = Mathf.Max(1, cost);
         if (_currentAp < safeCost)
@@ -741,7 +743,7 @@ public class Player : MonoBehaviour
         });
         _apSpentThisTurn += safeCost;
         _currentAp -= safeCost;
-        if (_magazineCapacity > 0)
+        if (usesMagazine)
             _currentMagazineRounds = Mathf.Max(0, _currentMagazineRounds - 1);
         OnEquippedWeaponChanged?.Invoke();
         return true;
