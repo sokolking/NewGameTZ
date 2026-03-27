@@ -150,6 +150,7 @@ public partial class BattleRoom
             Players = players,
             RoundDuration = RoundDuration,
             RoundDeadlineUtcMs = RoundDeadlineUtcMs,
+            RoundIndex = RoundIndex,
             SpawnPlayerIds = sid,
             SpawnCols = sc,
             SpawnRows = sr,

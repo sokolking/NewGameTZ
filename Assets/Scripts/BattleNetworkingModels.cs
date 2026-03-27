@@ -266,6 +266,8 @@ public class BattleStartedPayload
     public BattlePlayerInfo[] players;
     public float roundDuration;
     public long roundDeadlineUtcMs;
+    /// <summary>Server round index (resume / re-login).</summary>
+    public int roundIndex;
     /// <summary>Спавн для JsonUtility (параллельные массивы): локальный playerId и все прочие entity ids, включая мобов.</summary>
     public string[] spawnPlayerIds;
     public int[] spawnCols;
@@ -293,12 +295,24 @@ public class BattleStartedPayload
     public float[] obstacleWallYaws;
 }
 
+/// <summary>GET /api/battle/{battleId} — subset for resume sync.</summary>
+[Serializable]
+public class BattleStateSnapshotHttp
+{
+    public int roundIndex;
+    public long roundDeadlineUtcMs;
+    public string[] turnHistoryIds;
+    public int currentTurnPointer;
+}
+
 /// <summary>POST /api/battle/.../equip-weapon (клиент).</summary>
 /// <summary>Ответ POST /api/db/user/inventory.</summary>
 [Serializable]
 public class UserInventorySlotsPayload
 {
     public UserInventorySlotPayload[] slots;
+    /// <summary>Server <c>users.id</c>; optional for older clients.</summary>
+    public long userId;
 }
 
 [Serializable]

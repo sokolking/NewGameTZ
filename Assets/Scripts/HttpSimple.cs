@@ -2,6 +2,7 @@ using System;
 using System.Collections;
 using System.IO;
 using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Text;
 using System.Threading.Tasks;
 
@@ -97,6 +98,97 @@ public static class HttpSimple
         onBody?.Invoke(body);
     }
 
+    public static IEnumerator PostJsonWithAuth(string url, string json, string bearerToken, Action<string> onBody, Action<string> onError)
+    {
+        Task<HttpResponseMessage> task;
+        try
+        {
+            var req = new HttpRequestMessage(HttpMethod.Post, url)
+            {
+                Content = new StringContent(json ?? "", Encoding.UTF8, "application/json")
+            };
+            if (!string.IsNullOrEmpty(bearerToken))
+                req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearerToken);
+            task = Client.SendAsync(req);
+        }
+        catch (Exception ex)
+        {
+            onError?.Invoke(ex.Message);
+            yield break;
+        }
+
+        while (!task.IsCompleted)
+            yield return null;
+
+        HttpResponseMessage resp;
+        try
+        {
+            resp = task.Result;
+        }
+        catch (Exception ex)
+        {
+            onError?.Invoke(ex.Message);
+            yield break;
+        }
+
+        Task<string> read = resp.Content.ReadAsStringAsync();
+        while (!read.IsCompleted)
+            yield return null;
+
+        string body = read.Result;
+        if (!resp.IsSuccessStatusCode)
+        {
+            onError?.Invoke(body);
+            yield break;
+        }
+
+        onBody?.Invoke(body);
+    }
+
+    public static IEnumerator GetStringWithAuth(string url, string bearerToken, Action<string> onBody, Action<string> onError)
+    {
+        Task<HttpResponseMessage> task;
+        try
+        {
+            var req = new HttpRequestMessage(HttpMethod.Get, url);
+            if (!string.IsNullOrEmpty(bearerToken))
+                req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearerToken);
+            task = Client.SendAsync(req);
+        }
+        catch (Exception ex)
+        {
+            onError?.Invoke(ex.Message);
+            yield break;
+        }
+
+        while (!task.IsCompleted)
+            yield return null;
+
+        HttpResponseMessage resp;
+        try
+        {
+            resp = task.Result;
+        }
+        catch (Exception ex)
+        {
+            onError?.Invoke(ex.Message);
+            yield break;
+        }
+
+        Task<string> read = resp.Content.ReadAsStringAsync();
+        while (!read.IsCompleted)
+            yield return null;
+
+        string body = read.Result;
+        if (!resp.IsSuccessStatusCode)
+        {
+            onError?.Invoke(body);
+            yield break;
+        }
+
+        onBody?.Invoke(body);
+    }
+
     /// <summary>Возвращает код ответа и тело (в т.ч. при 404), чтобы опрос мог отличить «комната закрыта».</summary>
     public static IEnumerator GetStringWithStatus(string url, Action<int, string> onDone, Action<string> onTransportError)
     {
@@ -104,6 +196,44 @@ public static class HttpSimple
         try
         {
             task = Client.GetAsync(url);
+        }
+        catch (Exception ex)
+        {
+            onTransportError?.Invoke(ex.Message);
+            yield break;
+        }
+
+        while (!task.IsCompleted)
+            yield return null;
+
+        HttpResponseMessage resp;
+        try
+        {
+            resp = task.Result;
+        }
+        catch (Exception ex)
+        {
+            onTransportError?.Invoke(ex.Message);
+            yield break;
+        }
+
+        Task<string> read = resp.Content.ReadAsStringAsync();
+        while (!read.IsCompleted)
+            yield return null;
+
+        string body = read.Result;
+        onDone?.Invoke((int)resp.StatusCode, body);
+    }
+
+    public static IEnumerator GetStringWithStatusAndAuth(string url, string bearerToken, Action<int, string> onDone, Action<string> onTransportError)
+    {
+        Task<HttpResponseMessage> task;
+        try
+        {
+            var req = new HttpRequestMessage(HttpMethod.Get, url);
+            if (!string.IsNullOrEmpty(bearerToken))
+                req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearerToken);
+            task = Client.SendAsync(req);
         }
         catch (Exception ex)
         {

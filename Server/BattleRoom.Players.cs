@@ -21,6 +21,16 @@ public partial class BattleRoom
         PlayerLevels[playerId] = Math.Max(1, level);
     }
 
+    /// <summary>Bind battle <paramref name="playerId"/> (P1/P2 or client id) to <c>users.id</c> for inventory/ammo DB writes.</summary>
+    public void RegisterBattlePlayerUserId(string playerId, long userId)
+    {
+        if (string.IsNullOrWhiteSpace(playerId) || userId <= 0)
+            return;
+        if (!Players.ContainsKey(playerId))
+            return;
+        PlayerToUserId[playerId] = userId;
+    }
+
     public void SetPlayerCurrentHpOverride(string playerId, int currentHp)
     {
         if (string.IsNullOrWhiteSpace(playerId) || !Players.ContainsKey(playerId))

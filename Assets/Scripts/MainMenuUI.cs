@@ -10,6 +10,7 @@ public class MainMenuUI : MonoBehaviour
 {
     [Header("Scenes")]
     [SerializeField] private string _gameSceneName = "MainScene";
+    [SerializeField] private string _loginSceneName = "LoginScene";
 
     [Header("Settings panel")]
     [SerializeField] private GameObject _settingsPanel;
@@ -38,6 +39,7 @@ public class MainMenuUI : MonoBehaviour
     private Button _btnFindGame;
     private Button _btnSettings;
     private Button _btnQuit;
+    private Button _btnLogout;
     private Button _btnCloseSettings;
     private Button _btnResPrev;
     private Button _btnResNext;
@@ -50,6 +52,9 @@ public class MainMenuUI : MonoBehaviour
     {
         // Найти кнопки по именам в иерархии под этим объектом.
         CacheButtons();
+        EnsureLogoutButtonLabel();
+        if (!string.IsNullOrEmpty(BattleSessionState.LastUsername) && _loginInputField != null)
+            _loginInputField.text = BattleSessionState.LastUsername;
         WireDebugServerToggle();
         ApplySoloToggleFromSavedState();
         WireButtonEvents();
@@ -64,6 +69,11 @@ public class MainMenuUI : MonoBehaviour
         if (_btnFindGame == null) _btnFindGame = transform.Find("Button_NewGame")?.GetComponent<Button>();
         _btnSettings = transform.Find("Button_Settings")?.GetComponent<Button>();
         _btnQuit = transform.Find("Button_Quit")?.GetComponent<Button>();
+        _btnLogout = transform.Find("Button_LogOut")?.GetComponent<Button>();
+        if (_btnLogout == null)
+            _btnLogout = FindDeepChild(transform, "Button_LogOut")?.GetComponent<Button>();
+        if (_btnLogout == null)
+            _btnLogout = FindDeepChild(transform.root, "Button_LogOut")?.GetComponent<Button>();
         if (_loginInputField == null)
             _loginInputField = transform.Find("AuthPanel/LoginInputField")?.GetComponent<InputField>();
         if (_passwordInputField == null)
@@ -146,6 +156,11 @@ public class MainMenuUI : MonoBehaviour
         {
             _btnQuit.onClick.RemoveAllListeners();
             _btnQuit.onClick.AddListener(OnQuitClicked);
+        }
+        if (_btnLogout != null)
+        {
+            _btnLogout.onClick.RemoveAllListeners();
+            _btnLogout.onClick.AddListener(OnLogoutClicked);
         }
         if (_btnCloseSettings != null)
         {
@@ -236,8 +251,6 @@ public class MainMenuUI : MonoBehaviour
     {
         PersistGameplayTogglesForFindGame();
         bool singlePlayer = GameModeState.IsSinglePlayer;
-        string username = GetLoginValue();
-        string password = GetPasswordValue();
 
         if (singlePlayer)
         {
@@ -245,7 +258,7 @@ public class MainMenuUI : MonoBehaviour
             // чтобы логика боя была общей с онлайн-режимом.
             if (_matchmaking != null)
             {
-                _matchmaking.StartSinglePlayerServerBattle(username, password);
+                _matchmaking.StartSinglePlayerServerBattle();
                 return;
             }
             // Fallback: если матчмейкинг не настроен, старое поведение — просто загрузить сцену.
@@ -256,7 +269,7 @@ public class MainMenuUI : MonoBehaviour
 
         if (_matchmaking != null)
         {
-            _matchmaking.FindGame(username, password);
+            _matchmaking.FindGame();
             return;
         }
         if (!string.IsNullOrEmpty(_gameSceneName))
@@ -284,18 +297,23 @@ public class MainMenuUI : MonoBehaviour
 #endif
     }
 
-    private string GetLoginValue()
+    public void OnLogoutClicked()
     {
-        return _loginInputField != null && !string.IsNullOrWhiteSpace(_loginInputField.text)
-            ? _loginInputField.text.Trim()
-            : "test";
+        SessionWebSocketConnection.StopReconnectLoop();
+        BattleSessionState.ClearSession();
+        BattleSessionState.ClearPending();
+        if (!string.IsNullOrEmpty(_loginSceneName))
+            SceneManager.LoadScene(_loginSceneName, LoadSceneMode.Single);
     }
 
-    private string GetPasswordValue()
+    private void EnsureLogoutButtonLabel()
     {
-        return _passwordInputField != null && !string.IsNullOrEmpty(_passwordInputField.text)
-            ? _passwordInputField.text
-            : "test";
+        if (_btnLogout == null)
+            return;
+        Text txt = FindDeepChild(_btnLogout.transform, "Text")?.GetComponent<Text>();
+        if (txt == null)
+            return;
+        txt.text = Loc.T("menu.logout");
     }
 
     private static Transform FindDeepChild(Transform root, string objectName)

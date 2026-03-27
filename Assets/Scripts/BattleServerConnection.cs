@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Text;
 using Newtonsoft.Json;
 using UnityEngine;
@@ -23,7 +24,7 @@ public class BattleServerConnection : MonoBehaviour
     public string ServerUrl => _serverUrl;
 
     /// <summary>Только отмена очереди с главного меню (нет WebSocket). В бою не вызывать.</summary>
-    public static void NotifyLeaveBlocking(string serverUrl, string battleId, string playerId)
+    public static void NotifyLeaveBlocking(string serverUrl, string battleId, string playerId, string bearerToken)
     {
         if (string.IsNullOrEmpty(serverUrl) || string.IsNullOrEmpty(battleId) || string.IsNullOrEmpty(playerId)) return;
         try
@@ -31,7 +32,13 @@ public class BattleServerConnection : MonoBehaviour
             string baseUrl = serverUrl.TrimEnd('/');
             string url = $"{baseUrl}/api/battle/{Uri.EscapeDataString(battleId)}/leave?playerId={Uri.EscapeDataString(playerId)}";
             using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
-            var task = client.PostAsync(url, new StringContent("", Encoding.UTF8, "application/json"));
+            using var req = new HttpRequestMessage(HttpMethod.Post, url)
+            {
+                Content = new StringContent("", Encoding.UTF8, "application/json")
+            };
+            if (!string.IsNullOrEmpty(bearerToken))
+                req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", bearerToken);
+            var task = client.SendAsync(req);
             task.Wait(TimeSpan.FromSeconds(3));
         }
         catch { /* ignore */ }
@@ -60,9 +67,47 @@ public class BattleServerConnection : MonoBehaviour
             _gameSession?.ApplyBattleStarted(BattleSessionState.BattleStarted);
             BattleSessionStateHooks.RaiseBattleIdentified(_battleId, _playerId, _serverUrl);
             BattleSessionState.ClearPending();
+            StartCoroutine(CoSyncResumeSnapshotFromServerAfterFrame());
         }
         else
             _serverUrl = BattleServerRuntime.CurrentBaseUrl;
+    }
+
+    private IEnumerator CoSyncResumeSnapshotFromServerAfterFrame()
+    {
+        yield return null;
+        if (_gameSession == null)
+            _gameSession = FindFirstObjectByType<GameSession>();
+        if (_gameSession == null || string.IsNullOrEmpty(_battleId))
+            yield break;
+
+        string url = $"{_serverUrl.TrimEnd('/')}/api/battle/{HttpSimple.Escape(_battleId)}";
+        string body = null;
+        string err = null;
+        yield return HttpSimple.GetStringWithAuth(url, BattleSessionState.AccessToken, b => body = b, e => err = e);
+        if (err != null || string.IsNullOrEmpty(body))
+            yield break;
+
+        BattleStateSnapshotHttp snap = null;
+        try
+        {
+            snap = JsonConvert.DeserializeObject<BattleStateSnapshotHttp>(body, HopeBattleJson.DeserializeSettings);
+        }
+        catch
+        {
+            try
+            {
+                snap = JsonConvert.DeserializeObject<BattleStateSnapshotHttp>(body);
+            }
+            catch
+            {
+                // ignore
+            }
+        }
+
+        if (snap == null)
+            yield break;
+        _gameSession.ApplyResumeSnapshotFromServer(snap.roundIndex, snap.roundDeadlineUtcMs, snap.turnHistoryIds, snap.currentTurnPointer);
     }
 
     public void ConnectAndJoin(int startCol = 0, int startRow = 0)
@@ -74,12 +119,12 @@ public class BattleServerConnection : MonoBehaviour
 
     private IEnumerator JoinCoroutine(int startCol, int startRow)
     {
-        var body = new JoinRequest { startCol = startCol, startRow = startRow };
-        var json = JsonUtility.ToJson(body);
+        var body = new JoinRequest { startCol = startCol, startRow = startRow, solo = false };
+        var json = JsonConvert.SerializeObject(body);
         string url = _serverUrl.TrimEnd('/') + "/api/battle/join";
         string responseText = null;
         string err = null;
-        yield return HttpSimple.PostJson(url, json, b => responseText = b, e => err = e);
+        yield return HttpSimple.PostJsonWithAuth(url, json, BattleSessionState.AccessToken, b => responseText = b, e => err = e);
 
         if (err != null)
         {
@@ -154,9 +199,15 @@ public class BattleServerConnection : MonoBehaviour
             int status = 0;
             string body = null;
             string transportErr = null;
-            yield return HttpSimple.GetStringWithStatus(url, (code, b) => { status = code; body = b; }, e => transportErr = e);
+            yield return HttpSimple.GetStringWithStatusAndAuth(url, BattleSessionState.AccessToken, (code, b) => { status = code; body = b; }, e => transportErr = e);
             if (transportErr != null)
                 continue;
+            if (status == 401 || status == 403)
+            {
+                Debug.LogWarning("[BattleServerConnection] Poll unauthorized — session may have expired.");
+                yield break;
+            }
+
             if (status < 200 || status >= 300 || string.IsNullOrEmpty(body))
                 continue;
             var poll = ParsePollResponse(body);
@@ -181,7 +232,7 @@ public class BattleServerConnection : MonoBehaviour
         string url = $"{_serverUrl.TrimEnd('/')}/api/battle/{HttpSimple.Escape(_battleId)}/turns/{HttpSimple.Escape(turnId)}";
         string body = null;
         string err = null;
-        yield return HttpSimple.GetString(url, b => body = b, e => err = e);
+        yield return HttpSimple.GetStringWithAuth(url, BattleSessionState.AccessToken, b => body = b, e => err = e);
 
         if (err != null)
         {

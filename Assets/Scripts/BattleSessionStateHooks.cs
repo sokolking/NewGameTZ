@@ -11,9 +11,14 @@ public static class BattleSessionStateHooks
     /// </summary>
     public static event Action<string, string, string> OnBattleIdentified;
 
+    /// <summary>JWT invalidated because the same account logged in elsewhere.</summary>
+    public static event Action OnSessionRevokedElsewhere;
+
     public static void RaiseBattleIdentified(string battleId, string playerId, string serverUrl)
     {
         OnBattleIdentified?.Invoke(battleId, playerId, serverUrl);
     }
+
+    public static void RaiseSessionRevokedElsewhere() => OnSessionRevokedElsewhere?.Invoke();
 }
 

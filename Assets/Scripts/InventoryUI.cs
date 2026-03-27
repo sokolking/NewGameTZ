@@ -304,13 +304,12 @@ public sealed class InventoryUI : MonoBehaviour
     {
         ResolveHierarchyIfNeeded();
 
-        string user = BattleSessionState.LastUsername;
-        string pass = BattleSessionState.LastPassword;
+        string token = BattleSessionState.AccessToken;
         if (_serverConnection == null)
             _serverConnection = FindFirstObjectByType<BattleServerConnection>();
         string baseUrl = ResolveInventoryApiBaseUrl(_serverConnection);
 
-        if (string.IsNullOrEmpty(user) || string.IsNullOrEmpty(baseUrl))
+        if (string.IsNullOrEmpty(token) || string.IsNullOrEmpty(baseUrl))
         {
             FillFallbackLocalIcons();
             OnPlayerEquippedWeaponChanged();
@@ -318,10 +317,9 @@ public sealed class InventoryUI : MonoBehaviour
         }
 
         string url = $"{baseUrl}/api/db/user/items";
-        var body = JsonUtility.ToJson(new UserInventoryAuthJson { username = user, password = pass });
         string responseText = null;
         string err = null;
-        yield return HttpSimple.PostJson(url, body, b => responseText = b, e => err = e);
+        yield return HttpSimple.GetStringWithAuth(url, token, b => responseText = b, e => err = e);
 
         if (err != null)
         {
@@ -926,13 +924,6 @@ public sealed class InventoryUI : MonoBehaviour
             : FindFirstObjectByType<GameSession>();
         int atk = s.attackApCost > 0 ? s.attackApCost : 1;
         session?.RequestEquipWeapon(s.weaponCode, atk, s.damage, s.range);
-    }
-
-    [System.Serializable]
-    private class UserInventoryAuthJson
-    {
-        public string username;
-        public string password;
     }
 }
 

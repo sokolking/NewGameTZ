@@ -97,6 +97,30 @@ public partial class BattleRoom
     /// <summary>Отображаемое имя для планки над головой (playerId → ник).</summary>
     public Dictionary<string, string> PlayerDisplayNames { get; } = new();
 
+    /// <summary><c>users.id</c> для участника боя; заполняется при join с авторизацией (не якорь, не логин-строка).</summary>
+    public Dictionary<string, long> PlayerToUserId { get; } = new();
+
+    public bool TryGetBattlePlayerUserId(string playerId, out long userId) =>
+        PlayerToUserId.TryGetValue(playerId, out userId);
+
+    /// <summary>
+    /// Combat <c>unitId</c> for a human player: decimal <c>users.id</c> when linked; otherwise negative guest slot
+    /// (<c>P1</c> → <c>-1</c>, <c>P2</c> → <c>-2</c>). Stable for the whole battle — do not remap mid-fight.
+    /// </summary>
+    public string GetPlayerUnitId(string playerId)
+    {
+        if (TryGetBattlePlayerUserId(playerId, out long uid) && uid > 0)
+            return uid.ToString();
+        if (string.Equals(playerId, "P1", StringComparison.Ordinal))
+            return "-1";
+        if (string.Equals(playerId, "P2", StringComparison.Ordinal))
+            return "-2";
+        return "-" + Math.Abs((playerId ?? "").GetHashCode(StringComparison.Ordinal)).ToString();
+    }
+
+    /// <summary>Prefix for non-player combatants (not <c>users.id</c>). IDs are battle-local; DB-backed mob rows can map to these later.</summary>
+    public const string BattleMobUnitIdPrefix = "mob:";
+
     /// <summary>Уровень персонажа (playerId → level).</summary>
     public Dictionary<string, int> PlayerLevels { get; } = new();
 
@@ -131,6 +155,26 @@ public partial class BattleRoom
 
     /// <summary>Вызывается в конце CloseRound — пуш по WebSocket.</summary>
     public static event Action<BattleRoom>? RoundClosedForPush;
+
+    /// <summary>
+    /// Login <c>activeBattle</c> resume: battle continues unless last resolved round ended the fight,
+    /// or the room is cleared (e.g. surrender leaves via <see cref="BattleRoomStore.PlayerLeft"/>).
+    /// Matchmaking queue (waiting for opponent) counts as unfinished.
+    /// </summary>
+    public bool IsUnfinishedForLoginResume()
+    {
+        if (LastTurnResult?.BattleFinished == true)
+            return false;
+
+        if (RoundInProgress)
+            return true;
+
+        // Matchmaking: one player in queue, rounds not started yet.
+        if (!IsSolo && Players.Count == 1 && RoundIndex == 0)
+            return true;
+
+        return false;
+    }
 
     public void Tick(float deltaSeconds)
     {

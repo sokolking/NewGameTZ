@@ -215,7 +215,8 @@ public class BattleSignalRConnection : MonoBehaviour
         string root = _serverUrl.TrimEnd('/');
         root = root.Replace("http://", "ws://", StringComparison.OrdinalIgnoreCase)
             .Replace("https://", "wss://", StringComparison.OrdinalIgnoreCase);
-        string uri = $"{root}/ws/battle?battleId={Uri.EscapeDataString(_battleId)}&playerId={Uri.EscapeDataString(_playerId)}";
+        string token = BattleSessionState.AccessToken ?? "";
+        string uri = $"{root}/ws/battle?battleId={Uri.EscapeDataString(_battleId)}&playerId={Uri.EscapeDataString(_playerId)}&access_token={Uri.EscapeDataString(token)}";
 
         EnqueueLog("ConnectAsync: " + uri);
         _cts = new CancellationTokenSource();
@@ -284,6 +285,12 @@ public class BattleSignalRConnection : MonoBehaviour
     private void DispatchIncomingJson(string json, int msgIndex)
     {
         if (string.IsNullOrEmpty(json)) return;
+
+        if (json.IndexOf("sessionRevoked", StringComparison.Ordinal) >= 0)
+        {
+            SessionRevokedNavigation.GoToLogin();
+            return;
+        }
 
         if (json.IndexOf(TypeSubmitAck, StringComparison.Ordinal) >= 0)
         {

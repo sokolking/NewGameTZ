@@ -37,7 +37,10 @@ public class RemoteBattleUnitView : MonoBehaviour
 
     public string NetworkPlayerId { get; private set; }
     public bool IsMoving => _isMoving;
-    public bool IsMob => !string.IsNullOrEmpty(NetworkPlayerId) && NetworkPlayerId.StartsWith("MOB_", StringComparison.OrdinalIgnoreCase);
+    public bool IsMob =>
+        !string.IsNullOrEmpty(NetworkPlayerId)
+        && (NetworkPlayerId.StartsWith("mob:", StringComparison.OrdinalIgnoreCase)
+            || NetworkPlayerId.StartsWith("MOB_", StringComparison.OrdinalIgnoreCase));
     public int CurrentCol { get; private set; }
     public int CurrentRow { get; private set; }
     public int CurrentHp => _currentHp;

@@ -93,10 +93,12 @@ public class BattleRoomStore
     /// - Если есть ожидающий и solo == false — создаём пару и возвращаем battleStarted второму игроку.
     /// - Иначе встаём в очередь как P1 и ждём второго игрока.
     /// </summary>
-    public JoinResponse JoinOrCreate(int startCol, int startRow, bool solo, int playerMaxHp, int playerCurrentHp, int playerMaxAp, string weaponCode, int weaponDamageMin, int weaponDamageMax, int weaponRange, int weaponAttackApCost, string displayName, int characterLevel = 1, int accuracy = 10, double weaponTightness = 1, int weaponTrajectoryHeight = 1, bool weaponIsSniper = false)
+    public JoinResponse JoinOrCreate(int startCol, int startRow, bool solo, int playerMaxHp, int playerCurrentHp, int playerMaxAp, string weaponCode, int weaponDamageMin, int weaponDamageMax, int weaponRange, int weaponAttackApCost, string displayName, long battleUserId, int characterLevel = 1, int accuracy = 10, double weaponTightness = 1, int weaponTrajectoryHeight = 1, bool weaponIsSniper = false)
     {
         lock (_lock)
         {
+            bool haveBattleUserId = battleUserId > 0;
+
             // Одиночный бой: не используем очередь, сразу создаём комнату и запускаем первый раунд.
             if (solo)
             {
@@ -106,6 +108,8 @@ public class BattleRoomStore
                 int soloRow = Math.Clamp(startRow, 0, HexSpawn.DefaultGridLength - 1);
                 soloRoom.AddPlayer("P1", soloCol, soloRow);
                 soloRoom.SetPlayerDisplayInfo("P1", displayName, characterLevel);
+                if (haveBattleUserId)
+                    soloRoom.RegisterBattlePlayerUserId("P1", battleUserId);
                 soloRoom.SetPlayerCombatProfile("P1", playerMaxHp, playerMaxAp, weaponCode, weaponDamageMin, weaponDamageMax, weaponRange, weaponAttackApCost, accuracy, weaponTightness, weaponTrajectoryHeight, weaponIsSniper);
                 soloRoom.SetPlayerCurrentHpOverride("P1", playerCurrentHp);
                 _rooms[soloBattleId] = soloRoom;
@@ -128,6 +132,8 @@ public class BattleRoomStore
                 var (p2c, p2r) = HexSpawn.FindOpponentSpawn(p1c, p1r, HexSpawn.DefaultGridWidth, HexSpawn.DefaultGridLength, HexSpawn.MinSpawnHexDistance);
                 waitingRoom.AddPlayer("P2", p2c, p2r);
                 waitingRoom.SetPlayerDisplayInfo("P2", displayName, characterLevel);
+                if (haveBattleUserId)
+                    waitingRoom.RegisterBattlePlayerUserId("P2", battleUserId);
                 waitingRoom.SetPlayerCombatProfile("P2", playerMaxHp, playerMaxAp, weaponCode, weaponDamageMin, weaponDamageMax, weaponRange, weaponAttackApCost, accuracy, weaponTightness, weaponTrajectoryHeight, weaponIsSniper);
                 waitingRoom.SetPlayerCurrentHpOverride("P2", playerCurrentHp);
                 waitingRoom.StartFirstRound();
@@ -142,6 +148,8 @@ public class BattleRoomStore
             int pr = Math.Clamp(startRow, 0, HexSpawn.DefaultGridLength - 1);
             r.AddPlayer("P1", pc, pr);
             r.SetPlayerDisplayInfo("P1", displayName, characterLevel);
+            if (haveBattleUserId)
+                r.RegisterBattlePlayerUserId("P1", battleUserId);
             r.SetPlayerCombatProfile("P1", playerMaxHp, playerMaxAp, weaponCode, weaponDamageMin, weaponDamageMax, weaponRange, weaponAttackApCost, accuracy, weaponTightness, weaponTrajectoryHeight, weaponIsSniper);
             r.SetPlayerCurrentHpOverride("P1", playerCurrentHp);
             _rooms[bid] = r;
@@ -155,6 +163,33 @@ public class BattleRoomStore
     public BattleRoom? GetRoom(string battleId)
     {
         lock (_lock) return _rooms.TryGetValue(battleId, out var r) ? r : null;
+    }
+
+    /// <summary>Find an in-memory battle where this <c>users.id</c> is registered (queue or active fight).</summary>
+    public bool TryFindActiveBattleForUser(long userId, out string battleId, out string playerId)
+    {
+        battleId = "";
+        playerId = "";
+        if (userId <= 0)
+            return false;
+        lock (_lock)
+        {
+            foreach (var kv in _rooms)
+            {
+                if (!kv.Value.IsUnfinishedForLoginResume())
+                    continue;
+                foreach (var p in kv.Value.PlayerToUserId)
+                {
+                    if (p.Value != userId)
+                        continue;
+                    battleId = kv.Key;
+                    playerId = p.Key;
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     /// <summary>Submit под общей блокировкой с Tick — исключает гонку «таймер закрыл раунд / второй сабмит».</summary>

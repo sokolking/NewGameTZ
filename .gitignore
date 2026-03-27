@@ -57,5 +57,8 @@ Server/obj/
 Server/wwwroot/downloads/*
 !Server/wwwroot/downloads/README.txt
 
+# Server: local DB backup exports (large JSON dumps)
+Server/wwwroot/backups/
+
 # FBX персонажа ~110MB каждый — лимит GitHub 100MB; держите локально или используйте Git LFS
 Assets/Art/Player/*.fbx

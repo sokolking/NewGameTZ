@@ -124,6 +124,8 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS intellect INT NOT NULL DEFAULT 0;
 ALTER TABLE users DROP COLUMN IF EXISTS weapon_code;
 UPDATE users SET current_hp = max_hp WHERE current_hp IS NULL OR current_hp < 0 OR current_hp > max_hp;
 
+ALTER TABLE users ADD COLUMN IF NOT EXISTS active_session_jti TEXT;
+
 CREATE TABLE IF NOT EXISTS user_ammo_packs (
     id BIGSERIAL PRIMARY KEY,
     user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,

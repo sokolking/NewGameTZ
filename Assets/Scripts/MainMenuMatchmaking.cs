@@ -19,35 +19,42 @@ public class MainMenuMatchmaking : MonoBehaviour
     private bool _searching;
     private string _queueBattleId;
     private string _queuePlayerId;
-    private string _username = "test";
-    private string _password = "test";
 
     private void OnDestroy()
     {
         if (_searching && !string.IsNullOrEmpty(_queueBattleId) && !string.IsNullOrEmpty(_queuePlayerId))
-            BattleServerConnection.NotifyLeaveBlocking(_serverUrl, _queueBattleId, _queuePlayerId);
+            BattleServerConnection.NotifyLeaveBlocking(_serverUrl, _queueBattleId, _queuePlayerId, BattleSessionState.AccessToken);
         _queueBattleId = null;
         _queuePlayerId = null;
     }
 
-    public void FindGame(string username, string password)
+    /// <summary>Uses <see cref="BattleSessionState.AccessToken"/> from <c>/api/auth/login</c>.</summary>
+    public void FindGame()
     {
         if (_searching) return;
+        if (string.IsNullOrEmpty(BattleSessionState.AccessToken))
+        {
+            SetStatus(Loc.T("menu.session_required"));
+            return;
+        }
+
         _serverUrl = BattleServerRuntime.CurrentBaseUrl;
-        _username = username;
-        _password = password;
         _searching = true;
         SetStatus("Searching for opponent...");
         StartCoroutine(JoinAndWaitForBattleCoroutine());
     }
 
     /// <summary>Одиночный режим: запросить на сервере одиночный бой (1 игрок + моб) и сразу загрузить сцену.</summary>
-    public void StartSinglePlayerServerBattle(string username, string password)
+    public void StartSinglePlayerServerBattle()
     {
         if (_searching) return;
+        if (string.IsNullOrEmpty(BattleSessionState.AccessToken))
+        {
+            SetStatus(Loc.T("menu.session_required"));
+            return;
+        }
+
         _serverUrl = BattleServerRuntime.CurrentBaseUrl;
-        _username = username;
-        _password = password;
         _searching = true;
         SetStatus("Starting single-player battle...");
         StartCoroutine(JoinSoloAndStartBattleCoroutine());
@@ -60,12 +67,12 @@ public class MainMenuMatchmaking : MonoBehaviour
 
     private IEnumerator JoinAndWaitForBattleCoroutine()
     {
-        var body = new JoinRequest { startCol = 0, startRow = 0, solo = false, username = _username, password = _password, characterLevel = 1 };
-        var json = JsonUtility.ToJson(body);
+        var body = new JoinRequest { startCol = 0, startRow = 0, solo = false, characterLevel = 1 };
+        var json = JsonConvert.SerializeObject(body);
         string url = _serverUrl.TrimEnd('/') + "/api/battle/join";
         string responseText = null;
         string errBody = null;
-        yield return HttpSimple.PostJson(url, json, b => responseText = b, e => errBody = e);
+        yield return HttpSimple.PostJsonWithAuth(url, json, BattleSessionState.AccessToken, b => responseText = b, e => errBody = e);
 
         if (errBody != null)
         {
@@ -88,7 +95,6 @@ public class MainMenuMatchmaking : MonoBehaviour
 
             if (response.status == "battle" && response.battleStarted != null)
             {
-                BattleSessionState.SetAuthCredentials(_username, _password);
                 BattleSessionState.SetPending(battleId, playerId, _serverUrl, response.battleStarted);
                 _searching = false;
                 SceneManager.LoadScene(_gameSceneName);
@@ -114,12 +120,12 @@ public class MainMenuMatchmaking : MonoBehaviour
     /// <summary>Запрос одиночного боя: сервер сразу создаёт бой и возвращает battleStarted без ожидания второго игрока.</summary>
     private IEnumerator JoinSoloAndStartBattleCoroutine()
     {
-        var body = new JoinRequest { startCol = 0, startRow = 0, solo = true, username = _username, password = _password, characterLevel = 1 };
-        var json = JsonUtility.ToJson(body);
+        var body = new JoinRequest { startCol = 0, startRow = 0, solo = true, characterLevel = 1 };
+        var json = JsonConvert.SerializeObject(body);
         string url = _serverUrl.TrimEnd('/') + "/api/battle/join";
         string responseText = null;
         string errBody = null;
-        yield return HttpSimple.PostJson(url, json, b => responseText = b, e => errBody = e);
+        yield return HttpSimple.PostJsonWithAuth(url, json, BattleSessionState.AccessToken, b => responseText = b, e => errBody = e);
 
         if (errBody != null)
         {
@@ -135,13 +141,12 @@ public class MainMenuMatchmaking : MonoBehaviour
             yield break;
         }
 
-        var response = JsonUtility.FromJson<JoinResponse>(responseText);
+        var response = ParseJoinResponse(responseText);
         string battleId = response.battleId;
         string playerId = response.playerId;
 
         if (response.status == "battle" && response.battleStarted != null)
         {
-            BattleSessionState.SetAuthCredentials(_username, _password);
             BattleSessionState.SetPending(battleId, playerId, _serverUrl, response.battleStarted);
             _searching = false;
             SceneManager.LoadScene(_gameSceneName);
@@ -162,7 +167,7 @@ public class MainMenuMatchmaking : MonoBehaviour
             int status = 0;
             string body = null;
             string transportErr = null;
-            yield return HttpSimple.GetStringWithStatus(url, (code, b) => { status = code; body = b; }, e => transportErr = e);
+            yield return HttpSimple.GetStringWithStatusAndAuth(url, BattleSessionState.AccessToken, (code, b) => { status = code; body = b; }, e => transportErr = e);
 
             if (transportErr != null)
                 continue;
@@ -176,13 +181,21 @@ public class MainMenuMatchmaking : MonoBehaviour
                 yield break;
             }
 
+            if (status == 401 || status == 403)
+            {
+                _queueBattleId = null;
+                _queuePlayerId = null;
+                SetStatus(Loc.T("menu.session_required"));
+                _searching = false;
+                yield break;
+            }
+
             if (status < 200 || status >= 300 || string.IsNullOrEmpty(body))
                 continue;
 
             var poll = ParsePollResponse(body);
             if (poll.status == "battle" && poll.battleStarted != null)
             {
-                BattleSessionState.SetAuthCredentials(_username, _password);
                 BattleSessionState.SetPending(battleId, playerId, _serverUrl, poll.battleStarted);
                 _searching = false;
                 SceneManager.LoadScene(_gameSceneName);
@@ -197,8 +210,6 @@ public class MainMenuMatchmaking : MonoBehaviour
         public int startCol;
         public int startRow;
         public bool solo;
-        public string username;
-        public string password;
         public int characterLevel;
     }
 

@@ -124,6 +124,9 @@ builder.Services.AddSingleton<BattleRoomStore>(sp => new BattleRoomStore(
     sp.GetRequiredService<BattleObstacleBalanceDatabase>(),
     sp.GetRequiredService<BattleBodyPartDatabase>(),
     sp.GetRequiredService<BattleUserDatabase>()));
+builder.Services.AddSingleton(sp => new BattleAuthSession(
+    sp.GetRequiredService<IConfiguration>(),
+    sp.GetRequiredService<BattleUserDatabase>()));
 builder.Services.AddCors(options =>
 {
     options.AddDefaultPolicy(p => p.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader());
@@ -236,9 +239,9 @@ BattleRoom.RoundClosedForPush += room =>
         {
             if (r == null || r.UnitType != UnitType.Player || string.IsNullOrWhiteSpace(r.PlayerId))
                 continue;
-            string username = room.PlayerDisplayNames.TryGetValue(r.PlayerId, out var dn) ? dn : r.PlayerId;
             int rewardExp = r.IsDead ? 50 : 100;
-            battleUserDb.TryAwardBattleExperience(username, rewardExp, out _);
+            if (room.PlayerToUserId.TryGetValue(r.PlayerId, out long rewardUid))
+                battleUserDb.TryAwardBattleExperience(rewardUid, rewardExp, out _);
         }
     }
 };
@@ -249,17 +252,41 @@ var timer = new System.Timers.Timer(200);
 timer.Elapsed += (_, _) => store.Tick(0.2f);
 timer.Start();
 
-// POST /api/battle/join — встать в очередь или начать бой.
-// Тело: { "startCol": 0, "startRow": 0, "solo": false }
-app.MapPost("/api/battle/join", (BattleRoomStore s, JoinRequest? body) =>
+// POST /api/auth/login — credentials → JWT (new session revokes previous tokens and battle WebSockets).
+app.MapPost("/api/auth/login", (BattleUserDatabase users, BattleAuthSession auth, BattleRoomStore rooms, LoginRequest? body) =>
 {
-    var (startCol, startRow, solo) = body is { } b ? (b.startCol, b.startRow, b.solo) : (0, 0, false);
-    string username = body?.username?.Trim() ?? "";
-    string password = body?.password ?? "";
-    if (!battleUserDb.ValidateCredentials(username, password))
+    if (body == null || string.IsNullOrWhiteSpace(body.username) || string.IsNullOrWhiteSpace(body.password))
+        return Results.Json(new ErrorResponse { Error = "username and password required" }, jsonOpt, statusCode: 400);
+    if (!users.TryValidateCredentialsAndGetUserId(body.username.Trim(), body.password, out long userId))
         return Results.Json(new ErrorResponse { Error = "Invalid username or password." }, jsonOpt, statusCode: 401);
-    battleUserDb.TryGetCombatProfile(username, out int playerMaxHp, out int playerCurrentHp, out int playerMaxAp, out int accuracy, out int levelFromDb);
-    battleUserDb.TryGetEquippedWeaponCodeForUser(username, out string equippedCode);
+
+    // Snapshot unfinished battle before IssueToken: revoke closes battle WS and must not remove the room (see BattleSessionRevokeSkip).
+    object? activeBattle = null;
+    if (rooms.TryFindActiveBattleForUser(userId, out string rbid, out string rpid))
+    {
+        var room = rooms.GetRoom(rbid);
+        if (room != null)
+            activeBattle = new { battleId = rbid, playerId = rpid, battleStarted = room.BuildBattleStartedFor(rpid) };
+    }
+
+    string token = auth.IssueToken(userId);
+    users.TryGetUsername(userId, out string displayName);
+
+    return Results.Json(new { accessToken = token, tokenType = "Bearer", expiresInSeconds = 604800, username = displayName, activeBattle }, jsonOpt);
+});
+
+// POST /api/battle/join — Authorization: Bearer only. Body: startCol, startRow, solo (no credentials).
+app.MapPost("/api/battle/join", (HttpContext http, BattleRoomStore s, BattleAuthSession auth, JoinRequest? body) =>
+{
+    if (!BattleAuthHttp.TryGetBearerUserId(http.Request, auth, out long battleUserId))
+        return Results.Json(new ErrorResponse { Error = "Unauthorized" }, jsonOpt, statusCode: 401);
+
+    var (startCol, startRow, solo) = body is { } b ? (b.startCol, b.startRow, b.solo) : (0, 0, false);
+    if (!battleUserDb.TryGetUsername(battleUserId, out string username))
+        return Results.Json(new ErrorResponse { Error = "User not found" }, jsonOpt, statusCode: 401);
+
+    battleUserDb.TryGetCombatProfileByUserId(battleUserId, out int playerMaxHp, out int playerCurrentHp, out int playerMaxAp, out int accuracy, out int levelFromDb);
+    battleUserDb.TryGetEquippedWeaponCodeForUserByUserId(battleUserId, out string equippedCode);
     string weaponCode = string.IsNullOrWhiteSpace(equippedCode) ? "fist" : equippedCode.Trim().ToLowerInvariant();
     if (!battleWeaponDb.TryGetWeaponByCode(weaponCode, out var weapon))
     {
@@ -282,6 +309,7 @@ app.MapPost("/api/battle/join", (BattleRoomStore s, JoinRequest? body) =>
         weapon.Range,
         weapon.AttackApCost,
         username,
+        battleUserId,
         characterLevel,
         accuracy,
         weapon.Tightness,
@@ -290,7 +318,7 @@ app.MapPost("/api/battle/join", (BattleRoomStore s, JoinRequest? body) =>
     return Results.Json(resp, jsonOpt);
 });
 
-app.Map("/ws/battle", async (HttpContext ctx, BattleRoomStore store) =>
+app.Map("/ws/battle", async (HttpContext ctx, BattleRoomStore store, BattleAuthSession battleAuth) =>
 {
     if (!ctx.WebSockets.IsWebSocketRequest)
     {
@@ -308,12 +336,32 @@ app.Map("/ws/battle", async (HttpContext ctx, BattleRoomStore store) =>
         return;
     }
 
+    string? accessToken = ctx.Request.Query["access_token"].FirstOrDefault();
+    if (string.IsNullOrEmpty(accessToken) && BattleAuthHttp.TryGetBearerToken(ctx.Request, out var bearerTok))
+        accessToken = bearerTok;
+    if (!battleAuth.TryValidateToken(accessToken, out long wsUserId))
+    {
+        Console.WriteLine($"[BattleWS] reject: invalid or missing token, utc={DateTime.UtcNow:O}");
+        ctx.Response.StatusCode = StatusCodes.Status401Unauthorized;
+        return;
+    }
+
+    var roomForWs = store.GetRoom(battleId);
+    if (roomForWs == null || string.IsNullOrEmpty(playerId)
+        || !roomForWs.TryGetBattlePlayerUserId(playerId, out long slotUserId) || slotUserId != wsUserId)
+    {
+        Console.WriteLine($"[BattleWS] reject: player not allowed for this battle/token, battleId={battleId}, utc={DateTime.UtcNow:O}");
+        ctx.Response.StatusCode = StatusCodes.Status403Forbidden;
+        return;
+    }
+
     var connId = Guid.NewGuid().ToString("N")[..8];
     var remote = ctx.Connection.RemoteIpAddress?.ToString() ?? "?";
-    Console.WriteLine($"[BattleWS] accept begin: connId={connId}, battleId={battleId}, playerId={playerId}, remote={remote}, utc={DateTime.UtcNow:O}");
+    Console.WriteLine($"[BattleWS] accept begin: connId={connId}, battleId={battleId}, playerId={playerId}, userId={wsUserId}, remote={remote}, utc={DateTime.UtcNow:O}");
 
     using var ws = await ctx.WebSockets.AcceptWebSocketAsync();
     BattleWebSocketRegistry.Add(battleId, ws, connId);
+    UserBattleSocketRegistry.Add(wsUserId, battleId, playerId, ws, connId);
     var buf = new byte[262144];
     var recvCount = 0;
     try
@@ -412,16 +460,69 @@ app.Map("/ws/battle", async (HttpContext ctx, BattleRoomStore store) =>
     }
     finally
     {
-        if (!string.IsNullOrEmpty(playerId))
+        UserBattleSocketRegistry.Remove(wsUserId, ws);
+        if (!string.IsNullOrEmpty(playerId)
+            && !BattleSessionRevokeSkip.TryConsumeSkipPlayerLeft(wsUserId, battleId, playerId))
             store.PlayerLeft(battleId, playerId);
         Console.WriteLine($"[BattleWS] disconnect: connId={connId}, battleId={battleId}, playerId={playerId}, recvMsgs={recvCount}, utc={DateTime.UtcNow:O}");
         BattleWebSocketRegistry.Remove(battleId, ws, connId);
     }
 });
 
-// GET /api/battle/{battleId} — срез состояния (отладка/инструменты). Итог раунда только по WebSocket.
-app.MapGet("/api/battle/{battleId}", (string battleId, BattleRoomStore s) =>
+// /ws/session — long-lived session channel; same JWT as HTTP APIs; new login closes this socket and revokes the old token.
+app.Map("/ws/session", async (HttpContext ctx, BattleAuthSession battleAuth) =>
 {
+    if (!ctx.WebSockets.IsWebSocketRequest)
+    {
+        ctx.Response.StatusCode = StatusCodes.Status400BadRequest;
+        return;
+    }
+
+    string? accessToken = ctx.Request.Query["access_token"].FirstOrDefault();
+    if (string.IsNullOrEmpty(accessToken) && BattleAuthHttp.TryGetBearerToken(ctx.Request, out var bearerTok))
+        accessToken = bearerTok;
+    if (!battleAuth.TryValidateToken(accessToken, out long wsUserId))
+    {
+        ctx.Response.StatusCode = StatusCodes.Status401Unauthorized;
+        return;
+    }
+
+    var connId = Guid.NewGuid().ToString("N")[..8];
+    var remote = ctx.Connection.RemoteIpAddress?.ToString() ?? "?";
+    Console.WriteLine($"[SessionWS] accept: connId={connId}, userId={wsUserId}, remote={remote}, utc={DateTime.UtcNow:O}");
+
+    using var ws = await ctx.WebSockets.AcceptWebSocketAsync();
+    UserSessionSocketRegistry.Add(wsUserId, ws, connId);
+    var buf = new byte[8192];
+    try
+    {
+        while (ws.State == WebSocketState.Open)
+        {
+            var r = await ws.ReceiveAsync(new ArraySegment<byte>(buf), ctx.RequestAborted);
+            if (r.MessageType == WebSocketMessageType.Close)
+                break;
+        }
+    }
+    catch (OperationCanceledException)
+    {
+        // ignore
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"[SessionWS] loop error: connId={connId}, userId={wsUserId}, {ex.Message}");
+    }
+    finally
+    {
+        UserSessionSocketRegistry.Remove(wsUserId, ws);
+        Console.WriteLine($"[SessionWS] disconnect: connId={connId}, userId={wsUserId}, utc={DateTime.UtcNow:O}");
+    }
+});
+
+// GET /api/battle/{battleId} — срез состояния; JWT required.
+app.MapGet("/api/battle/{battleId}", (HttpContext http, string battleId, BattleRoomStore s, BattleAuthSession auth) =>
+{
+    if (!BattleAuthHttp.TryGetBearerUserId(http.Request, auth, out _))
+        return Results.Json(new ErrorResponse { Error = "Unauthorized" }, jsonOpt, statusCode: 401);
     var room = s.GetRoom(battleId);
     if (room == null) return Results.Json(new { error = "Battle not found" }, statusCode: 404);
     var battleRecord = battleHistoryDb.GetBattle(battleId);
@@ -461,26 +562,31 @@ app.MapGet("/api/battle/{battleId}", (string battleId, BattleRoomStore s) =>
     return Results.Json(response, jsonOpt);
 });
 
-app.MapPost("/api/battle/{battleId}/equip-weapon", (string battleId, EquipWeaponHttpRequest? body, BattleRoomStore store, BattleWeaponDatabase weapons, BattleUserDatabase users) =>
+app.MapPost("/api/battle/{battleId}/equip-weapon", (HttpContext http, string battleId, EquipWeaponHttpRequest? body, BattleRoomStore store, BattleWeaponDatabase weapons, BattleUserDatabase users, BattleAuthSession auth) =>
 {
+    if (!BattleAuthHttp.TryGetBearerUserId(http.Request, auth, out long jwtUserId))
+        return Results.Json(new ErrorResponse { Error = "Unauthorized" }, jsonOpt, statusCode: 401);
     if (body == null || string.IsNullOrWhiteSpace(body.PlayerId) || string.IsNullOrWhiteSpace(body.WeaponCode))
         return Results.Json(new { error = "playerId and weaponCode required" }, statusCode: 400);
     var room = store.GetRoom(battleId);
     if (room == null)
         return Results.Json(new { error = "Battle not found" }, statusCode: 404);
+    if (!room.TryGetBattlePlayerUserId(body.PlayerId.Trim(), out long equipUserId) || equipUserId != jwtUserId)
+        return Results.Json(new ErrorResponse { Error = "Forbidden" }, jsonOpt, statusCode: 403);
     if (!weapons.TryGetWeaponByCode(body.WeaponCode.Trim(), out var w))
         return Results.Json(new { error = "Unknown weapon" }, statusCode: 400);
-    string username = room.PlayerDisplayNames.GetValueOrDefault(body.PlayerId.Trim()) ?? body.PlayerId.Trim();
-    if (!users.TryValidateEquippedWeaponForRegisteredUser(username, w.Code, out var invErr))
+    if (!users.TryValidateEquippedWeaponForRegisteredUser(equipUserId, w.Code, out var invErr))
         return Results.Json(new { error = invErr ?? "weapon_not_allowed" }, jsonOpt, statusCode: 400);
     if (!room.TryEquipWeapon(body.PlayerId.Trim(), w.Code, w.DamageMin, w.DamageMax, w.Range, w.AttackApCost, w.Tightness, w.TrajectoryHeight, w.IsSniper, out var fail))
         return Results.Json(new { error = fail ?? "equip_failed" }, statusCode: 400);
-    users.SyncEquippedWeaponForRegisteredUser(username, w.Code);
+    users.SyncEquippedWeaponForRegisteredUser(equipUserId, w.Code);
     return Results.Json(new { ok = true, weaponCode = w.Code, weaponDamageMin = w.DamageMin, weaponDamage = w.DamageMax, weaponRange = w.Range, weaponAttackApCost = w.AttackApCost, weaponTightness = w.Tightness, weaponTrajectoryHeight = w.TrajectoryHeight, weaponIsSniper = w.IsSniper });
 });
 
-app.MapGet("/api/battle/{battleId}/turns/{turnId}", (string battleId, string turnId) =>
+app.MapGet("/api/battle/{battleId}/turns/{turnId}", (HttpContext http, string battleId, string turnId, BattleAuthSession auth) =>
 {
+    if (!BattleAuthHttp.TryGetBearerUserId(http.Request, auth, out _))
+        return Results.Json(new ErrorResponse { Error = "Unauthorized" }, jsonOpt, statusCode: 401);
     var record = battleTurnDb.GetTurn(turnId);
     if (record == null || !string.Equals(record.BattleId, battleId, StringComparison.Ordinal))
         return Results.Json(new { error = "Turn not found" }, statusCode: 404);
@@ -563,21 +669,21 @@ app.MapPut("/api/db/users/{userId:long}/items", async (long userId, BattleUserDa
     return Results.Ok(new { ok = true });
 });
 
-app.MapPost("/api/db/user/items", (BattleUserDatabase users, UserInventoryAuthRequest? body) =>
+app.MapGet("/api/db/user/items", (HttpContext http, BattleUserDatabase users, BattleAuthSession auth) =>
 {
-    if (body == null || string.IsNullOrWhiteSpace(body.username))
-        return Results.Json(new { error = "username required" }, jsonOpt, statusCode: 400);
-    if (!users.TryGetInventory(body.username.Trim(), body.password ?? "", out var slots))
-        return Results.Json(new { error = "Invalid credentials" }, jsonOpt, statusCode: 401);
-    return Results.Json(new { slots }, jsonOpt);
+    if (!BattleAuthHttp.TryGetBearerUserId(http.Request, auth, out long userId))
+        return Results.Json(new ErrorResponse { Error = "Unauthorized" }, jsonOpt, statusCode: 401);
+    if (!users.TryGetInventoryForUser(userId, out var slots))
+        return Results.Json(new { error = "Not found" }, jsonOpt, statusCode: 404);
+    return Results.Json(new { slots, userId }, jsonOpt);
 });
 
-app.MapPost("/api/db/user/profile", (BattleUserDatabase users, UserInventoryAuthRequest? body) =>
+app.MapGet("/api/db/user/profile", (HttpContext http, BattleUserDatabase users, BattleAuthSession auth) =>
 {
-    if (body == null || string.IsNullOrWhiteSpace(body.username))
-        return Results.Json(new { error = "username required" }, jsonOpt, statusCode: 400);
-    if (!users.TryGetUserProgressProfile(body.username.Trim(), body.password ?? "", out var profile))
-        return Results.Json(new { error = "Invalid credentials" }, jsonOpt, statusCode: 401);
+    if (!BattleAuthHttp.TryGetBearerUserId(http.Request, auth, out long userId))
+        return Results.Json(new ErrorResponse { Error = "Unauthorized" }, jsonOpt, statusCode: 401);
+    if (!users.TryGetUserProgressProfileByUserId(userId, out var profile))
+        return Results.Json(new { error = "Not found" }, jsonOpt, statusCode: 404);
     return Results.Json(profile, jsonOpt);
 });
 
@@ -852,21 +958,32 @@ app.MapGet("/hit_formula.html", (IWebHostEnvironment env) =>
     return Results.Content(HitFormulaPage.Html, "text/html; charset=utf-8");
 });
 
-// POST leave — только вне игровой сцены (отмена очереди с меню; в бою выход — disconnect WS + leave по сокету).
-app.MapPost("/api/battle/{battleId}/leave", (string battleId, string playerId, BattleRoomStore s) =>
+// POST leave — отмена очереди; JWT + player must belong to token user.
+app.MapPost("/api/battle/{battleId}/leave", (HttpContext http, string battleId, string playerId, BattleRoomStore s, BattleAuthSession auth) =>
 {
+    if (!BattleAuthHttp.TryGetBearerUserId(http.Request, auth, out long uid))
+        return Results.Json(new ErrorResponse { Error = "Unauthorized" }, jsonOpt, statusCode: 401);
     if (string.IsNullOrEmpty(playerId))
         return Results.Json(new { error = "playerId required" }, statusCode: 400);
+    var room = s.GetRoom(battleId);
+    if (room == null)
+        return Results.Json(new { error = "Battle not found" }, statusCode: 404);
+    if (!room.TryGetBattlePlayerUserId(playerId, out long slotUid) || slotUid != uid)
+        return Results.Json(new ErrorResponse { Error = "Forbidden" }, jsonOpt, statusCode: 403);
     if (!s.PlayerLeft(battleId, playerId))
         return Results.Json(new { error = "Battle not found or player not in battle" }, statusCode: 404);
     return Results.Ok(new { left = true });
 });
 
-// GET /api/battle/{battleId}/poll — для ожидающего первого игрока: когда второй присоединился, вернуть battleStarted
-app.MapGet("/api/battle/{battleId}/poll", (string battleId, string playerId, BattleRoomStore s) =>
+// GET /api/battle/{battleId}/poll — JWT + player must belong to token user.
+app.MapGet("/api/battle/{battleId}/poll", (HttpContext http, string battleId, string playerId, BattleRoomStore s, BattleAuthSession auth) =>
 {
+    if (!BattleAuthHttp.TryGetBearerUserId(http.Request, auth, out long uid))
+        return Results.Json(new ErrorResponse { Error = "Unauthorized" }, jsonOpt, statusCode: 401);
     var room = s.GetRoom(battleId);
     if (room == null) return Results.Json(new { error = "Battle not found" }, statusCode: 404);
+    if (!room.TryGetBattlePlayerUserId(playerId, out long slotUid) || slotUid != uid)
+        return Results.Json(new ErrorResponse { Error = "Forbidden" }, jsonOpt, statusCode: 403);
     if (room.Players.Count != 2) return Results.Json(new PollResponse { Status = "waiting" }, jsonOpt);
 
     var started = room.BuildBattleStartedFor(playerId);
@@ -875,14 +992,18 @@ app.MapGet("/api/battle/{battleId}/poll", (string battleId, string playerId, Bat
 
 app.Run();
 
+public class LoginRequest
+{
+    public string username { get; set; } = "";
+    public string password { get; set; } = "";
+}
+
 public class JoinRequest
 {
     public int startCol { get; set; }
     public int startRow { get; set; }
     /// <summary>Если true — создать одиночный бой (1 игрок + серверный моб) без ожидания оппонента.</summary>
     public bool solo { get; set; }
-    public string username { get; set; } = "";
-    public string password { get; set; } = "";
     /// <summary>Уровень персонажа (1–9999); 0 — не задан, используется 1.</summary>
     public int characterLevel { get; set; }
 }
@@ -1041,12 +1162,6 @@ public class WeaponUpsertRequest
             EffectTarget = effectTarget ?? "enemy"
         };
     }
-}
-
-public class UserInventoryAuthRequest
-{
-    public string username { get; set; } = "";
-    public string password { get; set; } = "";
 }
 
 public class EquipWeaponHttpRequest

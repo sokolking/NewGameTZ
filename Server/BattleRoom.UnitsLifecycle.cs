@@ -16,7 +16,7 @@ public partial class BattleRoom
         {
             var playerId = kv.Key;
             var (col, row) = kv.Value;
-            var unitId = playerId + "_UNIT";
+            var unitId = GetPlayerUnitId(playerId);
             var profile = PlayerCombatProfiles.TryGetValue(playerId, out var p)
                 ? p
                 : (DefaultPlayerMaxHp, DefaultPlayerMaxAp, DefaultWeaponCode, DefaultWeaponDamage, DefaultWeaponDamage, DefaultWeaponRange, GetWeaponAttackApCostFromDb(DefaultWeaponCode), 10, 1.0, 1, false);
@@ -85,7 +85,7 @@ public partial class BattleRoom
                     HexSpawn.MinSpawnHexDistance);
             }
 
-            const string mobId = "MOB_1";
+            string mobId = BattleMobUnitIdPrefix + "1";
             if (!Units.ContainsKey(mobId))
             {
                 Units[mobId] = new UnitStateDto

@@ -170,7 +170,7 @@ public static class BattleEscActions
         var bsc = Object.FindFirstObjectByType<BattleServerConnection>();
         if (bsc == null || !bsc.IsInBattle)
             return;
-        BattleServerConnection.NotifyLeaveBlocking(bsc.ServerUrl, bsc.BattleId, bsc.PlayerId);
+        BattleServerConnection.NotifyLeaveBlocking(bsc.ServerUrl, bsc.BattleId, bsc.PlayerId, BattleSessionState.AccessToken);
     }
 
     public static void QuitApplication()

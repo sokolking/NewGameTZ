@@ -38,6 +38,38 @@ LIMIT 1;
         return command.ExecuteScalar() != null;
     }
 
+    /// <summary>Validates credentials and returns <c>users.id</c> in one round-trip (prefer over <see cref="ValidateCredentials"/> + lookup).</summary>
+    public bool TryValidateCredentialsAndGetUserId(string username, string password, out long userId)
+    {
+        userId = 0;
+        if (string.IsNullOrWhiteSpace(username) || string.IsNullOrWhiteSpace(password))
+            return false;
+
+        using var connection = _database.DataSource.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+SELECT id FROM users
+WHERE username = @username AND password = @password
+LIMIT 1;
+""";
+        command.Parameters.AddWithValue("username", username.Trim());
+        command.Parameters.AddWithValue("password", password);
+        object? scalar = command.ExecuteScalar();
+        if (scalar is long l)
+        {
+            userId = l;
+            return true;
+        }
+
+        if (scalar is int i)
+        {
+            userId = i;
+            return true;
+        }
+
+        return false;
+    }
+
     public IReadOnlyList<BattleUserBrowseRowDto> ListUsers(int take)
     {
         using var connection = _database.DataSource.OpenConnection();
@@ -195,13 +227,11 @@ LIMIT 1;
         return true;
     }
 
-    public bool TryGetInventory(string username, string password, out List<UserInventorySlotDto> slots)
+    public bool TryGetInventory(string username, string password, out List<UserInventorySlotDto> slots, out long userId)
     {
         slots = new List<UserInventorySlotDto>();
-        if (!ValidateCredentials(username, password))
-            return false;
-
-        if (!TryGetUserId(username.Trim(), out long userId))
+        userId = 0;
+        if (!TryValidateCredentialsAndGetUserId(username, password, out userId))
             return false;
 
         EnsureUserInventoryBaseline(userId);
@@ -209,6 +239,142 @@ LIMIT 1;
         return true;
     }
 
+    /// <summary>Inventory for an already authenticated <paramref name="userId"/> (JWT).</summary>
+    public bool TryGetInventoryForUser(long userId, out List<UserInventorySlotDto> slots)
+    {
+        slots = new List<UserInventorySlotDto>();
+        if (userId <= 0)
+            return false;
+
+        using var connection = _database.DataSource.OpenConnection();
+        if (!UserExists(connection, userId))
+            return false;
+
+        EnsureUserInventoryBaseline(connection, userId);
+        slots = BuildInventorySlotGridForUser(userId);
+        return true;
+    }
+
+    public bool TryGetUsername(long userId, out string username)
+    {
+        username = "";
+        if (userId <= 0)
+            return false;
+        using var connection = _database.DataSource.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT username FROM users WHERE id = @id LIMIT 1;";
+        command.Parameters.AddWithValue("id", userId);
+        object? scalar = command.ExecuteScalar();
+        if (scalar is string s && !string.IsNullOrWhiteSpace(s))
+        {
+            username = s.Trim();
+            return true;
+        }
+
+        return false;
+    }
+
+    public bool TryGetCombatProfileByUserId(long userId, out int maxHp, out int currentHp, out int maxAp, out int accuracy, out int level)
+    {
+        maxHp = PlayerLevelStatsTable.BaseMaxHp;
+        currentHp = maxHp;
+        maxAp = PlayerLevelStatsTable.BaseMaxAp;
+        accuracy = 0;
+        level = 1;
+        if (userId <= 0)
+            return false;
+
+        using var connection = _database.DataSource.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+SELECT experience, strength, endurance, accuracy, max_hp, current_hp
+FROM users
+WHERE id = @id
+LIMIT 1;
+""";
+        command.Parameters.AddWithValue("id", userId);
+        using var reader = command.ExecuteReader();
+        if (!reader.Read())
+            return false;
+
+        int exp = Math.Max(0, reader.GetInt32(0));
+        _ = reader.GetInt32(1);
+        _ = reader.GetInt32(2);
+        _ = reader.GetInt32(3);
+        int hpFromDb = reader.GetInt32(4);
+        int currentHpFromDb = reader.GetInt32(5);
+        level = ComputeLevel(exp);
+        PlayerLevelStatsRow stats = PlayerLevelStatsTable.GetForLevel(level);
+        maxHp = Math.Max(1, hpFromDb);
+        currentHp = Math.Clamp(currentHpFromDb, 0, maxHp);
+        maxAp = PlayerLevelStatsTable.GetMaxApForLevel(level);
+        accuracy = Math.Max(0, stats.Accuracy);
+        return true;
+    }
+
+    public bool TryGetEquippedWeaponCodeForUserByUserId(long userId, out string weaponCode)
+    {
+        weaponCode = "fist";
+        if (userId <= 0)
+            return false;
+
+        EnsureUserInventoryBaseline(userId);
+        using var connection = _database.DataSource.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+SELECT weapon_code FROM user_inventory_items
+WHERE user_id = @uid AND is_equipped
+LIMIT 1;
+""";
+        command.Parameters.AddWithValue("uid", userId);
+        object? scalar = command.ExecuteScalar();
+        if (scalar is string s && !string.IsNullOrWhiteSpace(s))
+        {
+            weaponCode = s.Trim().ToLowerInvariant();
+            return true;
+        }
+
+        weaponCode = "fist";
+        return true;
+    }
+
+    public bool TryGetUserProgressProfileByUserId(long userId, out UserProgressProfileDto profile)
+    {
+        profile = new UserProgressProfileDto();
+        if (userId <= 0)
+            return false;
+
+        using var connection = _database.DataSource.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+SELECT username, experience, strength, endurance, accuracy
+FROM users
+WHERE id = @id
+LIMIT 1;
+""";
+        command.Parameters.AddWithValue("id", userId);
+        using var reader = command.ExecuteReader();
+        if (!reader.Read())
+            return false;
+
+        int exp = Math.Max(0, reader.GetInt32(1));
+        int level = ComputeLevel(exp);
+        PlayerLevelStatsRow stats = PlayerLevelStatsTable.GetForLevel(level);
+        profile = new UserProgressProfileDto
+        {
+            Username = reader.GetString(0),
+            Experience = exp,
+            Level = level,
+            Strength = stats.Strength,
+            Agility = stats.Agility,
+            Endurance = stats.Stamina,
+            Accuracy = stats.Accuracy,
+            MaxHp = PlayerLevelStatsTable.GetMaxHpForLevel(level),
+            MaxAp = PlayerLevelStatsTable.GetMaxApForLevel(level),
+            HitBonusPercent = stats.Accuracy * 2
+        };
+        return true;
+    }
 
     public bool TryGetUserItemsForAdmin(long userId, out List<UserItemAdminDto> items, out string? error)
     {
@@ -502,12 +668,10 @@ VALUES (@uid, @ammoTypeId, @startSlot, 0, @rounds);
         return true;
     }
 
-    public bool TryGetUserAmmoRounds(string username, string caliber, out int rounds)
+    public bool TryGetUserAmmoRounds(long userId, string caliber, out int rounds)
     {
         rounds = 0;
-        if (string.IsNullOrWhiteSpace(username) || string.IsNullOrWhiteSpace(caliber))
-            return false;
-        if (!TryGetUserId(username.Trim(), out long userId))
+        if (userId <= 0 || string.IsNullOrWhiteSpace(caliber))
             return false;
         if (!_ammo.TryGetAmmoTypeByCaliber(caliber.Trim(), out var ammoType))
             return false;
@@ -526,21 +690,16 @@ LIMIT 1;
         return true;
     }
 
-    public bool TrySetUserAmmoRounds(string username, string caliber, int rounds, out string? error)
+    public bool TrySetUserAmmoRounds(long userId, string caliber, int rounds, out string? error)
     {
         error = null;
-        if (string.IsNullOrWhiteSpace(username))
+        if (userId <= 0)
         {
-            error = "username required";
+            error = "user id required";
             return false;
         }
         if (string.IsNullOrWhiteSpace(caliber))
             return true;
-        if (!TryGetUserId(username.Trim(), out long userId))
-        {
-            error = "user not found";
-            return false;
-        }
         if (!_ammo.TryGetAmmoTypeByCaliber(caliber.Trim(), out var ammoType))
             return true;
 
@@ -561,35 +720,37 @@ ON CONFLICT (user_id, ammo_type_id) DO UPDATE SET
         return true;
     }
 
-    public bool TryConsumeUserItemQuantity(string username, string itemCode, int amount, out string? error)
+    public bool TryConsumeUserItemQuantity(long userId, string itemCode, int amount, out string? error)
     {
         error = null;
         int safeAmount = Math.Max(0, amount);
         if (safeAmount <= 0 || string.IsNullOrWhiteSpace(itemCode))
             return true;
-        if (!TryGetUserAmmoRounds(username, itemCode, out int current))
+        if (userId <= 0)
+        {
+            error = "invalid user id";
+            return false;
+        }
+        if (!TryGetUserAmmoRounds(userId, itemCode, out int current))
         {
             error = "item quantity not found";
             return false;
         }
 
         int next = Math.Max(0, current - safeAmount);
-        return TrySetUserAmmoRounds(username, itemCode, next, out error);
+        return TrySetUserAmmoRounds(userId, itemCode, next, out error);
     }
 
     /// <summary>Weapon allowed in battle equip when it exists in inventory or is <c>fist</c>.</summary>
-    public bool TryValidateEquippedWeaponForRegisteredUser(string username, string weaponCode, out string? error)
+    public bool TryValidateEquippedWeaponForRegisteredUser(long userId, string weaponCode, out string? error)
     {
         error = null;
-        if (string.IsNullOrWhiteSpace(username))
+        if (userId <= 0)
             return true;
 
         string code = (weaponCode ?? "").Trim().ToLowerInvariant();
         if (string.IsNullOrEmpty(code))
             code = "fist";
-
-        if (!TryGetUserId(username.Trim(), out long userId))
-            return true;
 
         if (code == "fist")
             return true;
@@ -630,9 +791,9 @@ LIMIT 1;
         return true;
     }
 
-    public void SyncEquippedWeaponForRegisteredUser(string username, string weaponCode)
+    public void SyncEquippedWeaponForRegisteredUser(long userId, string weaponCode)
     {
-        if (string.IsNullOrWhiteSpace(username))
+        if (userId <= 0)
             return;
         string code = (weaponCode ?? "").Trim().ToLowerInvariant();
         if (string.IsNullOrEmpty(code))
@@ -644,8 +805,6 @@ LIMIT 1;
             // Keep DB equipped weapon marker unchanged to avoid forcing fallback weapon.
             return;
         }
-        if (!TryGetUserId(username.Trim(), out long userId))
-            return;
 
         using var connection = _database.DataSource.OpenConnection();
         using var tx = connection.BeginTransaction();
@@ -697,24 +856,18 @@ WHERE user_id = @uid AND LOWER(weapon_code) = 'fist';
         }
     }
 
-    public bool TrySetUserWeaponChamberRounds(string username, string weaponCode, int chamberRounds, out string? error)
+    public bool TrySetUserWeaponChamberRounds(long userId, string weaponCode, int chamberRounds, out string? error)
     {
         error = null;
-        if (string.IsNullOrWhiteSpace(username))
+        if (userId <= 0)
         {
-            error = "username required";
+            error = "user id required";
             return false;
         }
 
         string code = (weaponCode ?? "").Trim().ToLowerInvariant();
         if (string.IsNullOrEmpty(code))
             return true;
-
-        if (!TryGetUserId(username.Trim(), out long userId))
-        {
-            error = "user not found";
-            return false;
-        }
 
         int rounds = Math.Max(0, chamberRounds);
         using var connection = _database.DataSource.OpenConnection();
@@ -731,12 +884,10 @@ WHERE user_id = @uid AND LOWER(weapon_code) = LOWER(@code);
         return true;
     }
 
-    public bool TryGetUserWeaponChamberRounds(string username, string weaponCode, out int chamberRounds)
+    public bool TryGetUserWeaponChamberRounds(long userId, string weaponCode, out int chamberRounds)
     {
         chamberRounds = 0;
-        if (string.IsNullOrWhiteSpace(username) || string.IsNullOrWhiteSpace(weaponCode))
-            return false;
-        if (!TryGetUserId(username.Trim(), out long userId))
+        if (userId <= 0 || string.IsNullOrWhiteSpace(weaponCode))
             return false;
 
         using var connection = _database.DataSource.OpenConnection();
@@ -793,13 +944,16 @@ LIMIT 1;
         return command.ExecuteScalar() != null;
     }
 
-    private bool TryGetUserId(string username, out long userId)
+    /// <summary>Resolve <c>users.id</c> from <c>users.username</c> alone (no password). Used for equips/profile keyed by login name.</summary>
+    public bool TryGetUserId(string username, out long userId)
     {
         userId = 0;
+        if (string.IsNullOrWhiteSpace(username))
+            return false;
         using var connection = _database.DataSource.OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = "SELECT id FROM users WHERE username = @u LIMIT 1;";
-        command.Parameters.AddWithValue("u", username);
+        command.Parameters.AddWithValue("u", username.Trim());
         object? scalar = command.ExecuteScalar();
         if (scalar is long l)
         {
@@ -1074,27 +1228,26 @@ UPDATE users SET
         }
     }
 
-    public bool TryAwardBattleExperience(string username, int expToAdd, out string? error)
+    public bool TryAwardBattleExperience(long userId, int expToAdd, out string? error)
     {
         error = null;
-        if (string.IsNullOrWhiteSpace(username))
+        if (userId <= 0)
         {
-            error = "username required";
+            error = "user id required";
             return false;
         }
         if (expToAdd <= 0)
             return true;
 
-        string user = username.Trim();
         using var connection = _database.DataSource.OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = """
 UPDATE users
 SET experience = GREATEST(0, experience + @exp)
-WHERE username = @username;
+WHERE id = @id;
 """;
         command.Parameters.AddWithValue("exp", expToAdd);
-        command.Parameters.AddWithValue("username", user);
+        command.Parameters.AddWithValue("id", userId);
         int n = command.ExecuteNonQuery();
         if (n == 0)
         {
@@ -1127,6 +1280,53 @@ WHERE id = @id;
             return false;
         }
         return true;
+    }
+
+    /// <summary>JWT <c>jti</c> for the single active login session (stored in DB; full JWT only on clients).</summary>
+    public bool TryGetActiveSessionJti(long userId, out string? jti)
+    {
+        jti = null;
+        if (userId <= 0)
+            return false;
+
+        using var connection = _database.DataSource.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+SELECT active_session_jti
+FROM users
+WHERE id = @id
+LIMIT 1;
+""";
+        command.Parameters.AddWithValue("id", userId);
+        object? o = command.ExecuteScalar();
+        if (o == null || o is DBNull)
+            return false;
+        string s = Convert.ToString(o) ?? "";
+        if (string.IsNullOrEmpty(s))
+            return false;
+        jti = s;
+        return true;
+    }
+
+    public void SetActiveSessionJti(long userId, string jti)
+    {
+        if (userId <= 0)
+            throw new ArgumentOutOfRangeException(nameof(userId));
+        if (string.IsNullOrWhiteSpace(jti))
+            throw new ArgumentException("jti required", nameof(jti));
+
+        using var connection = _database.DataSource.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+UPDATE users
+SET active_session_jti = @jti
+WHERE id = @id;
+""";
+        command.Parameters.AddWithValue("id", userId);
+        command.Parameters.AddWithValue("jti", jti);
+        int n = command.ExecuteNonQuery();
+        if (n == 0)
+            throw new InvalidOperationException("User not found for session update.");
     }
 
     private static int ComputeLevel(int experience)

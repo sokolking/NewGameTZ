@@ -16,8 +16,8 @@ public partial class BattleRoom
         // Сформировать команду юнита для новой серверной модели.
         if (!PlayerToUnitId.TryGetValue(payload.PlayerId, out var unitId) || string.IsNullOrEmpty(unitId))
         {
-            // Fallback: если по какой-то причине маппинг ещё не задан, используем UnitId из payload или производное имя.
-            unitId = !string.IsNullOrEmpty(payload.UnitId) ? payload.UnitId : payload.PlayerId + "_UNIT";
+            // Same rule as EnsureUnitsInitialized: users.id as string, or negative guest slot.
+            unitId = GetPlayerUnitId(payload.PlayerId);
             PlayerToUnitId[payload.PlayerId] = unitId;
             if (!Units.ContainsKey(unitId) && Players.TryGetValue(payload.PlayerId, out var pos))
             {

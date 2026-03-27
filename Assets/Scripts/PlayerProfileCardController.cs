@@ -28,16 +28,16 @@ public sealed class PlayerProfileCardController : MonoBehaviour
 
     private IEnumerator CoLoadProfile()
     {
-        string username = BattleSessionState.LastUsername;
-        if (string.IsNullOrWhiteSpace(username))
+        string token = BattleSessionState.AccessToken;
+        if (string.IsNullOrWhiteSpace(token))
             yield break;
 
         string baseUrl = BattleServerRuntime.CurrentBaseUrl.TrimEnd('/');
-        string url = baseUrl + "/api/db/user/profile/" + HttpSimple.Escape(username);
+        string url = baseUrl + "/api/db/user/profile";
 
         string body = null;
         string err = null;
-        yield return HttpSimple.GetString(url, b => body = b, e => err = e);
+        yield return HttpSimple.GetStringWithAuth(url, token, b => body = b, e => err = e);
         if (!string.IsNullOrEmpty(err) || string.IsNullOrEmpty(body))
             yield break;
 

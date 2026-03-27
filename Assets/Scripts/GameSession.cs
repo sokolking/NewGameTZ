@@ -185,6 +185,15 @@ public class GameSession : MonoBehaviour
         _lastProcessedTurnResultRound = roundIndex;
     }
 
+    /// <summary>After re-login to an ongoing battle: align turn history and round from GET <c>/api/battle/{battleId}</c>.</summary>
+    public void ApplyResumeSnapshotFromServer(int serverRoundIndex, long roundDeadlineUtcMs, string[] turnHistoryIds, int currentTurnPointer)
+    {
+        ReplaceTurnHistoryIds(turnHistoryIds ?? System.Array.Empty<string>(), currentTurnPointer);
+        ApplyRoundState(serverRoundIndex, roundDeadlineUtcMs);
+        int lastResolved = serverRoundIndex > 0 ? serverRoundIndex - 1 : -1;
+        RegisterProcessedTurnResult(lastResolved);
+    }
+
     public void ReplaceTurnHistoryIds(string[] turnHistoryIds, int currentTurnPointer)
     {
         _turnHistoryIds.Clear();
@@ -1652,7 +1661,6 @@ public class GameSession : MonoBehaviour
         }
         _remoteUnits.Clear();
         _lastProcessedTurnResultRound = -1;
-        _serverRoundIndex = 0;
         _liveRoundDeadlineUtcMs = 0;
         _turnHistoryIds.Clear();
         _turnHistoryCache.Clear();
@@ -1670,7 +1678,8 @@ public class GameSession : MonoBehaviour
             float duration = payload.roundDuration > 0 ? payload.roundDuration : 100f;
             deadlineUtcMs = Player.BuildRoundDeadlineUtcMs(duration);
         }
-        ApplyRoundState(0, deadlineUtcMs);
+        int startRound = payload.roundIndex >= 0 ? payload.roundIndex : 0;
+        ApplyRoundState(startRound, deadlineUtcMs);
 
         Player local = LocalPlayer;
         HexGrid grid = CachedHexGrid;
@@ -1686,7 +1695,9 @@ public class GameSession : MonoBehaviour
 
         foreach (var (pid, col, row) in spawnList)
         {
-            bool isMob = !string.IsNullOrEmpty(pid) && pid.StartsWith("MOB_", System.StringComparison.OrdinalIgnoreCase);
+            bool isMob = !string.IsNullOrEmpty(pid)
+                && (pid.StartsWith("mob:", System.StringComparison.OrdinalIgnoreCase)
+                    || pid.StartsWith("MOB_", System.StringComparison.OrdinalIgnoreCase));
             int spawnIndex = FindSpawnIndex(payload, pid, col, row);
             int startAp = GetSpawnInt(payload.spawnCurrentAps, spawnIndex, isMob ? 15 : Player.DefaultCombatMaxAp);
             int maxHp = GetSpawnInt(payload.spawnMaxHps, spawnIndex, isMob ? 10 : Player.DefaultCombatMaxHp);
