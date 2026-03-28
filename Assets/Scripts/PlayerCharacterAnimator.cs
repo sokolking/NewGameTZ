@@ -247,6 +247,25 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
         _hexWalkPhaseFlip = false;
     }
 
+    /// <summary>Совпасть с <see cref="Player.CurrentMovementPosture"/> перед журналом: трекер + idle без blend (после <c>ApplyReplayInitialLocomotionPosture</c> на игроке).</summary>
+    public void SnapLocomotionPostureForRoundReplayStart()
+    {
+        if (_player == null)
+            return;
+        StopPostureTransitionCoroutine();
+        _postureTransitionActive = false;
+        _previousPostureTracked = _player.CurrentMovementPosture;
+        _resolvedClipDirty = true;
+        if (_player.IsMoving || _meleeAttackActive || _itemUseActive)
+            return;
+        AnimationClip clip = ResolveLocomotionClip();
+        if (clip != null)
+            PlayClip(clip);
+    }
+
+    /// <summary>Идёт one-shot клип Sit↔Stand — <see cref="NotifyHexStepStarted"/> его пропускает; корутина движения должна подождать.</summary>
+    public bool IsPostureTransitionActive => _postureTransitionActive;
+
     /// <summary>
     /// Вызывается из <see cref="Player"/> в начале каждого шага по гексу: один цикл walk/run с фазой 0 или 0.5 и скоростью под длительность шага.
     /// </summary>

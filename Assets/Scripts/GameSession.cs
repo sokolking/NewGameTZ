@@ -658,42 +658,23 @@ public class GameSession : MonoBehaviour
 
     // Одиночная игра теперь тоже синхронизируется через сервер; локальный ИИ-ход больше не требуется.
 
-    /// <summary>Применить результат хода с сервера: подготовить юнитов и проиграть action journal по тикам.</summary>
-    public void ApplyTurnResult(TurnResultPayload result)
+    /// <summary>Результат раунда с сервера: сначала анимации журнала/путей, затем <see cref="ApplyRoundState"/> и снятие <c>_waitingForServerRoundResolve</c> (если ждали свой сабмит).</summary>
+    public void ApplyTurnResultThenRoundState(TurnResultPayload result, int nextRoundIndex, long roundDeadlineUtcMs, bool pendingSubmitFlow)
     {
         if (result == null || result.results == null) return;
-        AppendServerTurnLogs(result);
-        LogHitRollsFromTurnResult(result);
-        var playback = BuildExecutedActionPlayback(result);
-        var animJobs = BuildTurnResultAnimationJobs(result, prepareForAnimation: true, deferLocomotionPosture: playback.Count > 0);
-        if (playback.Count > 0)
-            StartCoroutine(PlayExecutedActionTimeline(result, playback));
-        else
-        {
-            ApplyMapUpdatesFromTurnResult(result);
-            ApplyZoneShrinkFromTurnResult(result);
-            if (animJobs.Count > 0)
-                StartCoroutine(PlayAllTurnAnimationsParallel(animJobs));
-        }
-        if (result.battleFinished)
-            HandleBattleFinishedFromServer(result);
-    }
-
-    /// <summary>Ожидали свой сабмит: скрыть бар → анимация → новый раунд и снятие блокировки.</summary>
-    public void ApplyTurnResultThenRoundState(TurnResultPayload result, int nextRoundIndex, long roundDeadlineUtcMs)
-    {
-        if (result == null || result.results == null) return;
-        bool animateResolvedRound = _animateResolvedRoundForPendingSubmit;
-        _animateResolvedRoundForPendingSubmit = true;
+        bool animateResolvedRound = !pendingSubmitFlow || _animateResolvedRoundForPendingSubmit;
+        if (pendingSubmitFlow)
+            _animateResolvedRoundForPendingSubmit = true;
         if (!animateResolvedRound)
         {
             ApplyMapUpdatesFromTurnResult(result);
             ApplyZoneShrinkFromTurnResult(result);
         }
         AppendServerTurnLogs(result);
+        LogHitRollsFromTurnResult(result);
         var playback = animateResolvedRound ? BuildExecutedActionPlayback(result) : null;
         var animJobs = BuildTurnResultAnimationJobs(result, animateResolvedRound, deferLocomotionPosture: playback != null && playback.Count > 0);
-        StartCoroutine(DeferredRoundAfterAnimations(animJobs, playback, nextRoundIndex, roundDeadlineUtcMs, result));
+        StartCoroutine(DeferredRoundAfterAnimations(animJobs, playback, nextRoundIndex, roundDeadlineUtcMs, result, pendingSubmitFlow));
     }
 
     private List<(object unit, bool isLocal, HexPosition[] path)> BuildTurnResultAnimationJobs(TurnResultPayload result, bool prepareForAnimation, bool deferLocomotionPosture = false)
@@ -773,7 +754,8 @@ public class GameSession : MonoBehaviour
         List<ExecutedActionPlaybackEntry> playback,
         int nextRoundIndex,
         long roundDeadlineUtcMs,
-        TurnResultPayload result)
+        TurnResultPayload result,
+        bool pendingSubmitFlow)
     {
         if (playback != null && playback.Count > 0)
             yield return PlayExecutedActionTimeline(result, playback);
@@ -785,12 +767,18 @@ public class GameSession : MonoBehaviour
             if (jobs.Count > 0)
                 yield return PlayAllTurnAnimationsParallel(jobs);
         }
+
+        // Planning unlocks here (clear wait + ApplyRoundState). Round-wait overlay is hidden on push — see BattleSignalRConnection.
         if (result == null || !result.battleFinished)
         {
             ApplyRoundState(nextRoundIndex, roundDeadlineUtcMs);
             var p = LocalPlayer;
-            p?.SetTurnTimerPaused(false);
-            _waitingForServerRoundResolve = false;
+            if (pendingSubmitFlow)
+            {
+                p?.SetTurnTimerPaused(false);
+                _waitingForServerRoundResolve = false;
+            }
+
             if (p != null && !BlockPlayerInput)
                 p.TryAutoMoveTowardFlag();
         }
@@ -852,6 +840,10 @@ public class GameSession : MonoBehaviour
         if (playback == null || playback.Count == 0)
             yield break;
 
+        int currentTick = -1;
+        bool abortTimeline = false;
+        var appliedMapTicks = new HashSet<int>();
+
         {
             Player localForPhase = LocalPlayer;
             if (localForPhase != null)
@@ -861,9 +853,8 @@ public class GameSession : MonoBehaviour
             }
         }
 
-        int currentTick = -1;
-        bool abortTimeline = false;
-        var appliedMapTicks = new HashSet<int>();
+        ApplyLocalReplayInitialPostureFromTurnResult(result);
+
         for (int pi = 0; pi < playback.Count; pi++)
         {
             ExecutedActionPlaybackEntry entry = playback[pi];
@@ -924,6 +915,27 @@ public class GameSession : MonoBehaviour
 
         if (abortTimeline)
             yield break;
+    }
+
+    /// <summary>Локальный игрок: до журнала выставить позу начала раунда (сервер), иначе конец планирования даёт ложный Sit→Stand.</summary>
+    private void ApplyLocalReplayInitialPostureFromTurnResult(TurnResultPayload result)
+    {
+        if (result?.results == null || string.IsNullOrEmpty(_playerId))
+            return;
+        Player local = LocalPlayer;
+        if (local == null)
+            return;
+        foreach (var r in result.results)
+        {
+            if (r == null || r.unitType == 1)
+                continue;
+            if (r.playerId != _playerId)
+                continue;
+            if (string.IsNullOrEmpty(r.postureAtRoundStart))
+                return;
+            local.ApplyReplayInitialLocomotionPosture(r.postureAtRoundStart);
+            return;
+        }
     }
 
     /// <summary>Поза походки для этого действия в журнале (до анимации шага/атаки и т.д.).</summary>

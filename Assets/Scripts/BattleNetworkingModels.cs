@@ -152,6 +152,8 @@ public class PlayerTurnResult
     public bool isDead;
     public string attackTargetUnitId;
     public int damageDealt;
+    /// <summary>Сервер: поза до действий раунда; для согласования реплея с планированием (конец плана мог быть в другой позе).</summary>
+    public string postureAtRoundStart;
     public string currentPosture;
     /// <summary>Состояние оружия после раунда (сервер).</summary>
     public string weaponCode;

@@ -89,6 +89,7 @@ public partial class BattleRoom
         var actionQueues = new Dictionary<string, QueuedBattleActionDto[]>();
         var roundStartAp = new Dictionary<string, int>();
         var postureByUnit = new Dictionary<string, string>();
+        var roundStartPostureByUnit = new Dictionary<string, string>();
         var movementStepsTaken = new Dictionary<string, int>();
         var lastMovePostureByUnit = new Dictionary<string, string?>();
         var hadRunMovementByUnit = new Dictionary<string, bool>();
@@ -123,6 +124,7 @@ public partial class BattleRoom
             actionCursor[uid] = 0;
             roundStartAp[uid] = Math.Max(0, us.CurrentAp);
             postureByUnit[uid] = NormalizePosture(us.Posture);
+            roundStartPostureByUnit[uid] = postureByUnit[uid];
             movementStepsTaken[uid] = 0;
             lastMovePostureByUnit[uid] = null;
             hadRunMovementByUnit[uid] = false;
@@ -255,7 +257,13 @@ public partial class BattleRoom
                                 positions[uid] = targetCell;
                                 actualPaths[uid].Add(new HexPositionDto { Col = targetCell.Item1, Row = targetCell.Item2 });
                                 movementStepsTaken[uid] = movementStepsTaken.GetValueOrDefault(uid) + 1;
-                                lastMovePostureByUnit[uid] = currentPosture;
+                                // Locomotion for replay must match the client's queued step (planning), not only sim posture
+                                // (e.g. final ChangePosture must not affect earlier MoveStep visuals).
+                                string replayMovePosture = !string.IsNullOrWhiteSpace(action.Posture)
+                                    ? NormalizePosture(action.Posture)
+                                    : currentPosture;
+                                executed.Posture = replayMovePosture;
+                                lastMovePostureByUnit[uid] = replayMovePosture;
                                 executed.Succeeded = true;
                                 executed.ToPosition = new HexPositionDto { Col = targetCell.Item1, Row = targetCell.Item2 };
 
@@ -913,6 +921,7 @@ public partial class BattleRoom
                 IsDead = !alive.GetValueOrDefault(uid, us.CurrentHp > 0),
                 AttackTargetUnitId = attackTargetByUnit.TryGetValue(uid, out var targetId) ? targetId : null,
                 DamageDealt = damageByUnit.TryGetValue(uid, out var dealt) ? dealt : 0,
+                PostureAtRoundStart = roundStartPostureByUnit.TryGetValue(uid, out var prs) ? prs : PostureWalk,
                 CurrentPosture = us.Posture,
                 WeaponCode = us.WeaponCode ?? DefaultWeaponCode,
                 WeaponDamageMin = us.WeaponDamageMin,

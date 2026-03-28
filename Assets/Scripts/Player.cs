@@ -989,6 +989,16 @@ public class Player : MonoBehaviour
         SetMovementPostureInternal(MovementPostureUtility.FromId(postureId), notify: true);
     }
 
+    /// <summary>Перед проигрыванием журнала раунда: поза на <b>начало</b> раунда на сервере (не конец планирования на клиенте).</summary>
+    public void ApplyReplayInitialLocomotionPosture(string postureId)
+    {
+        _currentPosture = MovementPostureUtility.FromId(postureId);
+        if (_characterAnimator == null)
+            _characterAnimator = GetComponentInChildren<PlayerCharacterAnimator>();
+        _characterAnimator?.SnapLocomotionPostureForRoundReplayStart();
+        OnMovementPostureChanged?.Invoke(_currentPosture);
+    }
+
     /// <summary>Пауза таймера хода (ожидание сервера после «Завершить ход»).</summary>
     public void SetTurnTimerPaused(bool paused)
     {
@@ -1104,6 +1114,18 @@ public class Player : MonoBehaviour
                 }
 
                 var step = path[i];
+                if (_characterAnimator == null)
+                    _characterAnimator = GetComponentInChildren<PlayerCharacterAnimator>();
+                bool waitedPostureTransition = false;
+                while (_characterAnimator != null && _characterAnimator.IsPostureTransitionActive)
+                {
+                    waitedPostureTransition = true;
+                    yield return null;
+                }
+
+                if (waitedPostureTransition)
+                    yield return null; // кадр после Sit→Stand: LateUpdate подставит walk/run до NotifyHexStepStarted
+
                 _characterAnimator?.NotifyHexStepStarted(_moveDurationPerHex);
 
                 Vector3 target = _grid.GetCellWorldPosition(step.col, step.row);

@@ -765,6 +765,8 @@ public class ActionPointsUI : MonoBehaviour
             return false;
         if (_gameSession != null && (_gameSession.IsWaitingForServerRoundResolve || _gameSession.IsBattleFinished))
             return false;
+        if (_gameSession != null && _gameSession.IsBattleAnimationPlaying)
+            return false;
         return _player != null;
     }
 

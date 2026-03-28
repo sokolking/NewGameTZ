@@ -322,6 +322,8 @@ public class PlayerTurnResultDto
     public bool IsDead { get; set; }
     public string? AttackTargetUnitId { get; set; }
     public int DamageDealt { get; set; }
+    /// <summary>Поза юнита до симуляции этого раунда (для проигрывания журнала на клиенте без ложных Sit↔Stand).</summary>
+    public string PostureAtRoundStart { get; set; } = "walk";
     public string CurrentPosture { get; set; } = "walk";
     public string WeaponCode { get; set; } = "fist";
     public int WeaponDamageMin { get; set; } = 1;
