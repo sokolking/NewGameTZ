@@ -237,6 +237,12 @@ public class TurnResultPayload
     public bool battleFinished;
     /// <summary>Смена состояния стен/препятствий за раунд (урон, разрушение).</summary>
     public BattleMapUpdate[] mapUpdates;
+    /// <summary>Клетки, убранные сужением зоны в этом раунде.</summary>
+    public HexPosition[] zoneShrinkCells;
+    public int activeMinCol;
+    public int activeMaxCol;
+    public int activeMinRow;
+    public int activeMaxRow;
 }
 
 /// <summary>Старт раунда (Server → Client): RoundStarted — один раз в начале раунда.</summary>
@@ -293,6 +299,10 @@ public class BattleStartedPayload
     public string[] obstacleTags;
     /// <summary>Yaw стен (градусы вокруг Y), параллельно obstacleCols/Rows.</summary>
     public float[] obstacleWallYaws;
+    public int activeMinCol;
+    public int activeMaxCol;
+    public int activeMinRow;
+    public int activeMaxRow;
 }
 
 /// <summary>GET /api/battle/{battleId} — subset for resume sync.</summary>

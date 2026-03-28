@@ -186,6 +186,21 @@ INSERT INTO battle_obstacle_balance (id, wall_max_hp, tree_cover_miss_percent, r
 SELECT 1, 5, 15, 20, 10, 5, 5
 WHERE NOT EXISTS (SELECT 1 FROM battle_obstacle_balance WHERE id = 1);
 
+CREATE TABLE IF NOT EXISTS battle_zone_shrink (
+    id INT PRIMARY KEY,
+    shrink_start_round INT NOT NULL DEFAULT 10,
+    horizontal_shrink_interval INT NOT NULL DEFAULT 2,
+    horizontal_shrink_amount INT NOT NULL DEFAULT 2,
+    vertical_shrink_interval INT NOT NULL DEFAULT 2,
+    vertical_shrink_amount INT NOT NULL DEFAULT 1,
+    min_width INT NOT NULL DEFAULT 5,
+    min_height INT NOT NULL DEFAULT 3
+);
+
+INSERT INTO battle_zone_shrink (id, shrink_start_round, horizontal_shrink_interval, horizontal_shrink_amount, vertical_shrink_interval, vertical_shrink_amount, min_width, min_height)
+SELECT 1, 10, 2, 2, 2, 1, 5, 3
+WHERE NOT EXISTS (SELECT 1 FROM battle_zone_shrink WHERE id = 1);
+
 CREATE TABLE IF NOT EXISTS weapons (
     id BIGSERIAL PRIMARY KEY,
     item_id BIGINT REFERENCES items(id) ON DELETE SET NULL,

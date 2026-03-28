@@ -123,6 +123,17 @@ public class Player : MonoBehaviour
     /// <summary>Гарантированно выключить флаг движения после журнала (например, обрыв таймлайна).</summary>
     public void ClearMovementPlaybackState() => _isMoving = false;
 
+    /// <summary>
+    /// Ranged aim sets <see cref="PlayerCharacterAnimator"/> horizontal facing override; until cleared,
+    /// <c>LateUpdate</c> keeps facing the aim direction instead of movement.
+    /// </summary>
+    private void ClearRangedFacingOverrideForLocomotion()
+    {
+        if (_characterAnimator == null)
+            _characterAnimator = GetComponentInChildren<PlayerCharacterAnimator>();
+        _characterAnimator?.ClearHorizontalFacingOverride();
+    }
+
     public int MaxAp => _maxAp;
     public int MaxHp => _maxHp;
     public int CurrentHp => _currentHp;
@@ -391,6 +402,7 @@ public class Player : MonoBehaviour
             HexCell cell = _grid.GetCell(_currentCol, _currentRow);
             OnMovedToCell?.Invoke(cell);
             TryClearMovementFlagIfReachedDestination();
+            ClearRangedFacingOverrideForLocomotion();
         }
         else
             StartCoroutine(MoveAlongPathCoroutine(subPath));
@@ -400,6 +412,7 @@ public class Player : MonoBehaviour
     {
         int interruptVersion = _movementInterruptVersion;
         _isMoving = true;
+        ClearRangedFacingOverrideForLocomotion();
 
         foreach (var step in path)
         {
@@ -1066,6 +1079,7 @@ public class Player : MonoBehaviour
 
         int interruptVersion = _movementInterruptVersion;
         _isMoving = true;
+        ClearRangedFacingOverrideForLocomotion();
         transform.position = _grid.GetCellWorldPosition(path[0].col, path[0].row);
         if (resetHexWalkPhase)
         {
@@ -1141,6 +1155,7 @@ public class Player : MonoBehaviour
         if (_grid == null || _turnPath == null || _turnPath.Count < 2) yield break;
 
         _isMoving = true;
+        ClearRangedFacingOverrideForLocomotion();
 
         // Стартуем с исходной клетки хода.
         Vector3 startPos = _grid.GetCellWorldPosition(_turnPath[0].col, _turnPath[0].row);

@@ -116,12 +116,14 @@ builder.Services.AddSingleton(sp => new BattleUserDatabase(
     sp.GetRequiredService<BattleWeaponDatabase>(),
     sp.GetRequiredService<BattleAmmoDatabase>()));
 builder.Services.AddSingleton<BattleObstacleBalanceDatabase>();
+builder.Services.AddSingleton<BattleZoneShrinkDatabase>();
 builder.Services.AddSingleton<BattleBodyPartDatabase>();
 builder.Services.AddSingleton<BattleRoomStore>(sp => new BattleRoomStore(
     sp.GetRequiredService<BattleHistoryDatabase>(),
     sp.GetRequiredService<BattleTurnDatabase>(),
     sp.GetRequiredService<BattleWeaponDatabase>(),
     sp.GetRequiredService<BattleObstacleBalanceDatabase>(),
+    sp.GetRequiredService<BattleZoneShrinkDatabase>(),
     sp.GetRequiredService<BattleBodyPartDatabase>(),
     sp.GetRequiredService<BattleUserDatabase>()));
 builder.Services.AddSingleton(sp => new BattleAuthSession(
@@ -807,6 +809,16 @@ app.MapPut("/api/db/obstacle-balance", (BattleObstacleBalanceDatabase db, Battle
     return Results.Ok(new { ok = true });
 });
 
+app.MapGet("/api/db/zone-shrink", (BattleZoneShrinkDatabase db) =>
+    Results.Json(db.GetSettings(), jsonOpt));
+app.MapPut("/api/db/zone-shrink", (BattleZoneShrinkDatabase db, BattleZoneShrinkRowDto? body) =>
+{
+    if (body == null)
+        return Results.Json(new { error = "body required" }, jsonOpt, statusCode: 400);
+    db.UpsertSettings(body);
+    return Results.Ok(new { ok = true });
+});
+
 app.MapGet("/api/db/backup/export", async (BattlePostgresDatabase db, IConfiguration cfg, HttpRequest req) =>
 {
     if (!BattleDatabaseBackup.BackupAuthorizationOk(cfg, req))
@@ -938,6 +950,7 @@ app.MapGet("/ammo-table", async (HttpContext ctx) =>
     await ctx.Response.WriteAsync(BattleAmmoDashboardPage.Html);
 });
 app.MapGet("/obstacle-balance", () => Results.Content(BattleObstacleBalanceDashboardPage.Html, "text/html; charset=utf-8"));
+app.MapGet("/zone-shrink", () => Results.Content(BattleZoneShrinkDashboardPage.Html, "text/html; charset=utf-8"));
 app.MapGet("/hit_formula.html", (IWebHostEnvironment env) =>
 {
     string cr = env.ContentRootPath;

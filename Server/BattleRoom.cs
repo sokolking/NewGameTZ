@@ -137,15 +137,34 @@ public partial class BattleRoom
     private readonly Random _rng;
     private readonly BattleWeaponDatabase? _weaponDb;
     private readonly BattleObstacleBalanceDatabase? _obstacleDb;
+    private readonly BattleZoneShrinkDatabase? _zoneShrinkDb;
     private readonly BattleBodyPartDatabase? _bodyPartDb;
     private readonly BattleUserDatabase? _userDb;
 
-    public BattleRoom(string battleId, BattleWeaponDatabase? weaponDb = null, BattleObstacleBalanceDatabase? obstacleDb = null, BattleBodyPartDatabase? bodyPartDb = null, BattleUserDatabase? userDb = null)
+    /// <summary>Тик для <see cref="MapUpdateDto"/> при снятии стен из-за сужения зоны (вне журнала боя).</summary>
+    internal const int ZoneShrinkMapTick = 100000;
+
+    private BattleZoneShrinkRowDto _zoneShrinkSettings = BattleZoneShrinkRowDto.Defaults;
+    private bool _activeZoneInitialized;
+    private int _activeMinCol;
+    private int _activeMaxCol;
+    private int _activeMinRow;
+    private int _activeMaxRow;
+
+    /// <summary>Клетка в пределах полной сетки и активной боевой зоны (после сужения).</summary>
+    public bool IsInActiveZone(int col, int row) =>
+        col >= 0 && row >= 0
+        && col < HexSpawn.DefaultGridWidth && row < HexSpawn.DefaultGridLength
+        && col >= _activeMinCol && col <= _activeMaxCol
+        && row >= _activeMinRow && row <= _activeMaxRow;
+
+    public BattleRoom(string battleId, BattleWeaponDatabase? weaponDb = null, BattleObstacleBalanceDatabase? obstacleDb = null, BattleBodyPartDatabase? bodyPartDb = null, BattleUserDatabase? userDb = null, BattleZoneShrinkDatabase? zoneShrinkDb = null)
     {
         BattleId = battleId;
         _rng = new Random(Guid.NewGuid().GetHashCode());
         _weaponDb = weaponDb;
         _obstacleDb = obstacleDb;
+        _zoneShrinkDb = zoneShrinkDb;
         _userDb = userDb;
         _bodyPartDb = bodyPartDb;
     }

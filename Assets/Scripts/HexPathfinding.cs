@@ -27,6 +27,12 @@ public static class HexPathfinding
         if (grid == null || !grid.IsInBounds(startCol, startRow) || !grid.IsInBounds(endCol, endRow))
             return false;
 
+        if (GameSession.Active != null)
+        {
+            if (!GameSession.Active.IsHexInActiveBattleZone(startCol, startRow) || !GameSession.Active.IsHexInActiveBattleZone(endCol, endRow))
+                return false;
+        }
+
         if (GameSession.Active != null && GameSession.Active.IsObstacleCell(endCol, endRow))
             return false;
 
@@ -54,6 +60,12 @@ public static class HexPathfinding
 
         if (grid == null || !grid.IsInBounds(startCol, startRow) || !grid.IsInBounds(endCol, endRow))
             return false;
+
+        if (GameSession.Active != null)
+        {
+            if (!GameSession.Active.IsHexInActiveBattleZone(startCol, startRow) || !GameSession.Active.IsHexInActiveBattleZone(endCol, endRow))
+                return false;
+        }
 
         if (GameSession.Active != null && GameSession.Active.IsObstacleCell(endCol, endRow))
             return false;
@@ -142,6 +154,7 @@ public static class HexPathfinding
             {
                 HexGrid.GetNeighbor(curCol, curRow, dir, out int nCol, out int nRow);
                 if (!grid.IsInBounds(nCol, nRow)) continue;
+                if (GameSession.Active != null && !GameSession.Active.IsHexInActiveBattleZone(nCol, nRow)) continue;
                 if (GameSession.Active != null && GameSession.Active.IsObstacleCell(nCol, nRow)) continue;
 
                 var neighbor = (nCol, nRow);

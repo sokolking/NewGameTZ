@@ -412,6 +412,8 @@ public class RemoteBattleUnitView : MonoBehaviour
 
         if (_characterAnimator == null)
             _characterAnimator = GetComponentInChildren<PlayerCharacterAnimator>();
+        ClearHorizontalFacingOverride();
+        _characterAnimator?.ClearHorizontalFacingOverride();
         _characterAnimator?.ResetHexWalkPhaseForNewPath();
 
         for (int i = 1; i < path.Length; i++)

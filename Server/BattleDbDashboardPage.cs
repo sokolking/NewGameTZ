@@ -195,6 +195,7 @@ public static class BattleDbDashboardPage
         <a href="/weapons">Weapons</a>
         <a href="/ammo">Ammo</a>
         <a href="/obstacle-balance">Obstacle balance</a>
+        <a href="/zone-shrink">Zone shrink</a>
       </div>
       <input id="battleSearch" type="search" placeholder="Search battleId">
       <input id="turnSearch" type="search" placeholder="Search turnId / resolve reason">

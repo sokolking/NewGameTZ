@@ -240,7 +240,7 @@ public partial class BattleRoom
                         else
                         {
                             var targetCell = (action.TargetPosition.Col, action.TargetPosition.Row);
-                            if (targetCell.Item1 < 0 || targetCell.Item2 < 0 || targetCell.Item1 >= HexSpawn.DefaultGridWidth || targetCell.Item2 >= HexSpawn.DefaultGridLength)
+                            if (!IsInActiveZone(targetCell.Item1, targetCell.Item2))
                                 executed.FailureReason = "Move target out of bounds";
                             else if (_obstacleTags.ContainsKey(targetCell))
                                 executed.FailureReason = "Move blocked by obstacle";
@@ -297,7 +297,7 @@ public partial class BattleRoom
                             {
                                 int ac = action.TargetPosition.Col;
                                 int ar = action.TargetPosition.Row;
-                                if (ac < 0 || ar < 0 || ac >= HexSpawn.DefaultGridWidth || ar >= HexSpawn.DefaultGridLength)
+                                if (!IsInActiveZone(ac, ar))
                                 {
                                     executed.FailureReason = "Attack aim out of bounds";
                                 }
@@ -936,6 +936,9 @@ public partial class BattleRoom
                 PlayerToUnitId.Remove(kv.Key);
         }
 
+        EnsureActiveZoneInitialized();
+        HexPositionDto[]? zoneShrinkCells = ApplyZoneShrinkIfNeeded(RoundIndex, mapUpdates, results);
+
         bool hasPlayersAlive = Units.Values.Any(u => u.UnitType == UnitType.Player);
         bool hasMobsAlive = Units.Values.Any(u => u.UnitType == UnitType.Mob);
         bool battleFinished = IsSolo ? (!hasPlayersAlive || !hasMobsAlive) : Units.Values.Count(u => u.UnitType == UnitType.Player) <= 1;
@@ -961,7 +964,12 @@ public partial class BattleRoom
             RoundResolveReason = resolveReason,
             BattleFinished = battleFinished,
             MapState = mapState.Count > 0 ? mapState.ToArray() : System.Array.Empty<CellObject>(),
-            MapUpdates = mapUpdates.Count > 0 ? mapUpdates.ToArray() : System.Array.Empty<MapUpdateDto>()
+            MapUpdates = mapUpdates.Count > 0 ? mapUpdates.ToArray() : System.Array.Empty<MapUpdateDto>(),
+            ZoneShrinkCells = zoneShrinkCells,
+            ActiveMinCol = _activeMinCol,
+            ActiveMaxCol = _activeMaxCol,
+            ActiveMinRow = _activeMinRow,
+            ActiveMaxRow = _activeMaxRow
         };
 
         RoundIndex++;

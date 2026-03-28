@@ -10,6 +10,7 @@ public class BattleRoomStore
     private readonly BattleTurnDatabase _battleTurnDb;
     private readonly BattleWeaponDatabase _weaponDb;
     private readonly BattleObstacleBalanceDatabase _obstacleDb;
+    private readonly BattleZoneShrinkDatabase _zoneShrinkDb;
     private readonly BattleBodyPartDatabase _bodyPartDb;
     private readonly BattleUserDatabase _userDb;
     /// <summary>Очередь ожидающих (один игрок). Как только второй присоединился — создаём бой из двух.</summary>
@@ -17,12 +18,13 @@ public class BattleRoomStore
 
     private readonly Dictionary<string, BattleRoom> _rooms = new();
 
-    public BattleRoomStore(BattleHistoryDatabase battleHistoryDb, BattleTurnDatabase battleTurnDb, BattleWeaponDatabase weaponDb, BattleObstacleBalanceDatabase obstacleDb, BattleBodyPartDatabase bodyPartDb, BattleUserDatabase userDb)
+    public BattleRoomStore(BattleHistoryDatabase battleHistoryDb, BattleTurnDatabase battleTurnDb, BattleWeaponDatabase weaponDb, BattleObstacleBalanceDatabase obstacleDb, BattleZoneShrinkDatabase zoneShrinkDb, BattleBodyPartDatabase bodyPartDb, BattleUserDatabase userDb)
     {
         _battleHistoryDb = battleHistoryDb;
         _battleTurnDb = battleTurnDb;
         _weaponDb = weaponDb;
         _obstacleDb = obstacleDb;
+        _zoneShrinkDb = zoneShrinkDb;
         _bodyPartDb = bodyPartDb;
         _userDb = userDb;
     }
@@ -46,7 +48,7 @@ public class BattleRoomStore
             {
                 var bid = Guid.NewGuid().ToString("N")[..8];
                 _waitingBattleId = bid;
-                var room = new BattleRoom(bid, _weaponDb, _obstacleDb, _bodyPartDb, _userDb);
+                var room = new BattleRoom(bid, _weaponDb, _obstacleDb, _bodyPartDb, _userDb, _zoneShrinkDb);
                 int p1c = Math.Clamp(startCol, 0, HexSpawn.DefaultGridWidth - 1);
                 int p1r = Math.Clamp(startRow, 0, HexSpawn.DefaultGridLength - 1);
                 room.AddPlayer("P1", p1c, p1r);
@@ -103,7 +105,7 @@ public class BattleRoomStore
             if (solo)
             {
                 var soloBattleId = Guid.NewGuid().ToString("N")[..8];
-                var soloRoom = new BattleRoom(soloBattleId, _weaponDb, _obstacleDb, _bodyPartDb, _userDb) { IsSolo = true };
+                var soloRoom = new BattleRoom(soloBattleId, _weaponDb, _obstacleDb, _bodyPartDb, _userDb, _zoneShrinkDb) { IsSolo = true };
                 int soloCol = Math.Clamp(startCol, 0, HexSpawn.DefaultGridWidth - 1);
                 int soloRow = Math.Clamp(startRow, 0, HexSpawn.DefaultGridLength - 1);
                 soloRoom.AddPlayer("P1", soloCol, soloRow);
@@ -143,7 +145,7 @@ public class BattleRoomStore
             }
 
             var bid = Guid.NewGuid().ToString("N")[..8];
-            var r = new BattleRoom(bid, _weaponDb, _obstacleDb, _bodyPartDb, _userDb);
+            var r = new BattleRoom(bid, _weaponDb, _obstacleDb, _bodyPartDb, _userDb, _zoneShrinkDb);
             int pc = Math.Clamp(startCol, 0, HexSpawn.DefaultGridWidth - 1);
             int pr = Math.Clamp(startRow, 0, HexSpawn.DefaultGridLength - 1);
             r.AddPlayer("P1", pc, pr);

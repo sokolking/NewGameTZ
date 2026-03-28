@@ -33,6 +33,7 @@ public static class BattleObstacleBalanceDashboardPage
       <a href="/weapons">Weapons</a>
       <a href="/ammo">Ammo</a>
       <a href="/obstacle-balance">Obstacle balance</a>
+      <a href="/zone-shrink">Zone shrink</a>
     </div>
     <h1>battle_obstacle_balance</h1>
     <p style="color:#9aa4b2;font-size:14px;margin:0;">Одна строка (id=1): HP стен, укрытия, число сегментов стен / камней / деревьев на карте.</p>

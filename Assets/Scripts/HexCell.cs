@@ -1,3 +1,4 @@
+using System.Collections;
 using UnityEngine;
 
 /// <summary>
@@ -28,7 +29,8 @@ public class HexCell : MonoBehaviour
     private TextMesh _costLabel;
     private int _lastCostLabelValue = int.MinValue;
     private GameObject _obstacleModelInstance;
-
+    private bool _excludedFromPlay;
+    private Coroutine _zoneFallCoroutine;
 
     private static GameObject _cachedPrefabWall;
     private static GameObject _cachedPrefabDamagedWall;
@@ -40,6 +42,8 @@ public class HexCell : MonoBehaviour
 
     public int Col => _col;
     public int Row => _row;
+    /// <summary>Hex removed from play by server zone shrink (pathfinding / picking should ignore).</summary>
+    public bool IsExcludedFromPlay => _excludedFromPlay;
     public HexCube Cube => HexCubeOffset.FromOffset(_col, _row);
     /// <summary>Метка колонки (A, B, C, ...).</summary>
     public string ColLabel => _colLabel;
@@ -295,5 +299,70 @@ public class HexCell : MonoBehaviour
     {
         if (_costLabel != null)
             _costLabel.gameObject.SetActive(visible);
+    }
+
+    /// <summary>Called when a new battle starts on the same grid — undo zone-shrink fall.</summary>
+    public void ClearZoneShrinkExclusion(HexGrid grid)
+    {
+        if (!_excludedFromPlay)
+            return;
+        _excludedFromPlay = false;
+        if (_zoneFallCoroutine != null)
+        {
+            StopCoroutine(_zoneFallCoroutine);
+            _zoneFallCoroutine = null;
+        }
+
+        if (grid != null)
+            transform.position = grid.GetCellWorldPosition(_col, _row);
+        transform.localRotation = Quaternion.identity;
+
+        if (_renderer == null)
+            _renderer = GetComponent<MeshRenderer>();
+        if (_renderer != null)
+            _renderer.enabled = true;
+        foreach (var c in GetComponents<Collider>())
+            c.enabled = true;
+        gameObject.SetActive(true);
+    }
+
+    /// <summary>Animate falling off the map after server zone shrink.</summary>
+    public void AnimateZoneShrinkFall(HexGrid grid)
+    {
+        if (grid == null || _excludedFromPlay)
+            return;
+        if (_zoneFallCoroutine != null)
+            StopCoroutine(_zoneFallCoroutine);
+        _zoneFallCoroutine = StartCoroutine(CoZoneShrinkFall(grid));
+    }
+
+    private IEnumerator CoZoneShrinkFall(HexGrid grid)
+    {
+        Vector3 start = transform.position;
+        float duration = 0.9f;
+        float drop = 8f + Random.Range(0f, 3f);
+        Vector3 endPos = start + Vector3.down * drop;
+        Quaternion rotStart = transform.rotation;
+        Quaternion rotEnd = rotStart * Quaternion.Euler(Random.Range(-22f, 22f), Random.Range(-18f, 18f), Random.Range(-25f, 25f));
+        float elapsed = 0f;
+        while (elapsed < duration)
+        {
+            elapsed += Time.deltaTime;
+            float u = Mathf.Clamp01(elapsed / duration);
+            float ease = u * u;
+            transform.position = Vector3.Lerp(start, endPos, ease);
+            transform.rotation = Quaternion.Slerp(rotStart, rotEnd, u);
+            yield return null;
+        }
+
+        _excludedFromPlay = true;
+        _zoneFallCoroutine = null;
+        foreach (var c in GetComponents<Collider>())
+            c.enabled = false;
+        if (_renderer == null)
+            _renderer = GetComponent<MeshRenderer>();
+        if (_renderer != null)
+            _renderer.enabled = false;
+        gameObject.SetActive(false);
     }
 }

@@ -143,6 +143,7 @@ public partial class BattleRoom
             });
         }
 
+        EnsureActiveZoneInitialized();
         return new BattleStartedPayloadDto
         {
             BattleId = BattleId,
@@ -174,7 +175,11 @@ public partial class BattleRoom
             ObstacleRows = obstacleRows,
             ObstacleTags = obstacleTags,
             ObstacleWallYaws = obstacleWallYaws,
-            MapState = mapStateStart.Count > 0 ? mapStateStart.ToArray() : System.Array.Empty<CellObject>()
+            MapState = mapStateStart.Count > 0 ? mapStateStart.ToArray() : System.Array.Empty<CellObject>(),
+            ActiveMinCol = _activeMinCol,
+            ActiveMaxCol = _activeMaxCol,
+            ActiveMinRow = _activeMinRow,
+            ActiveMaxRow = _activeMaxRow
         };
     }
 }

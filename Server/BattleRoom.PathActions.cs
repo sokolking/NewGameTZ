@@ -41,7 +41,7 @@ public partial class BattleRoom
             var next = (rawPath[i].Col, rawPath[i].Row);
             if (next == current)
                 continue;
-            if (next.Item1 < 0 || next.Item2 < 0 || next.Item1 >= HexSpawn.DefaultGridWidth || next.Item2 >= HexSpawn.DefaultGridLength)
+            if (!IsInActiveZone(next.Item1, next.Item2))
                 break;
             if (_obstacleTags.ContainsKey(next))
                 break;

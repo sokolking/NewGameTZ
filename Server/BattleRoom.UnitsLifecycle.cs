@@ -8,6 +8,7 @@ public partial class BattleRoom
 {
     private void EnsureUnitsInitialized()
     {
+        EnsureActiveZoneInitialized();
         if (Units.Count > 0) return;
         if (Players.Count == 0) return;
 

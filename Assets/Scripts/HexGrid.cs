@@ -243,14 +243,33 @@ public class HexGrid : MonoBehaviour
         if (!IsInBounds(col, row)) return null;
         // Быстрый путь: кэш заполнен при GenerateGrid.
         if (_cellCache != null)
-            return _cellCache[col, row];
+        {
+            HexCell c = _cellCache[col, row];
+            if (c != null && c.IsExcludedFromPlay)
+                return null;
+            return c;
+        }
         // Fallback для сеток, созданных в редакторе (без GenerateGrid в рантайме).
         BuildCellCacheIfNeeded();
         if (_cellCache != null)
             return _cellCache[col, row];
         // Последний fallback.
         Transform t = transform.Find($"Hex_{col}_{row}");
-        return t != null ? t.GetComponent<HexCell>() : null;
+        HexCell found = t != null ? t.GetComponent<HexCell>() : null;
+        if (found != null && found.IsExcludedFromPlay)
+            return null;
+        return found;
+    }
+
+    /// <summary>Reset hexes fallen off after zone shrink — call when a new battle starts on this grid.</summary>
+    public void ClearAllZoneShrinkExclusions()
+    {
+        HexCell[] cells = GetComponentsInChildren<HexCell>(true);
+        for (int i = 0; i < cells.Length; i++)
+        {
+            if (cells[i] != null)
+                cells[i].ClearZoneShrinkExclusion(this);
+        }
     }
 
     private void BuildCellCacheIfNeeded()

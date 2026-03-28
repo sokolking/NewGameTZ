@@ -27,12 +27,12 @@ public partial class BattleRoom
         return null;
     }
 
-    private static IEnumerable<(int col, int row)> EnumerateNeighbors(int col, int row)
+    private IEnumerable<(int col, int row)> EnumerateNeighbors(int col, int row)
     {
         for (int dir = 0; dir < 6; dir++)
         {
             HexSpawn.GetNeighbor(col, row, dir, out int nc, out int nr);
-            if (nc < 0 || nr < 0 || nc >= HexSpawn.DefaultGridWidth || nr >= HexSpawn.DefaultGridLength)
+            if (!IsInActiveZone(nc, nr))
                 continue;
             yield return (nc, nr);
         }

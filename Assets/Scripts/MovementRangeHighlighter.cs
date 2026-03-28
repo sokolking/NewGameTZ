@@ -191,6 +191,8 @@ public class MovementRangeHighlighter : MonoBehaviour
                 var key = (nc, nr);
                 if (_visitedBfs.Contains(key) || !_grid.IsInBounds(nc, nr))
                     continue;
+                if (GameSession.Active != null && !GameSession.Active.IsHexInActiveBattleZone(nc, nr))
+                    continue;
 
                 HexCell nextCell = _grid.GetCell(nc, nr);
                 if (nextCell == null || nextCell.IsObstacle)

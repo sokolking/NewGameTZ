@@ -77,6 +77,27 @@ public class BattleObstacleBalanceRowDto
     public static BattleObstacleBalanceRowDto Defaults => new BattleObstacleBalanceRowDto();
 }
 
+/// <summary>Параметры сужения игрового поля по раундам (таблица battle_zone_shrink).</summary>
+public class BattleZoneShrinkRowDto
+{
+    /// <summary>Первый раунд (нумерация с 1), с которого действует сужение.</summary>
+    public int ShrinkStartRound { get; set; } = 10;
+    /// <summary>Каждые сколько раундов сужать по горизонтали (слева и справа).</summary>
+    public int HorizontalShrinkInterval { get; set; } = 2;
+    /// <summary>Сколько колонок убирать с каждой стороны за шаг по горизонтали.</summary>
+    public int HorizontalShrinkAmount { get; set; } = 2;
+    /// <summary>Каждые сколько раундов сужать по вертикали (сверху и снизу).</summary>
+    public int VerticalShrinkInterval { get; set; } = 2;
+    /// <summary>Сколько рядов убирать с каждой стороны за шаг по вертикали.</summary>
+    public int VerticalShrinkAmount { get; set; } = 1;
+    /// <summary>Минимальная ширина активной зоны (число колонок).</summary>
+    public int MinWidth { get; set; } = 5;
+    /// <summary>Минимальная высота активной зоны (число рядов).</summary>
+    public int MinHeight { get; set; } = 3;
+
+    public static BattleZoneShrinkRowDto Defaults => new BattleZoneShrinkRowDto();
+}
+
 /// <summary>Строка из таблицы weapons (список/поиск по коду).</summary>
 public class BattleWeaponBrowseRowDto
 {
@@ -346,6 +367,13 @@ public class TurnResultPayloadDto
     public bool BattleFinished { get; set; }
     public CellObject[]? MapState { get; set; }
     public MapUpdateDto[]? MapUpdates { get; set; }
+    /// <summary>Клетки, выведенные из игры этим сужением (клиент: падение гексов).</summary>
+    public HexPositionDto[]? ZoneShrinkCells { get; set; }
+    /// <summary>Активная зона после раунда (включительно).</summary>
+    public int ActiveMinCol { get; set; }
+    public int ActiveMaxCol { get; set; }
+    public int ActiveMinRow { get; set; }
+    public int ActiveMaxRow { get; set; }
 }
 
 /// <summary>Статус участника в текущем раунде (для GET состояния боя).</summary>
@@ -401,6 +429,10 @@ public class BattleStartedPayloadDto
     /// <summary>Yaw стен (градусы вокруг Y), параллельно obstacleCols/Rows.</summary>
     public float[]? ObstacleWallYaws { get; set; }
     public CellObject[]? MapState { get; set; }
+    public int ActiveMinCol { get; set; }
+    public int ActiveMaxCol { get; set; }
+    public int ActiveMinRow { get; set; }
+    public int ActiveMaxRow { get; set; }
 }
 
 public class BattleTurnHistoryStateDto

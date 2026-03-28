@@ -89,6 +89,11 @@ public class GameSession : MonoBehaviour
     private readonly Dictionary<string, RemoteBattleUnitView> _remoteUnits = new();
     private readonly HashSet<(int col, int row)> _obstacleCells = new();
     private readonly Dictionary<(int col, int row), float> _obstacleWallYawByCell = new();
+    private int _battleActiveMinCol;
+    private int _battleActiveMaxCol;
+    private int _battleActiveMinRow;
+    private int _battleActiveMaxRow;
+    private bool _battleActiveBoundsInitialized;
     private readonly Dictionary<string, ReplayUnitSnapshot> _initialReplayState = new();
     private readonly List<string> _turnHistoryIds = new();
     private readonly Dictionary<string, TurnResultPayload> _turnHistoryCache = new();
@@ -132,6 +137,15 @@ public class GameSession : MonoBehaviour
 
     public bool IsInBattleWithServer() => _serverConnection != null && _serverConnection.IsInBattle;
     public bool IsObstacleCell(int col, int row) => _obstacleCells.Contains((col, row));
+
+    /// <summary>Server-shrunk playable rectangle; if not initialized, whole grid counts (offline / legacy).</summary>
+    public bool IsHexInActiveBattleZone(int col, int row)
+    {
+        if (!_battleActiveBoundsInitialized)
+            return true;
+        return col >= _battleActiveMinCol && col <= _battleActiveMaxCol
+            && row >= _battleActiveMinRow && row <= _battleActiveMaxRow;
+    }
     public Player LocalPlayer
     {
         get
@@ -657,6 +671,7 @@ public class GameSession : MonoBehaviour
         else
         {
             ApplyMapUpdatesFromTurnResult(result);
+            ApplyZoneShrinkFromTurnResult(result);
             if (animJobs.Count > 0)
                 StartCoroutine(PlayAllTurnAnimationsParallel(animJobs));
         }
@@ -671,7 +686,10 @@ public class GameSession : MonoBehaviour
         bool animateResolvedRound = _animateResolvedRoundForPendingSubmit;
         _animateResolvedRoundForPendingSubmit = true;
         if (!animateResolvedRound)
+        {
             ApplyMapUpdatesFromTurnResult(result);
+            ApplyZoneShrinkFromTurnResult(result);
+        }
         AppendServerTurnLogs(result);
         var playback = animateResolvedRound ? BuildExecutedActionPlayback(result) : null;
         var animJobs = BuildTurnResultAnimationJobs(result, animateResolvedRound, deferLocomotionPosture: playback != null && playback.Count > 0);
@@ -763,6 +781,7 @@ public class GameSession : MonoBehaviour
         {
             if (playback != null)
                 ApplyMapUpdatesFromTurnResult(result);
+            ApplyZoneShrinkFromTurnResult(result);
             if (jobs.Count > 0)
                 yield return PlayAllTurnAnimationsParallel(jobs);
         }
@@ -899,6 +918,9 @@ public class GameSession : MonoBehaviour
                 p.ClearMovementPlaybackState();
             }
         }
+
+        if (!abortTimeline)
+            ApplyZoneShrinkFromTurnResult(result);
 
         if (abortTimeline)
             yield break;
@@ -1684,6 +1706,9 @@ public class GameSession : MonoBehaviour
         Player local = LocalPlayer;
         HexGrid grid = CachedHexGrid;
         float moveDur = local != null ? local.MoveDurationPerHex : 0.2f;
+        if (grid != null)
+            grid.ClearAllZoneShrinkExclusions();
+        ApplyBattleActiveBoundsFromPayload(payload, grid);
         ApplyObstacleMap(payload, grid);
 
         var spawnList = BuildSpawnListFromPayload(payload);
@@ -2102,6 +2127,64 @@ public class GameSession : MonoBehaviour
                 snapshot.PenaltyFraction,
                 prepareForAnimation: false);
         }
+    }
+
+    private void ApplyBattleActiveBoundsFromPayload(BattleStartedPayload p, HexGrid grid)
+    {
+        if (grid == null || p == null) return;
+        bool sane = p.activeMaxCol >= p.activeMinCol && p.activeMaxRow >= p.activeMinRow
+            && p.activeMaxCol < grid.Width && p.activeMaxRow < grid.Length;
+        if (sane)
+        {
+            _battleActiveMinCol = p.activeMinCol;
+            _battleActiveMaxCol = p.activeMaxCol;
+            _battleActiveMinRow = p.activeMinRow;
+            _battleActiveMaxRow = p.activeMaxRow;
+        }
+        else
+        {
+            _battleActiveMinCol = 0;
+            _battleActiveMaxCol = Mathf.Max(0, grid.Width - 1);
+            _battleActiveMinRow = 0;
+            _battleActiveMaxRow = Mathf.Max(0, grid.Length - 1);
+        }
+
+        _battleActiveBoundsInitialized = true;
+    }
+
+    private void ApplyActiveZoneBoundsFromTurnResult(TurnResultPayload result, HexGrid grid)
+    {
+        if (result == null || grid == null) return;
+        bool sane = result.activeMaxCol >= result.activeMinCol && result.activeMaxRow >= result.activeMinRow
+            && result.activeMaxCol < grid.Width && result.activeMaxRow < grid.Length;
+        if (!sane) return;
+        _battleActiveMinCol = result.activeMinCol;
+        _battleActiveMaxCol = result.activeMaxCol;
+        _battleActiveMinRow = result.activeMinRow;
+        _battleActiveMaxRow = result.activeMaxRow;
+        _battleActiveBoundsInitialized = true;
+    }
+
+    /// <summary>Remove obstacles, play falling hex animation, sync active rectangle from server.</summary>
+    private void ApplyZoneShrinkFromTurnResult(TurnResultPayload result)
+    {
+        if (result == null) return;
+        HexGrid grid = CachedHexGrid;
+        if (grid == null) return;
+
+        if (result.zoneShrinkCells != null)
+        {
+            foreach (HexPosition h in result.zoneShrinkCells)
+            {
+                if (h == null) continue;
+                RemoveObstacleAtCell(grid, h.col, h.row);
+                HexCell cell = grid.GetCell(h.col, h.row);
+                if (cell != null)
+                    cell.AnimateZoneShrinkFall(grid);
+            }
+        }
+
+        ApplyActiveZoneBoundsFromTurnResult(result, grid);
     }
 
     private void ApplyObstacleMap(BattleStartedPayload payload, HexGrid grid)
