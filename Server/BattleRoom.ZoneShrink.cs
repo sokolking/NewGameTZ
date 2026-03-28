@@ -132,13 +132,7 @@ public partial class BattleRoom
             if (dto != null)
             {
                 dto.FinalPosition = new HexPositionDto { Col = nc, Row = nr };
-                var pathList = dto.ActualPath != null && dto.ActualPath.Length > 0
-                    ? dto.ActualPath.ToList()
-                    : new List<HexPositionDto> { new() { Col = uc, Row = ur } };
-                var last = pathList[pathList.Count - 1];
-                if (last.Col != nc || last.Row != nr)
-                    pathList.Add(new HexPositionDto { Col = nc, Row = nr });
-                dto.ActualPath = pathList.ToArray();
+                // Keep ActualPath as combat resolution only; client teleports to FinalPosition after turn animations, then applies zone shrink.
             }
         }
 

@@ -668,7 +668,6 @@ public class GameSession : MonoBehaviour
         if (!animateResolvedRound)
         {
             ApplyMapUpdatesFromTurnResult(result);
-            ApplyZoneShrinkFromTurnResult(result);
         }
         AppendServerTurnLogs(result);
         LogHitRollsFromTurnResult(result);
@@ -763,10 +762,13 @@ public class GameSession : MonoBehaviour
         {
             if (playback != null)
                 ApplyMapUpdatesFromTurnResult(result);
-            ApplyZoneShrinkFromTurnResult(result);
             if (jobs.Count > 0)
                 yield return PlayAllTurnAnimationsParallel(jobs);
         }
+
+        SnapBattleUnitsToAuthoritativeHexPositions();
+        if (result != null)
+            ApplyZoneShrinkFromTurnResult(result);
 
         // Planning unlocks here (clear wait + ApplyRoundState). Round-wait overlay is hidden on push — see BattleSignalRConnection.
         if (result == null || !result.battleFinished)
@@ -909,9 +911,6 @@ public class GameSession : MonoBehaviour
                 p.ClearMovementPlaybackState();
             }
         }
-
-        if (!abortTimeline)
-            ApplyZoneShrinkFromTurnResult(result);
 
         if (abortTimeline)
             yield break;
@@ -2088,21 +2087,26 @@ public class GameSession : MonoBehaviour
             _activeReplayAnimationCoroutines.Add(coroutine);
             yield return coroutine;
             _activeReplayAnimationCoroutines.Clear();
-            yield break;
+        }
+        else
+        {
+            _activeReplayAnimationCoroutines.Clear();
+            var jobs = fallbackJobs ?? new List<(object unit, bool isLocal, HexPosition[] path)>();
+            foreach (var j in jobs)
+            {
+                if (j.isLocal && j.unit is Player pl)
+                    _activeReplayAnimationCoroutines.Add(StartCoroutine(PlayTurnResultAnimationCoroutine(pl, j.path)));
+                else if (!j.isLocal && j.unit is RemoteBattleUnitView rv)
+                    _activeReplayAnimationCoroutines.Add(StartCoroutine(PlayRemoteAnimationCoroutine(rv, j.path)));
+            }
+            foreach (var coroutine in _activeReplayAnimationCoroutines)
+                yield return coroutine;
+            _activeReplayAnimationCoroutines.Clear();
         }
 
-        _activeReplayAnimationCoroutines.Clear();
-        var jobs = fallbackJobs ?? new List<(object unit, bool isLocal, HexPosition[] path)>();
-        foreach (var j in jobs)
-        {
-            if (j.isLocal && j.unit is Player pl)
-                _activeReplayAnimationCoroutines.Add(StartCoroutine(PlayTurnResultAnimationCoroutine(pl, j.path)));
-            else if (!j.isLocal && j.unit is RemoteBattleUnitView rv)
-                _activeReplayAnimationCoroutines.Add(StartCoroutine(PlayRemoteAnimationCoroutine(rv, j.path)));
-        }
-        foreach (var coroutine in _activeReplayAnimationCoroutines)
-            yield return coroutine;
-        _activeReplayAnimationCoroutines.Clear();
+        SnapBattleUnitsToAuthoritativeHexPositions();
+        if (result != null)
+            ApplyZoneShrinkFromTurnResult(result);
     }
 
     private void ResetToInitialReplayState()
@@ -2175,6 +2179,25 @@ public class GameSession : MonoBehaviour
         _battleActiveMinRow = result.activeMinRow;
         _battleActiveMaxRow = result.activeMaxRow;
         _battleActiveBoundsInitialized = true;
+    }
+
+    /// <summary>After turn-resolve animations: snap units to server hex, then remove obstacles, play falling hex animation, sync active rectangle.</summary>
+    private void SnapBattleUnitsToAuthoritativeHexPositions()
+    {
+        HexGrid grid = CachedHexGrid;
+        if (grid == null)
+            return;
+
+        Player pl = LocalPlayer;
+        if (pl != null && !pl.IsDead && !pl.IsHidden)
+            pl.transform.position = grid.GetCellWorldPosition(pl.CurrentCol, pl.CurrentRow);
+
+        foreach (RemoteBattleUnitView remote in _remoteUnits.Values)
+        {
+            if (remote == null || remote.CurrentHp <= 0)
+                continue;
+            remote.transform.position = grid.GetCellWorldPosition(remote.CurrentCol, remote.CurrentRow);
+        }
     }
 
     /// <summary>Remove obstacles, play falling hex animation, sync active rectangle from server.</summary>
