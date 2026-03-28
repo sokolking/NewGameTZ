@@ -54,6 +54,7 @@ Server/bin/
 Server/obj/
 
 # Сервер: отдаваемые клиенту бинарники (dmg и т.д.) — не в git
+publish/wwwroot/downloads/*
 Server/wwwroot/downloads/*
 !Server/wwwroot/downloads/README.txt
 
