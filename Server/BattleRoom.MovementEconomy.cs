@@ -6,14 +6,14 @@ namespace BattleServer;
 
 public partial class BattleRoom
 {
-    /// <summary>Стоимость n-го шага (как в клиентском Player.GetStepCost).</summary>
-    public static int GetStepCost(int stepIndex)
+    /// <summary>Cumulative movement AP after <paramref name="completedMoveSteps"/> steps (0 = current hex). Matches client <c>Player.GetStepCost</c>.</summary>
+    public static int GetStepCost(int completedMoveSteps)
     {
-        if (stepIndex <= 0)
+        if (completedMoveSteps <= 0)
             return 0;
 
-        float n = stepIndex;
-        float val = (5f * n * n - 8f * n + 21f) / 3f;
+        float n = completedMoveSteps;
+        float val = (5f * n * n - 8f * n + 12f) / 3f;
         return Math.Max(1, (int)Math.Round(val));
     }
 
@@ -41,9 +41,10 @@ public partial class BattleRoom
 
     private static bool CanMoveInPosture(string? posture) => NormalizePosture(posture) != PostureHide;
 
-    private static int GetMovementStepCost(string? posture, int stepIndex)
+    /// <param name="zeroBasedStepIndex">0 = first move step of the round after <c>movementStepsTaken</c> already-completed steps.</param>
+    private static int GetMovementStepCost(string? posture, int zeroBasedStepIndex)
     {
-        int baseCost = GetMoveCost(stepIndex - 1, 1);
+        int baseCost = GetMoveCost(zeroBasedStepIndex, 1);
         return NormalizePosture(posture) switch
         {
             PostureRun => Math.Max(1, (int)Math.Ceiling(baseCost * RunCostMultiplier)),
@@ -58,7 +59,7 @@ public partial class BattleRoom
             return 0;
 
         int total = 0;
-        for (int i = 1; i <= steps; i++)
+        for (int i = 0; i < steps; i++)
             total += GetMovementStepCost(posture, fromStepIndex + i);
         return total;
     }

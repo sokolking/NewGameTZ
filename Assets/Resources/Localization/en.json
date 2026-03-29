@@ -113,5 +113,6 @@
   "escape.success": "You escaped the battle.",
   "escape.request_failed": "Could not start flee.",
   "escape.pending_request": "Flee request is already in progress.",
-  "escape.dialog_misconfigured": "Flee dialog is not set up (use Tools → Hex Grid → Add Escape Battle Dialog)."
+  "escape.dialog_misconfigured": "Flee dialog is not set up (use Tools → Hex Grid → Add Escape Battle Dialog).",
+  "escape.hover_run": "Run"
 }

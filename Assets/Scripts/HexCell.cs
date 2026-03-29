@@ -28,6 +28,7 @@ public class HexCell : MonoBehaviour
     private Color _apMaskColor;
     private TextMesh _costLabel;
     private int _lastCostLabelValue = int.MinValue;
+    private string _lastCostLabelText;
     private GameObject _obstacleModelInstance;
     private bool _excludedFromPlay;
     private Coroutine _zoneFallCoroutine;
@@ -245,6 +246,7 @@ public class HexCell : MonoBehaviour
 
     public void SetCostLabel(int cost)
     {
+        _lastCostLabelText = null;
         if (cost < 0)
         {
             _lastCostLabelValue = int.MinValue;
@@ -255,31 +257,53 @@ public class HexCell : MonoBehaviour
         if (_costLabel != null && cost == _lastCostLabelValue && _costLabel.gameObject.activeSelf)
             return;
 
-        if (_costLabel == null)
-        {
-            GameObject go = new GameObject("CostLabel");
-            go.transform.SetParent(transform, false);
-            go.transform.localPosition = new Vector3(0f, 0.1f, 0f);
-            // Фиксированная ориентация текста относительно гекса (всегда одна и та же)
-            go.transform.localRotation = Quaternion.Euler(90f, 0f, 60f);
-
-            _costLabel = go.AddComponent<TextMesh>();
-            Font font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
-            if (font != null) _costLabel.font = font;
-            _costLabel.anchor = TextAnchor.MiddleCenter;
-            _costLabel.alignment = TextAlignment.Center;
-            _costLabel.fontSize = 14;
-            _costLabel.color = Color.white;
-            ApplyCostLabelSize();
-        }
-        else
-        {
-            ApplyCostLabelSize();
-        }
+        EnsureCostLabelCreated();
+        ApplyCostLabelSize();
 
         _costLabel.text = cost.ToString();
         _lastCostLabelValue = cost;
         SetCostLabelVisible(true);
+    }
+
+    /// <summary>Hover text on this hex (e.g. escape ring). Cleared when <see cref="SetCostLabel"/> is used.</summary>
+    public void SetCostLabelText(string text)
+    {
+        if (string.IsNullOrEmpty(text))
+        {
+            _lastCostLabelText = null;
+            _lastCostLabelValue = int.MinValue;
+            SetCostLabelVisible(false);
+            return;
+        }
+
+        if (_costLabel != null && text == _lastCostLabelText && _costLabel.gameObject.activeSelf)
+            return;
+
+        EnsureCostLabelCreated();
+        ApplyCostLabelSize();
+
+        _lastCostLabelText = text;
+        _lastCostLabelValue = int.MinValue;
+        _costLabel.text = text;
+        SetCostLabelVisible(true);
+    }
+
+    private void EnsureCostLabelCreated()
+    {
+        if (_costLabel != null)
+            return;
+        GameObject go = new GameObject("CostLabel");
+        go.transform.SetParent(transform, false);
+        go.transform.localPosition = new Vector3(0f, 0.1f, 0f);
+        go.transform.localRotation = Quaternion.Euler(90f, 0f, 120f);
+
+        _costLabel = go.AddComponent<TextMesh>();
+        Font font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+        if (font != null) _costLabel.font = font;
+        _costLabel.anchor = TextAnchor.MiddleCenter;
+        _costLabel.alignment = TextAlignment.Center;
+        _costLabel.fontSize = 14;
+        _costLabel.color = Color.white;
     }
 
     /// <summary>Подстраивает размер подписи под размер гекса (по bounds меша).</summary>

@@ -203,7 +203,7 @@ public partial class BattleRoom
                         string queuedActionType = action?.ActionType ?? string.Empty;
                         if (string.Equals(queuedActionType, ActionMoveStep, StringComparison.OrdinalIgnoreCase))
                         {
-                            cost = GetMovementStepCost(currentPosture, movementStepsTaken[uid] + 1);
+                            cost = GetMovementStepCost(currentPosture, movementStepsTaken[uid]);
                             var moveTp = action?.TargetPosition;
                             if (moveTp != null
                                 && unit.UnitType == UnitType.Player

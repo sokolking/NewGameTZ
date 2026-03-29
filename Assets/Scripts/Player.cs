@@ -547,7 +547,11 @@ public class Player : MonoBehaviour
             return;
         }
 
-        if (!HexPathfinding.TryBuildPath(_grid, _currentCol, _currentRow, _movementFlagCol, _movementFlagRow, _movementFlagPathBuffer))
+        bool pathOk = GameSession.Active != null
+            && HexPathfinding.TryBuildMinApPath(this, _grid, _currentCol, _currentRow, _movementFlagCol, _movementFlagRow, _movementFlagPathBuffer);
+        if (!pathOk)
+            pathOk = HexPathfinding.TryBuildPath(_grid, _currentCol, _currentRow, _movementFlagCol, _movementFlagRow, _movementFlagPathBuffer);
+        if (!pathOk)
             return;
         if (_movementFlagPathBuffer.Count < 2)
             return;
@@ -591,20 +595,25 @@ public class Player : MonoBehaviour
         _turnTimeExpired = false;
     }
 
-    /// <summary>Стоимость n-го шага в рамках одного перемещения.</summary>
-    public int GetStepCost(int stepIndex)
+    /// <summary>
+    /// Cumulative movement AP after <paramref name="completedMoveSteps"/> completed move steps this turn (0 = standing on current hex).
+    /// Marginal cost of the next step = GetStepCost(k+1) − GetStepCost(k); first step uses k=0 → GetStepCost(1) − 0.
+    /// </summary>
+    public int GetStepCost(int completedMoveSteps)
     {
-        if (stepIndex <= 0)
+        if (completedMoveSteps <= 0)
             return 0;
 
-        float n = stepIndex;
+        float n = completedMoveSteps;
+        // Constant chosen so first step (1) is 3 AP at walk; higher marginals match the former 21-based curve.
         float value = (5f * n * n - 8f * n + 21f) / 3f;
         return Mathf.Max(1, Mathf.RoundToInt(value));
     }
 
-    public int GetMoveStepCost(MovementPosture posture, int stepIndex)
+    /// <param name="zeroBasedStepIndex">0 = first move step of the turn after <see cref="_stepsTakenThisTurn"/> already-completed steps (same convention as server).</param>
+    public int GetMoveStepCost(MovementPosture posture, int zeroBasedStepIndex)
     {
-        int baseStepCost = GetStepCost(stepIndex) - GetStepCost(stepIndex - 1);
+        int baseStepCost = GetStepCost(zeroBasedStepIndex + 1) - GetStepCost(zeroBasedStepIndex);
         return posture switch
         {
             MovementPosture.Run => Mathf.Max(1, Mathf.CeilToInt(baseStepCost * RunCostMultiplier)),
@@ -625,7 +634,7 @@ public class Player : MonoBehaviour
             return 0;
 
         int total = 0;
-        for (int i = 1; i <= steps; i++)
+        for (int i = 0; i < steps; i++)
             total += GetMoveStepCost(posture, fromStepIndex + i);
         return total;
     }
@@ -993,9 +1002,25 @@ public class Player : MonoBehaviour
         return allowed;
     }
 
-    /// <summary>Ordinary edge cost (no escape lump). Full path uses sequential simulation in <see cref="GetAllowedStepsAlongHexPath"/>.</summary>
-    public int GetMoveStepApCostForEdge(MovementPosture posture, int stepIndexWithinTurn, (int col, int row) from, (int col, int row) to) =>
-        GetMoveStepCost(posture, stepIndexWithinTurn);
+    /// <summary>Ordinary edge cost (no escape lump). <paramref name="zeroBasedStepIndexWithinTurn"/> = 0 for the next first step after <see cref="_stepsTakenThisTurn"/> completed moves.</summary>
+    public int GetMoveStepApCostForEdge(MovementPosture posture, int zeroBasedStepIndexWithinTurn, (int col, int row) from, (int col, int row) to) =>
+        GetMoveStepCost(posture, zeroBasedStepIndexWithinTurn);
+
+    /// <summary>
+    /// AP for one planning edge (preview posture), including escape-ring entry consuming all remaining AP.
+    /// Matches <see cref="GetAllowedStepsAlongHexPath"/> / path preview.
+    /// </summary>
+    public int ComputePlanningEdgeApCost(int fromCol, int fromRow, int toCol, int toRow, int zeroBasedStepIndexWithinTurn, int apRemainingBeforeEdge)
+    {
+        if (IsPlanningEscapeEntry((fromCol, fromRow), (toCol, toRow)))
+        {
+            if (apRemainingBeforeEdge < 1)
+                return int.MaxValue;
+            return apRemainingBeforeEdge;
+        }
+
+        return GetMoveStepApCostForEdge(PreviewMovementPosture, zeroBasedStepIndexWithinTurn, (fromCol, fromRow), (toCol, toRow));
+    }
 
     private static bool IsPlanningEscapeEntry((int col, int row) from, (int col, int row) to)
     {

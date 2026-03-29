@@ -18,12 +18,16 @@ public class MovementRangeHighlighter : MonoBehaviour
     private int _lastCol = int.MinValue;
     private int _lastRow = int.MinValue;
     private int _lastAp = int.MinValue;
+    private int _lastStepsTaken = int.MinValue;
+    private MovementPosture? _lastPreviewPosture;
     private bool _wasBlocked;
     private bool _wasMoving;
 
     private HexCell[] _cachedAllCells;
-    private readonly HashSet<(int col, int row)> _visitedBfs = new();
-    private readonly Queue<(int col, int row, int dist)> _queueBfs = new();
+    /// <summary>Max AP remaining after reaching (col,row) in exactly k steps from current cell.</summary>
+    private readonly Dictionary<(int col, int row, int k), int> _bestApByCellAndSteps = new();
+    private readonly Queue<(int col, int row, int apRem, int k)> _queueApBfs = new();
+    private readonly Dictionary<(int col, int row), int> _minStepsToReachCell = new();
 
     private void OnValidate()
     {
@@ -83,13 +87,19 @@ public class MovementRangeHighlighter : MonoBehaviour
             RebuildMask();
         }
 
-        if (_player.CurrentCol != _lastCol ||
-            _player.CurrentRow != _lastRow ||
-            _player.CurrentAp != _lastAp)
+        bool stateDirty = _player.CurrentCol != _lastCol
+            || _player.CurrentRow != _lastRow
+            || _player.CurrentAp != _lastAp
+            || _player.StepsTakenThisTurn != _lastStepsTaken
+            || !_lastPreviewPosture.HasValue
+            || _lastPreviewPosture.Value != _player.PreviewMovementPosture;
+        if (stateDirty)
         {
             _lastCol = _player.CurrentCol;
             _lastRow = _player.CurrentRow;
             _lastAp = _player.CurrentAp;
+            _lastStepsTaken = _player.StepsTakenThisTurn;
+            _lastPreviewPosture = _player.PreviewMovementPosture;
             RebuildMask();
         }
     }
@@ -132,16 +142,13 @@ public class MovementRangeHighlighter : MonoBehaviour
         }
     }
 
-    private int GetMaxReachableSteps(int stepsAlready)
+    private void TryEnqueueApState(int col, int row, int apRem, int k)
     {
-        int maxSteps = 0;
-        for (int L = 1; ; L++)
-        {
-            if (_player.GetMoveCost(stepsAlready, L) > _player.CurrentAp)
-                break;
-            maxSteps = L;
-        }
-        return maxSteps;
+        var key = (col, row, k);
+        if (_bestApByCellAndSteps.TryGetValue(key, out int prev) && apRem <= prev)
+            return;
+        _bestApByCellAndSteps[key] = apRem;
+        _queueApBfs.Enqueue((col, row, apRem, k));
     }
 
     private void RebuildMask()
@@ -157,40 +164,30 @@ public class MovementRangeHighlighter : MonoBehaviour
             }
         }
 
-        int stepsAlready = _player.StepsTakenThisTurn;
-        int maxSteps = GetMaxReachableSteps(stepsAlready);
-        if (maxSteps <= 0) return;
+        int startAp = _player.CurrentAp;
+        if (startAp < 1)
+            return;
 
-        _visitedBfs.Clear();
-        while (_queueBfs.Count > 0)
-            _queueBfs.Dequeue();
+        int sc = _player.CurrentCol;
+        int sr = _player.CurrentRow;
 
-        _visitedBfs.Add((_player.CurrentCol, _player.CurrentRow));
-        _queueBfs.Enqueue((_player.CurrentCol, _player.CurrentRow, 0));
+        _bestApByCellAndSteps.Clear();
+        _minStepsToReachCell.Clear();
+        while (_queueApBfs.Count > 0)
+            _queueApBfs.Dequeue();
 
-        while (_queueBfs.Count > 0)
+        TryEnqueueApState(sc, sr, startAp, 0);
+
+        while (_queueApBfs.Count > 0)
         {
-            var (col, row, dist) = _queueBfs.Dequeue();
-
-            HexCell cell = _grid.GetCell(col, row);
-            if (cell != null && !cell.IsObstacle)
-            {
-                bool reachableNow = dist <= maxSteps;
-                bool isPenaltyRing = reachableNow && _player.IsPenaltyHexAtDistance(dist);
-
-                Color c = isPenaltyRing ? _farColor : _nearColor;
-                c.a = 1f;
-                cell.SetApMask(true, c);
-            }
-
-            if (dist >= maxSteps) continue;
+            var (col, row, apRem, k) = _queueApBfs.Dequeue();
+            var stateKey = (col, row, k);
+            if (!_bestApByCellAndSteps.TryGetValue(stateKey, out int bestHere) || apRem < bestHere)
+                continue;
 
             for (int dir = 0; dir < 6; dir++)
             {
                 HexGrid.GetNeighbor(col, row, dir, out int nc, out int nr);
-                var key = (nc, nr);
-                if (_visitedBfs.Contains(key))
-                    continue;
                 if (GameSession.Active != null)
                 {
                     if (!GameSession.Active.IsHexInActiveBattleZone(nc, nr)
@@ -207,9 +204,35 @@ public class MovementRangeHighlighter : MonoBehaviour
                         continue;
                 }
 
-                _visitedBfs.Add(key);
-                _queueBfs.Enqueue((nc, nr, dist + 1));
+                int zeroBasedStepIndex = _player.StepsTakenThisTurn + k;
+                int cost = _player.ComputePlanningEdgeApCost(col, row, nc, nr, zeroBasedStepIndex, apRem);
+                if (cost == int.MaxValue || cost > apRem)
+                    continue;
+                int ap2 = apRem - cost;
+                TryEnqueueApState(nc, nr, ap2, k + 1);
             }
+        }
+
+        foreach (var kv in _bestApByCellAndSteps)
+        {
+            var (col, row, k) = kv.Key;
+            var cellKey = (col, row);
+            if (!_minStepsToReachCell.TryGetValue(cellKey, out int mk) || k < mk)
+                _minStepsToReachCell[cellKey] = k;
+        }
+
+        foreach (var kv in _minStepsToReachCell)
+        {
+            var (col, row) = kv.Key;
+            int dist = kv.Value;
+            HexCell cell = _grid.GetCell(col, row);
+            if (cell == null || cell.IsObstacle)
+                continue;
+
+            bool isPenaltyRing = _player.IsPenaltyHexAtDistance(dist);
+            Color c = isPenaltyRing ? _farColor : _nearColor;
+            c.a = 1f;
+            cell.SetApMask(true, c);
         }
     }
 }

@@ -113,5 +113,6 @@
   "escape.success": "Вы сбежали из боя.",
   "escape.request_failed": "Не удалось начать побег.",
   "escape.pending_request": "Запрос побега уже отправляется.",
-  "escape.dialog_misconfigured": "Диалог побега не настроен в сцене (назначьте панель Escape battle в ActionPointsUI)."
+  "escape.dialog_misconfigured": "Диалог побега не настроен в сцене (назначьте панель Escape battle в ActionPointsUI).",
+  "escape.hover_run": "Бег"
 }

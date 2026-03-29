@@ -26,6 +26,8 @@ public class HexInputManager : MonoBehaviour
     private float _lastClickTime;
     private Vector2 _lastClickPosition;
     private HexCell _lastHoveredCell;
+    private BorderHexMarker _lastHoveredBorderMarker;
+    private BorderHexMarker _lastHoverBorderRaycastHit;
     private int _lastHoverAp = int.MinValue;
     private MovementPosture _lastHoverPosture = MovementPosture.Walk;
     private HoldTargetIndicator _holdIndicator;
@@ -77,6 +79,25 @@ public class HexInputManager : MonoBehaviour
             _holdIndicatorPrefab = fromResources;
     }
 
+    /// <summary>
+    /// Minimum-AP path in battle; if full route is unaffordable, fewest-hex path (escape ring not used as a shortcut).
+    /// </summary>
+    private static bool TryBuildMovementPathForUi(
+        Player player,
+        HexGrid grid,
+        int startCol, int startRow,
+        int endCol, int endRow,
+        List<(int col, int row)> pathOut)
+    {
+        if (player == null || grid == null || pathOut == null)
+            return false;
+        if (GameSession.Active != null
+            && HexPathfinding.TryBuildMinApPath(player, grid, startCol, startRow, endCol, endRow, pathOut))
+            return true;
+
+        return HexPathfinding.TryBuildPath(grid, startCol, startRow, endCol, endRow, pathOut);
+    }
+
     /// <summary>Сортировка по distance (insertion sort; при n ≤ 32 дёшево). Не используем System.Array.Sort — в Unity конфликтует с UnityEngine.Array.</summary>
     private static void SortRaycastHitsByDistance(RaycastHit[] hits, int n)
     {
@@ -114,6 +135,7 @@ public class HexInputManager : MonoBehaviour
                 _lastHoveredCell.SetCostLabel(-1);
                 _lastHoveredCell = null;
             }
+            ClearBorderHoverLabel();
             _hoverRaycastCacheValid = false;
             IsHoldingRemoteTargetWithLeftMouse = false;
             HideAttackRangeOutline();
@@ -128,6 +150,7 @@ public class HexInputManager : MonoBehaviour
                 _lastHoveredCell.SetCostLabel(-1);
                 _lastHoveredCell = null;
             }
+            ClearBorderHoverLabel();
             _hoverRaycastCacheValid = false;
             IsHoldingRemoteTargetWithLeftMouse = false;
             return;
@@ -142,6 +165,7 @@ public class HexInputManager : MonoBehaviour
                 _lastHoveredCell.SetCostLabel(-1);
                 _lastHoveredCell = null;
             }
+            ClearBorderHoverLabel();
             _hoverRaycastCacheValid = false;
             IsHoldingRemoteTargetWithLeftMouse = false;
             HideAttackRangeOutline();
@@ -290,19 +314,24 @@ public class HexInputManager : MonoBehaviour
         int hCol;
         int hRow;
         HexCell cell;
+        BorderHexMarker borderHit;
         if (!mouseMoved && !cameraMoved && _hoverRaycastCacheValid)
         {
             hCol = _lastHoverDestCol;
             hRow = _lastHoverDestRow;
             cell = _lastHoveredCell;
+            borderHit = _lastHoverBorderRaycastHit;
         }
         else
         {
-            if (!TryRaycastMoveDestination(mouse, out hCol, out hRow, out cell))
+            if (!TryRaycastMoveDestination(mouse, out hCol, out hRow, out cell, out borderHit))
             {
                 hCol = int.MinValue;
                 hRow = int.MinValue;
+                _lastHoverBorderRaycastHit = null;
             }
+            else
+                _lastHoverBorderRaycastHit = borderHit;
 
             _lastHoverMousePos = mousePos;
             if (_cameraTransform != null)
@@ -323,6 +352,8 @@ public class HexInputManager : MonoBehaviour
                 _lastHoveredCell.SetCostLabel(-1);
                 _lastHoveredCell = null;
             }
+            ClearBorderHoverLabel();
+            _lastHoverBorderRaycastHit = null;
 
             _lastHoverDestCol = int.MinValue;
             _lastHoverDestRow = int.MinValue;
@@ -330,7 +361,7 @@ public class HexInputManager : MonoBehaviour
         }
 
         if (hCol == _lastHoverDestCol && hRow == _lastHoverDestRow && currentAp == _lastHoverAp && posture == _lastHoverPosture
-            && cell == _lastHoveredCell)
+            && cell == _lastHoveredCell && borderHit == _lastHoverBorderRaycastHit)
             return;
 
         if (_lastHoveredCell != null)
@@ -338,6 +369,7 @@ public class HexInputManager : MonoBehaviour
             _lastHoveredCell.SetHighlight(false);
             _lastHoveredCell.SetCostLabel(-1);
         }
+        ClearBorderHoverLabel();
 
         _lastHoverDestCol = hCol;
         _lastHoverDestRow = hRow;
@@ -347,8 +379,21 @@ public class HexInputManager : MonoBehaviour
         if (cell != null)
             cell.SetHighlight(true);
 
-        if (_player != null
-            && HexPathfinding.TryBuildPath(_grid, _player.CurrentCol, _player.CurrentRow, hCol, hRow, _hoverPathApBuffer)
+        GameSession gs = GameSession.Active;
+        bool escapeHex = gs != null && gs.IsEscapeBorderHex(hCol, hRow);
+        if (escapeHex)
+        {
+            string runLabel = Loc.T("escape.hover_run");
+            if (cell != null)
+                cell.SetCostLabelText(runLabel);
+            else if (borderHit != null)
+            {
+                borderHit.SetOverlayLabel(runLabel);
+                _lastHoveredBorderMarker = borderHit;
+            }
+        }
+        else if (_player != null
+            && TryBuildMovementPathForUi(_player, _grid, _player.CurrentCol, _player.CurrentRow, hCol, hRow, _hoverPathApBuffer)
             && _hoverPathApBuffer.Count > 1)
         {
             int apCost = _player.SumApCostForHexPath(_hoverPathApBuffer);
@@ -385,7 +430,7 @@ public class HexInputManager : MonoBehaviour
     {
         if (_player == null || _player.IsMoving || _player.IsDead || _player.IsHidden)
             return;
-        if (!TryRaycastMoveDestination(mouse, out int destCol, out int destRow, out _))
+        if (!TryRaycastMoveDestination(mouse, out int destCol, out int destRow, out _, out _))
             return;
 
         if (!_player.EnsureMovablePostureForMovement())
@@ -394,11 +439,7 @@ public class HexInputManager : MonoBehaviour
             return;
         }
 
-        if (!HexPathfinding.TryBuildPath(
-                _grid,
-                _player.CurrentCol, _player.CurrentRow,
-                destCol, destRow,
-                _doubleClickPathBuffer))
+        if (!TryBuildMovementPathForUi(_player, _grid, _player.CurrentCol, _player.CurrentRow, destCol, destRow, _doubleClickPathBuffer))
             return;
 
         int stepsToMove = _doubleClickPathBuffer.Count - 1;
@@ -470,11 +511,21 @@ public class HexInputManager : MonoBehaviour
         return false;
     }
 
-    private bool TryRaycastMoveDestination(Mouse mouse, out int col, out int row, out HexCell cell)
+    private void ClearBorderHoverLabel()
+    {
+        if (_lastHoveredBorderMarker != null)
+        {
+            _lastHoveredBorderMarker.SetOverlayLabel(null);
+            _lastHoveredBorderMarker = null;
+        }
+    }
+
+    private bool TryRaycastMoveDestination(Mouse mouse, out int col, out int row, out HexCell cell, out BorderHexMarker hitBorderMarker)
     {
         col = 0;
         row = 0;
         cell = null;
+        hitBorderMarker = null;
         if (_camera == null)
             return false;
         Vector2 pos = mouse.position.ReadValue();
@@ -517,6 +568,7 @@ public class HexInputManager : MonoBehaviour
             BorderHexMarker bm = c.GetComponent<BorderHexMarker>();
             if (bm != null)
             {
+                hitBorderMarker = bm;
                 col = bm.Col;
                 row = bm.Row;
                 cell = _grid.GetCell(col, row);
@@ -528,7 +580,7 @@ public class HexInputManager : MonoBehaviour
     }
 
     private HexCell GetHexUnderCursor(Mouse mouse) =>
-        TryRaycastMoveDestination(mouse, out _, out _, out HexCell cell) ? cell : null;
+        TryRaycastMoveDestination(mouse, out _, out _, out HexCell cell, out _) ? cell : null;
 
     private bool TryGetBorderHexMarkerUnderCursor(Mouse mouse, out BorderHexMarker marker)
     {
