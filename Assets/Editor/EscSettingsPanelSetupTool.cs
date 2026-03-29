@@ -6,18 +6,29 @@ using UnityEngine;
 using UnityEngine.UI;
 
 /// <summary>
-/// Одноразовая сборка SettingsPanel в EscScene: слева вкладки «Аудио» / «Видео», справа страницы с теми же именами.
-/// Запуск: <b>Tools → Esc Scene → Setup Settings Panel Tabs</b> (откройте EscScene заранее).
-/// Язык и локализация Esc: <b>Tools → Esc Scene → Setup Language Page + Esc UI localization</b> (не трогает RectTransform существующего LanguagePage).
+/// Доп. UI для EscScene (вкладки настроек, язык). Вызывается из <b>Tools → Hope → Create EscScene</b>. Существующие объекты не пересоздаёт.
 /// </summary>
 public static class EscSettingsPanelSetupTool
 {
     const string EscScenePath = "Assets/Scenes/EscScene.unity";
 
-    [MenuItem("Tools/Esc Scene/Setup Settings Panel Tabs")]
-    public static void SetupSettingsPanelTabs()
+    static void EnsureEscSceneIsActive()
     {
-        var scene = EditorSceneManager.OpenScene(EscScenePath, OpenSceneMode.Single);
+        var active = EditorSceneManager.GetActiveScene();
+        if (active.path.Replace('\\', '/') == EscScenePath)
+            return;
+        EditorSceneManager.OpenScene(EscScenePath, OpenSceneMode.Single);
+    }
+
+    public static void RunSettingsPanelTabsIfNeeded()
+    {
+        EnsureEscSceneIsActive();
+        SetupSettingsPanelTabsCore();
+    }
+
+    static void SetupSettingsPanelTabsCore()
+    {
+        var scene = EditorSceneManager.GetActiveScene();
 
         GameObject panelGo = FindSettingsPanelInLoadedScene();
         if (panelGo == null)
@@ -95,7 +106,6 @@ public static class EscSettingsPanelSetupTool
         so.ApplyModifiedPropertiesWithoutUndo();
 
         EditorSceneManager.MarkSceneDirty(scene);
-        EditorSceneManager.SaveScene(scene);
         Debug.Log("EscSettingsPanelSetupTool: готово. Проверьте EscScene → SettingsPanel.");
     }
 
@@ -264,10 +274,15 @@ public static class EscSettingsPanelSetupTool
     /// вешает <see cref="EscLanguagePickerUI"/>, проставляет <see cref="LocalizedText"/> по EscScene.
     /// Не меняет <see cref="RectTransform"/> существующего LanguagePage (только дочерние объекты).
     /// </summary>
-    [MenuItem("Tools/Esc Scene/Setup Language Page + Esc UI localization")]
-    public static void SetupLanguagePageAndEscLocalization()
+    public static void RunLanguagePageAndLocalizationIfNeeded()
     {
-        var scene = EditorSceneManager.OpenScene(EscScenePath, OpenSceneMode.Single);
+        EnsureEscSceneIsActive();
+        SetupLanguagePageAndEscLocalizationCore();
+    }
+
+    static void SetupLanguagePageAndEscLocalizationCore()
+    {
+        var scene = EditorSceneManager.GetActiveScene();
         GameObject panelGo = FindSettingsPanelInLoadedScene();
         if (panelGo == null)
         {
@@ -391,7 +406,6 @@ public static class EscSettingsPanelSetupTool
         so.ApplyModifiedPropertiesWithoutUndo();
 
         EditorSceneManager.MarkSceneDirty(scene);
-        EditorSceneManager.SaveScene(scene);
         Debug.Log(
             "EscSettingsPanelSetupTool: LanguagePage (как Resolution) + локализация Esc. Проверьте EscScene.");
     }

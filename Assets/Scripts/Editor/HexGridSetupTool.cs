@@ -4,13 +4,15 @@ using UnityEngine;
 using UnityEngine.SceneManagement;
 
 /// <summary>
-/// Меню Tools → Hex Grid → Setup Scene From Scratch — создаёт сетку, камеру, игрока и ввод с нуля.
+/// Сетка, камера, игрок, ввод. Вызывается из <b>Tools → Hope → Create MainScene</b>.
 /// </summary>
 public static class HexGridSetupTool
 {
-    private const string MenuPath = "Tools/Hex Grid/Setup Scene From Scratch";
+    public static void PerformFullHexGridLayout()
+    {
+        SetupSceneFromScratch();
+    }
 
-    [MenuItem(MenuPath)]
     public static void SetupSceneFromScratch()
     {
         if (!Application.isPlaying && !EditorSceneManager.GetActiveScene().isDirty)

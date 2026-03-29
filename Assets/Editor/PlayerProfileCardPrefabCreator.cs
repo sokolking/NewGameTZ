@@ -9,7 +9,7 @@ public static class PlayerProfileCardPrefabCreator
 {
     private const string PrefabPath = "Assets/Resources/PlayerProfileCard.prefab";
 
-    [MenuItem("Tools/UI/Create Player Profile Card Prefab (Resources)")]
+    /// <summary>Вызывайте из кода при необходимости; в меню Tools только Hope → сцены.</summary>
     public static void CreatePrefab()
     {
         var root = new GameObject("PlayerProfileCard", typeof(RectTransform));

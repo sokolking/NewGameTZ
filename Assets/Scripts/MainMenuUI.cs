@@ -20,6 +20,12 @@ public class MainMenuUI : MonoBehaviour
 
     [Header("Matchmaking")]
     [SerializeField] private MainMenuMatchmaking _matchmaking;
+    [Tooltip("Optional legacy: dropdown when MatchTypes toggles are not used.")]
+    [SerializeField] private Dropdown _pvpMatchmakingModeDropdown;
+    [Tooltip("Exclusive PvP modes under MatchTypes (Toggle_1v1, Toggle_3v3, Toggle_5v5). On = join socket queue; off others; off all = leave queue.")]
+    [SerializeField] private Toggle _matchTypeToggle1v1;
+    [SerializeField] private Toggle _matchTypeToggle3v3;
+    [SerializeField] private Toggle _matchTypeToggle5v5;
 
     [Header("Auth")]
     [Tooltip("Assign in scene (AuthPanel/LoginInputField). Created via Tools → Hex Grid → Setup Main Menu UI / Add Main Menu Auth Panel.")]
@@ -47,6 +53,7 @@ public class MainMenuUI : MonoBehaviour
 
     private Resolution[] _availableResolutions;
     private int _currentResolutionIndex;
+    private bool _suppressMatchTypeToggleEvents;
 
     private void Start()
     {
@@ -57,6 +64,21 @@ public class MainMenuUI : MonoBehaviour
             _loginInputField.text = BattleSessionState.LastUsername;
         WireDebugServerToggle();
         ApplySoloToggleFromSavedState();
+        if (_matchmaking == null)
+            _matchmaking = GetComponent<MainMenuMatchmaking>();
+        if (_matchmaking != null)
+        {
+            _matchmaking.SetMatchTypeTogglesResetHandler(UncheckAllMatchTypeTogglesNoCallbacks);
+            _matchmaking.SetSocketJoinOnlyAfterMatchTypeToggle(HasMatchTypeToggles());
+        }
+
+        if (HasMatchTypeToggles())
+        {
+            UncheckAllMatchTypeTogglesNoCallbacks();
+            WireMatchTypeToggles();
+        }
+        else
+            WirePvpMatchmakingDropdown();
         WireButtonEvents();
 
         InitResolutions();
@@ -104,6 +126,108 @@ public class MainMenuUI : MonoBehaviour
 
         if (_debugLocalhostToggle == null)
             _debugLocalhostToggle = transform.Find("Toggle_Debug")?.GetComponent<Toggle>();
+        if (_pvpMatchmakingModeDropdown == null)
+            _pvpMatchmakingModeDropdown = transform.Find("Dropdown_PvpMatchmakingMode")?.GetComponent<Dropdown>();
+
+        Transform matchTypes = transform.Find("MatchTypes");
+        if (matchTypes == null && transform.parent != null)
+            matchTypes = FindDeepChild(transform.parent, "MatchTypes");
+        if (matchTypes != null)
+        {
+            if (_matchTypeToggle1v1 == null)
+                _matchTypeToggle1v1 = FindDeepChild(matchTypes, "Toggle_1v1")?.GetComponent<Toggle>();
+            if (_matchTypeToggle3v3 == null)
+                _matchTypeToggle3v3 = FindDeepChild(matchTypes, "Toggle_3v3")?.GetComponent<Toggle>();
+            if (_matchTypeToggle5v5 == null)
+                _matchTypeToggle5v5 = FindDeepChild(matchTypes, "Toggle_5v5")?.GetComponent<Toggle>();
+        }
+    }
+
+    private bool HasMatchTypeToggles() =>
+        _matchTypeToggle1v1 != null && _matchTypeToggle3v3 != null && _matchTypeToggle5v5 != null;
+
+    private bool AnyMatchTypeToggleOn() =>
+        (_matchTypeToggle1v1 != null && _matchTypeToggle1v1.isOn)
+        || (_matchTypeToggle3v3 != null && _matchTypeToggle3v3.isOn)
+        || (_matchTypeToggle5v5 != null && _matchTypeToggle5v5.isOn);
+
+    private void UncheckAllMatchTypeTogglesNoCallbacks()
+    {
+        _suppressMatchTypeToggleEvents = true;
+        _matchTypeToggle1v1?.SetIsOnWithoutNotify(false);
+        _matchTypeToggle3v3?.SetIsOnWithoutNotify(false);
+        _matchTypeToggle5v5?.SetIsOnWithoutNotify(false);
+        _suppressMatchTypeToggleEvents = false;
+    }
+
+    private void SetExclusiveMatchTypeOn(PvpMatchmakingMode mode)
+    {
+        _suppressMatchTypeToggleEvents = true;
+        if (_matchTypeToggle1v1 != null)
+            _matchTypeToggle1v1.SetIsOnWithoutNotify(mode == PvpMatchmakingMode.Pvp1v1);
+        if (_matchTypeToggle3v3 != null)
+            _matchTypeToggle3v3.SetIsOnWithoutNotify(mode == PvpMatchmakingMode.Pvp3v3);
+        if (_matchTypeToggle5v5 != null)
+            _matchTypeToggle5v5.SetIsOnWithoutNotify(mode == PvpMatchmakingMode.Pvp5v5);
+        _suppressMatchTypeToggleEvents = false;
+    }
+
+    private Toggle ToggleForMode(PvpMatchmakingMode mode) => mode switch
+    {
+        PvpMatchmakingMode.Pvp1v1 => _matchTypeToggle1v1,
+        PvpMatchmakingMode.Pvp3v3 => _matchTypeToggle3v3,
+        PvpMatchmakingMode.Pvp5v5 => _matchTypeToggle5v5,
+        _ => _matchTypeToggle1v1
+    };
+
+    private void WireMatchTypeToggles()
+    {
+        if (_matchmaking == null)
+            _matchmaking = GetComponent<MainMenuMatchmaking>();
+        if (!HasMatchTypeToggles() || _matchmaking == null)
+            return;
+
+        void WireOne(Toggle t, PvpMatchmakingMode mode)
+        {
+            if (t == null)
+                return;
+            t.onValueChanged.RemoveAllListeners();
+            t.onValueChanged.AddListener(isOn => OnMatchTypeToggleChanged(mode, isOn));
+        }
+
+        WireOne(_matchTypeToggle1v1, PvpMatchmakingMode.Pvp1v1);
+        WireOne(_matchTypeToggle3v3, PvpMatchmakingMode.Pvp3v3);
+        WireOne(_matchTypeToggle5v5, PvpMatchmakingMode.Pvp5v5);
+    }
+
+    private void OnMatchTypeToggleChanged(PvpMatchmakingMode mode, bool isOn)
+    {
+        if (_suppressMatchTypeToggleEvents)
+            return;
+        if (_matchmaking == null)
+            _matchmaking = GetComponent<MainMenuMatchmaking>();
+        if (_matchmaking == null)
+            return;
+
+        if (isOn)
+        {
+            if (_soloVsMonsterToggle != null && _soloVsMonsterToggle.isOn)
+            {
+                _suppressMatchTypeToggleEvents = true;
+                ToggleForMode(mode)?.SetIsOnWithoutNotify(false);
+                _suppressMatchTypeToggleEvents = false;
+                _matchmaking.ShowMenuStatus(Loc.T("menu.matchmaking_disabled_in_solo"));
+                return;
+            }
+
+            SetExclusiveMatchTypeOn(mode);
+            PersistGameplayTogglesForFindGame();
+            _matchmaking.RequestSocketMatchmakingForMode(mode);
+            return;
+        }
+
+        if (!AnyMatchTypeToggleOn())
+            _matchmaking.StopSocketMatchmakingFromUi(true);
     }
 
     private void WireDebugServerToggle()
@@ -139,6 +263,66 @@ public class MainMenuUI : MonoBehaviour
         if (_debugLocalhostToggle != null)
             BattleServerRuntime.UseDebugLocalhost = _debugLocalhostToggle.isOn;
     }
+
+    private void ApplyPvpMatchmakingModeFromDropdown()
+    {
+        if (_matchmaking == null || _pvpMatchmakingModeDropdown == null)
+            return;
+        _matchmaking.SetPvpMatchmakingMode((PvpMatchmakingMode)Mathf.Clamp(_pvpMatchmakingModeDropdown.value, 0, 2));
+    }
+
+    private void WirePvpMatchmakingDropdown()
+    {
+        if (_matchmaking == null)
+            _matchmaking = GetComponent<MainMenuMatchmaking>();
+        if (_matchmaking == null || _pvpMatchmakingModeDropdown == null)
+            return;
+
+        var dd = _pvpMatchmakingModeDropdown;
+        dd.ClearOptions();
+        dd.AddOptions(new List<Dropdown.OptionData>
+        {
+            new(Loc.T("menu.matchmaking_mode_option_1v1")),
+            new(Loc.T("menu.matchmaking_mode_option_3v3")),
+            new(Loc.T("menu.matchmaking_mode_option_5v5"))
+        });
+
+        dd.onValueChanged.RemoveListener(OnPvpMatchmakingDropdownChanged);
+        dd.onValueChanged.AddListener(OnPvpMatchmakingDropdownChanged);
+
+        int current = Mathf.Clamp((int)_matchmaking.GetPvpMatchmakingMode(), 0, 2);
+        dd.SetValueWithoutNotify(current);
+        _matchmaking.SetPvpMatchmakingMode((PvpMatchmakingMode)current);
+    }
+
+    private void OnPvpMatchmakingDropdownChanged(int index)
+    {
+        if (_matchmaking == null)
+            return;
+        _matchmaking.SetPvpMatchmakingMode((PvpMatchmakingMode)Mathf.Clamp(index, 0, 2));
+    }
+
+    /// <summary>Sync mode + optional MatchTypes / dropdown (does not start socket search).</summary>
+    private void ApplyPvpModeIndexFromUi(int index)
+    {
+        if (_matchmaking == null)
+            return;
+        index = Mathf.Clamp(index, 0, 2);
+        _matchmaking.SetPvpMatchmakingMode((PvpMatchmakingMode)index);
+        if (HasMatchTypeToggles())
+            SetExclusiveMatchTypeOn((PvpMatchmakingMode)index);
+        else if (_pvpMatchmakingModeDropdown != null)
+            _pvpMatchmakingModeDropdown.SetValueWithoutNotify(index);
+    }
+
+    /// <summary>Wire to UI Button for 1v1 queue (updates mode label and dropdown if present).</summary>
+    public void UiSelectPvpMode1v1() => ApplyPvpModeIndexFromUi(0);
+
+    /// <summary>Wire to UI Button for 3v3 queue.</summary>
+    public void UiSelectPvpMode3v3() => ApplyPvpModeIndexFromUi(1);
+
+    /// <summary>Wire to UI Button for 5v5 queue.</summary>
+    public void UiSelectPvpMode5v5() => ApplyPvpModeIndexFromUi(2);
 
     private void WireButtonEvents()
     {
@@ -266,6 +450,9 @@ public class MainMenuUI : MonoBehaviour
                 SceneManager.LoadScene(_gameSceneName);
             return;
         }
+
+        if (!HasMatchTypeToggles())
+            ApplyPvpMatchmakingModeFromDropdown();
 
         if (_matchmaking != null)
         {

@@ -4,28 +4,24 @@ using UnityEngine;
 using UnityEngine.UI;
 
 /// <summary>
-/// Создаёт ClientUpdatePanel на Canvas текущей сцены (LoginScene, MainMenu) и вешает <see cref="ClientUpdateGate"/>.
+/// Панель обновления клиента на Canvas (LoginScene, MainMenu). Добавляется только если ещё нет — без перезаписи.
 /// </summary>
 public static class ClientUpdatePanelSetupTool
 {
-    [MenuItem("Tools/Hex Grid/Setup Client Update Panel (LoginScene / MainMenu)")]
-    public static void Setup()
+    /// <summary>Возвращает true, если панель была создана.</summary>
+    public static bool TryEnsureClientUpdatePanel(Canvas canvas)
     {
-        Canvas canvas = Object.FindFirstObjectByType<Canvas>();
         if (canvas == null)
-        {
-            EditorUtility.DisplayDialog("Client Update Panel", "В сцене не найден Canvas.", "OK");
-            return;
-        }
+            return false;
+        if (canvas.transform.Find(UiHierarchyNames.ClientUpdatePanel) != null)
+            return false;
+        BuildClientUpdatePanel(canvas);
+        return true;
+    }
 
+    private static void BuildClientUpdatePanel(Canvas canvas)
+    {
         Transform root = canvas.transform;
-        Transform existing = root.Find(UiHierarchyNames.ClientUpdatePanel);
-        if (existing != null)
-        {
-            if (!EditorUtility.DisplayDialog("Client Update Panel", "ClientUpdatePanel уже есть. Пересоздать?", "Да", "Нет"))
-                return;
-            Object.DestroyImmediate(existing.gameObject);
-        }
 
         var panelGo = new GameObject(UiHierarchyNames.ClientUpdatePanel, typeof(RectTransform), typeof(Image));
         panelGo.transform.SetParent(root, false);
@@ -55,7 +51,7 @@ public static class ClientUpdatePanelSetupTool
         vlg.childForceExpandWidth = true;
 
         CreateText(box.transform, UiHierarchyNames.ClientUpdateMessageText,
-            "Доступна новая версия игры.\nСкачайте обновление, чтобы продолжить.", 18, TextAnchor.UpperLeft);
+            "A new version is available.\nDownload the update to continue.", 18, TextAnchor.UpperLeft);
 
         CreateText(box.transform, UiHierarchyNames.ClientUpdateStatusText, "", 14, TextAnchor.UpperLeft);
 
@@ -89,7 +85,7 @@ public static class ClientUpdatePanelSetupTool
         bt.fontSize = 18;
         bt.color = Color.white;
         bt.alignment = TextAnchor.MiddleCenter;
-        bt.text = "Скачать";
+        bt.text = "Download";
 
         panelGo.SetActive(false);
 
@@ -97,7 +93,6 @@ public static class ClientUpdatePanelSetupTool
             canvas.gameObject.AddComponent<ClientUpdateGate>();
 
         EditorUtility.SetDirty(canvas.gameObject);
-        Debug.Log("[ClientUpdatePanel] Готово: Canvas → ClientUpdatePanel, компонент ClientUpdateGate. Повторите для сцены MainMenu при необходимости.");
     }
 
     private static void CreateText(Transform parent, string name, string msg, int fontSize, TextAnchor align)

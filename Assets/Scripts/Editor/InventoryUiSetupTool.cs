@@ -4,16 +4,15 @@ using UnityEngine;
 using UnityEngine.UI;
 
 /// <summary>
-/// Tools → Hex Grid → Setup Inventory UI — создаёт Inventory (12 ячеек), Canvas ActiveItemPanel
-/// с ActiveItem (Image), ActiveItemAmmoDonut (radial Image), ActiveItemAmmoText (Text),
-/// вешает InventoryUI и сохраняет сцену.
-/// Родитель: «Front Content Maker» (как у остального боя UI).
+/// Инвентарь под «Front Content Maker». Вызывается из <b>Tools → Hope → Create MainScene</b>.
 /// </summary>
 public static class InventoryUiSetupTool
 {
-    private const string MenuPath = "Tools/Hex Grid/Setup Inventory UI";
+    public static void PerformFullInventoryLayout()
+    {
+        SetupInventoryUi();
+    }
 
-    [MenuItem(MenuPath)]
     public static void SetupInventoryUi()
     {
         var front = GameObject.Find(UiHierarchyNames.FrontContentMaker);

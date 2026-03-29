@@ -7,7 +7,7 @@ public static class HoldIndicatorPrefabCreator
 {
     private const string PrefabPath = "Assets/Resources/HoldTargetIndicator.prefab";
 
-    [MenuItem("Tools/UI/Create Hold Target Indicator Prefab (Resources)")]
+    /// <summary>Вызывайте из кода при необходимости; в меню Tools только Hope → сцены.</summary>
     public static void CreatePrefab()
     {
         var root = new GameObject("HoldTargetIndicator");

@@ -1,13 +1,16 @@
 using System;
 using System.Collections.Concurrent;
+using System.IO;
 using System.Net.WebSockets;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using UnityEngine;
 
 /// <summary>
-/// WebSocket <c>/ws/session</c>: server notifies this channel when the same account logs in elsewhere (JWT revoked).
+/// WebSocket <c>/ws/session</c>: session revoke, matchmaking queue / ready-check / match start.
 /// </summary>
 public sealed class SessionWebSocketConnection : MonoBehaviour
 {
@@ -19,6 +22,21 @@ public sealed class SessionWebSocketConnection : MonoBehaviour
     private CancellationTokenSource _loopCts;
     private bool _revoked;
     private readonly ConcurrentQueue<Action> _mainThread = new();
+    private readonly SemaphoreSlim _sendLock = new(1, 1);
+
+    /// <summary>Queue / ready-check / match start (main thread).</summary>
+    public static event Action<string, int, int> OnMatchmakingQueueStateUpdated;
+
+    public static event Action OnMatchmakingQueueJoined;
+    public static event Action<string> OnMatchmakingQueueLeft;
+    public static event Action<string, string, long, int> OnMatchmakingReadyCheckStarted;
+    public static event Action<string, int, int> OnMatchmakingReadyCheckProgress;
+    public static event Action<string, string, string> OnMatchmakingReadyCheckCancelled;
+    public static event Action<MatchmakingMatchStartedMessage> OnMatchmakingMatchStarted;
+    public static event Action<string> OnMatchmakingQueueError;
+
+    public static bool IsSessionSocketConnected =>
+        _instance != null && _instance._ws != null && _instance._ws.State == WebSocketState.Open;
 
     public static void EnsureStarted()
     {
@@ -51,6 +69,65 @@ public sealed class SessionWebSocketConnection : MonoBehaviour
         _instance._ws = null;
     }
 
+    public static void SendMatchmakingQueueJoin(string mode)
+    {
+        TrySendJson(new { type = "queueJoin", mode });
+    }
+
+    public static void SendMatchmakingQueueLeave()
+    {
+        TrySendJson(new { type = "queueLeave" });
+    }
+
+    public static void SendMatchmakingReadyConfirm(string readyCheckId)
+    {
+        if (string.IsNullOrEmpty(readyCheckId))
+            return;
+        TrySendJson(new { type = "readyCheckConfirm", readyCheckId });
+    }
+
+    private static void TrySendJson(object payload)
+    {
+        string json;
+        try
+        {
+            json = JsonConvert.SerializeObject(payload);
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning("[SessionWS] serialize send: " + ex.Message);
+            return;
+        }
+
+        if (_instance == null)
+            return;
+        _ = _instance.SendJsonInternalAsync(json);
+    }
+
+    private async Task SendJsonInternalAsync(string json)
+    {
+        if (_revoked)
+            return;
+        await _sendLock.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            var w = _ws;
+            if (w == null || w.State != WebSocketState.Open)
+                return;
+            var bytes = Encoding.UTF8.GetBytes(json);
+            await w.SendAsync(new ArraySegment<byte>(bytes), WebSocketMessageType.Text, true, CancellationToken.None)
+                .ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning("[SessionWS] send: " + ex.Message);
+        }
+        finally
+        {
+            _sendLock.Release();
+        }
+    }
+
     private void Awake()
     {
         if (_instance != null && _instance != this)
@@ -77,6 +154,7 @@ public sealed class SessionWebSocketConnection : MonoBehaviour
 
         if (_instance == this)
             _instance = null;
+        _sendLock.Dispose();
     }
 
     private void Update()
@@ -155,7 +233,6 @@ public sealed class SessionWebSocketConnection : MonoBehaviour
         string root = baseUrl.TrimEnd('/');
         root = root.Replace("http://", "ws://", StringComparison.OrdinalIgnoreCase)
             .Replace("https://", "wss://", StringComparison.OrdinalIgnoreCase);
-        // Token in Authorization avoids huge query strings (some stacks limit URI length).
         string uri = $"{root}/ws/session";
 
         var ws = new ClientWebSocket();
@@ -192,6 +269,7 @@ public sealed class SessionWebSocketConnection : MonoBehaviour
 
                 return;
             }
+
             string detail = ex.InnerException != null ? ex.Message + " | " + ex.InnerException.Message : ex.Message;
             Debug.LogWarning("[SessionWS] connect failed to " + uri + " — " + detail +
                 " (is the battle server running? Check BattleServerRuntime / Toggle_Debug for the correct base URL.)");
@@ -208,23 +286,37 @@ public sealed class SessionWebSocketConnection : MonoBehaviour
         }
 
         _ws = ws;
-        var buf = new byte[8192];
+        var buf = new byte[16384];
         try
         {
             while (!ct.IsCancellationRequested && !_revoked && ws.State == WebSocketState.Open)
             {
-                var r = await ws.ReceiveAsync(new ArraySegment<byte>(buf), ct);
-                if (r.MessageType == WebSocketMessageType.Close)
-                    break;
-                if (r.MessageType != WebSocketMessageType.Text)
+                using var ms = new MemoryStream();
+                WebSocketReceiveResult r;
+                do
+                {
+                    var seg = new ArraySegment<byte>(buf);
+                    r = await ws.ReceiveAsync(seg, ct);
+                    if (r.MessageType == WebSocketMessageType.Close)
+                        goto sessionReceiveEnd;
+                    if (r.MessageType == WebSocketMessageType.Text)
+                        ms.Write(buf, 0, r.Count);
+                }
+                while (!r.EndOfMessage);
+
+                if (ms.Length == 0)
                     continue;
-                var text = Encoding.UTF8.GetString(buf, 0, r.Count);
+                var text = Encoding.UTF8.GetString(ms.ToArray());
                 if (text.IndexOf("sessionRevoked", StringComparison.Ordinal) >= 0)
                 {
                     _mainThread.Enqueue(HandleRevokedElsewhere);
                     break;
                 }
+
+                DispatchSessionJson(text);
             }
+
+        sessionReceiveEnd:;
         }
         catch (OperationCanceledException)
         {
@@ -257,6 +349,92 @@ public sealed class SessionWebSocketConnection : MonoBehaviour
 
             if (ReferenceEquals(_ws, ws))
                 _ws = null;
+        }
+    }
+
+    private void DispatchSessionJson(string text)
+    {
+        JObject jo;
+        try
+        {
+            jo = JObject.Parse(text);
+        }
+        catch
+        {
+            return;
+        }
+
+        var t = (string)jo["type"];
+        if (string.IsNullOrEmpty(t))
+            return;
+
+        switch (t)
+        {
+            case "queueStateUpdated":
+            {
+                string mode = (string)jo["mode"] ?? "";
+                int cur = jo["currentCount"]?.Value<int>() ?? 0;
+                int req = jo["requiredCount"]?.Value<int>() ?? 0;
+                _mainThread.Enqueue(() => OnMatchmakingQueueStateUpdated?.Invoke(mode, cur, req));
+                break;
+            }
+            case "queueJoined":
+                _mainThread.Enqueue(() => OnMatchmakingQueueJoined?.Invoke());
+                break;
+            case "queueLeft":
+            {
+                string mode = (string)jo["mode"];
+                _mainThread.Enqueue(() => OnMatchmakingQueueLeft?.Invoke(mode));
+                break;
+            }
+            case "readyCheckStarted":
+            {
+                string id = (string)jo["readyCheckId"] ?? "";
+                string mode = (string)jo["mode"] ?? "";
+                long deadline = jo["deadlineUtcMs"]?.Value<long>() ?? 0;
+                int req = jo["requiredCount"]?.Value<int>() ?? 0;
+                _mainThread.Enqueue(() => OnMatchmakingReadyCheckStarted?.Invoke(id, mode, deadline, req));
+                break;
+            }
+            case "readyCheckProgress":
+            {
+                string id = (string)jo["readyCheckId"] ?? "";
+                int conf = jo["confirmedCount"]?.Value<int>() ?? 0;
+                int req = jo["requiredCount"]?.Value<int>() ?? 0;
+                _mainThread.Enqueue(() => OnMatchmakingReadyCheckProgress?.Invoke(id, conf, req));
+                break;
+            }
+            case "readyCheckCancelled":
+            {
+                string id = (string)jo["readyCheckId"] ?? "";
+                string mode = (string)jo["mode"] ?? "";
+                string reason = (string)jo["reason"] ?? "";
+                _mainThread.Enqueue(() => OnMatchmakingReadyCheckCancelled?.Invoke(id, mode, reason));
+                break;
+            }
+            case "matchStarted":
+            {
+                MatchmakingMatchStartedMessage msg;
+                try
+                {
+                    msg = jo.ToObject<MatchmakingMatchStartedMessage>();
+                }
+                catch
+                {
+                    return;
+                }
+
+                if (msg == null)
+                    return;
+                _mainThread.Enqueue(() => OnMatchmakingMatchStarted?.Invoke(msg));
+                break;
+            }
+            case "queueError":
+            {
+                string code = (string)jo["code"] ?? "error";
+                _mainThread.Enqueue(() => OnMatchmakingQueueError?.Invoke(code));
+                break;
+            }
         }
     }
 

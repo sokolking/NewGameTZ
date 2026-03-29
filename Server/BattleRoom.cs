@@ -111,10 +111,13 @@ public partial class BattleRoom
     {
         if (TryGetBattlePlayerUserId(playerId, out long uid) && uid > 0)
             return uid.ToString();
-        if (string.Equals(playerId, "P1", StringComparison.Ordinal))
-            return "-1";
-        if (string.Equals(playerId, "P2", StringComparison.Ordinal))
-            return "-2";
+        if (!string.IsNullOrEmpty(playerId)
+            && playerId.Length >= 2
+            && playerId[0] is 'P' or 'p'
+            && int.TryParse(playerId.AsSpan(1), out int slot)
+            && slot >= 1
+            && slot <= 64)
+            return (-slot).ToString();
         return "-" + Math.Abs((playerId ?? "").GetHashCode(StringComparison.Ordinal)).ToString();
     }
 

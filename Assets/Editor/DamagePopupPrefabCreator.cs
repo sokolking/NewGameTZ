@@ -9,7 +9,7 @@ public static class DamagePopupPrefabCreator
 {
     private const string PrefabPath = "Assets/Resources/DamagePopup.prefab";
 
-    [MenuItem("Tools/UI/Create Damage Popup Prefab (Resources)")]
+    /// <summary>Вызывайте из кода при необходимости; в меню Tools только Hope → сцены.</summary>
     public static void CreatePrefab()
     {
         var root = new GameObject("DamagePopup");

@@ -4,16 +4,16 @@ using UnityEngine.UI;
 using UnityEditor.SceneManagement;
 
 /// <summary>
-/// Tools → Hex Grid → Setup Main Menu UI — главное меню: фон, AuthPanel (логин/пароль), галки,
-/// кнопки Find Game / Settings / Quit и панель настроек.
+/// Сборка UI главного меню. Точка входа: <b>Tools → Hope → Create MainMenu</b>.
 /// </summary>
 public static class MainMenuSetupTool
 {
-    private const string MenuPath = "Tools/Hex Grid/Setup Main Menu UI";
-    private const string AddTogglesMenuPath = "Tools/Hex Grid/Add Main Menu Toggles";
-    private const string AddAuthMenuPath = "Tools/Hex Grid/Add Main Menu Auth Panel";
+    /// <summary>Полная вёрстка MainMenu (как в сцене): пересоздаёт MainMenuUI, настройки, матчмейкинг.</summary>
+    public static void PerformFullMainMenuLayout()
+    {
+        SetupMainMenuUiCore();
+    }
 
-    [MenuItem(AddAuthMenuPath)]
     public static void AddAuthPanelToExistingMainMenu()
     {
 #if UNITY_2023_1_OR_NEWER
@@ -67,7 +67,6 @@ public static class MainMenuSetupTool
         Debug.Log("Hex Grid: AuthPanel добавлен и привязан к MainMenuUI.");
     }
 
-    [MenuItem(AddTogglesMenuPath)]
     public static void AddTogglesToExistingMainMenu()
     {
 #if UNITY_2023_1_OR_NEWER
@@ -108,8 +107,7 @@ public static class MainMenuSetupTool
         Debug.Log("Hex Grid: галки «Бой с монстром» и «Debug (localhost)» добавлены/обновлены и привязаны к MainMenuUI.");
     }
 
-    [MenuItem(MenuPath)]
-    public static void SetupMainMenuUi()
+    private static void SetupMainMenuUiCore()
     {
         // Канвас
         Canvas canvas;
@@ -132,6 +130,10 @@ public static class MainMenuSetupTool
             canvasGo.AddComponent<GraphicRaycaster>();
             Undo.RegisterCreatedObjectUndo(canvasGo, "Main Menu UI");
         }
+
+        var canvasRtFix = canvasGo.GetComponent<RectTransform>();
+        if (canvasRtFix != null && canvasRtFix.localScale.sqrMagnitude < 1e-6f)
+            canvasRtFix.localScale = Vector3.one;
 
         // Удаляем старое меню (если было)
         Transform oldMainMenu = canvasGo.transform.Find("MainMenuUI");
@@ -210,6 +212,26 @@ public static class MainMenuSetupTool
         Toggle debugToggle = CreateMenuToggle(menuRoot.transform, "Toggle_Debug", "Debug (localhost)", 75f);
         debugToggle.isOn = BattleServerRuntime.UseDebugLocalhost;
 
+        GameObject matchTypesGo = new GameObject("MatchTypes", typeof(RectTransform), typeof(HorizontalLayoutGroup));
+        matchTypesGo.transform.SetParent(menuRoot.transform, false);
+        RectTransform mtRt = matchTypesGo.GetComponent<RectTransform>();
+        mtRt.anchorMin = new Vector2(0.5f, 0.5f);
+        mtRt.anchorMax = new Vector2(0.5f, 0.5f);
+        mtRt.pivot = new Vector2(0.5f, 0.5f);
+        mtRt.anchoredPosition = new Vector2(0f, 138f);
+        mtRt.sizeDelta = new Vector2(320f, 32f);
+        HorizontalLayoutGroup hlgMt = matchTypesGo.GetComponent<HorizontalLayoutGroup>();
+        hlgMt.spacing = 14f;
+        hlgMt.childAlignment = TextAnchor.MiddleCenter;
+        hlgMt.childControlWidth = false;
+        hlgMt.childControlHeight = true;
+        hlgMt.childForceExpandWidth = false;
+        hlgMt.childForceExpandHeight = false;
+
+        Toggle matchT1 = CreateMatchTypeToggle(matchTypesGo.transform, "Toggle_1v1", "1v1");
+        Toggle matchT3 = CreateMatchTypeToggle(matchTypesGo.transform, "Toggle_3v3", "3v3");
+        Toggle matchT5 = CreateMatchTypeToggle(matchTypesGo.transform, "Toggle_5v5", "5v5");
+
         // Текст статуса матчмейкинга («Searching for opponent...»)
         GameObject statusGo = new GameObject("StatusText", typeof(RectTransform), typeof(Text));
         statusGo.transform.SetParent(menuRoot.transform, false);
@@ -226,9 +248,90 @@ public static class MainMenuSetupTool
         statusTxt.color = new Color(0.8f, 0.8f, 0.8f, 1f);
 
         var matchmaking = menuRoot.AddComponent<MainMenuMatchmaking>();
+
+        // Панель очереди матчмейкинга (WebSocket /ws/session)
+        GameObject mqPanel = new GameObject("MatchmakingQueuePanel", typeof(RectTransform), typeof(Image));
+        mqPanel.transform.SetParent(canvasGo.transform, false);
+        RectTransform mqPr = mqPanel.GetComponent<RectTransform>();
+        mqPr.anchorMin = Vector2.zero;
+        mqPr.anchorMax = Vector2.one;
+        mqPr.offsetMin = Vector2.zero;
+        mqPr.offsetMax = Vector2.zero;
+        mqPanel.GetComponent<Image>().color = new Color(0f, 0f, 0f, 0.65f);
+        mqPanel.SetActive(false);
+
+        GameObject mqBox = new GameObject("Box", typeof(RectTransform), typeof(Image));
+        mqBox.transform.SetParent(mqPanel.transform, false);
+        RectTransform boxRt = mqBox.GetComponent<RectTransform>();
+        boxRt.anchorMin = new Vector2(0.5f, 0.5f);
+        boxRt.anchorMax = new Vector2(0.5f, 0.5f);
+        boxRt.pivot = new Vector2(0.5f, 0.5f);
+        boxRt.anchoredPosition = Vector2.zero;
+        boxRt.sizeDelta = new Vector2(360f, 220f);
+        mqBox.GetComponent<Image>().color = new Color(0.15f, 0.15f, 0.18f, 1f);
+
+        Text CreateMqLabel(string name, string text, Vector2 pos, Vector2 size, int fontSize)
+        {
+            GameObject go = new GameObject(name, typeof(RectTransform), typeof(Text));
+            go.transform.SetParent(mqBox.transform, false);
+            RectTransform rt = go.GetComponent<RectTransform>();
+            rt.anchorMin = new Vector2(0.5f, 0.5f);
+            rt.anchorMax = new Vector2(0.5f, 0.5f);
+            rt.pivot = new Vector2(0.5f, 0.5f);
+            rt.anchoredPosition = pos;
+            rt.sizeDelta = size;
+            Text t = go.GetComponent<Text>();
+            t.text = text;
+            t.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+            t.alignment = TextAnchor.MiddleCenter;
+            t.color = Color.white;
+            t.fontSize = fontSize;
+            return t;
+        }
+
+        Text mqModeTxt = CreateMqLabel("ModeText", "", new Vector2(0f, 70f), new Vector2(340f, 28f), 16);
+        Text mqProgTxt = CreateMqLabel("ProgressText", "0/2", new Vector2(0f, 35f), new Vector2(340f, 36f), 22);
+        Text mqReadyHintTxt = CreateMqLabel("ReadyHintText", "", new Vector2(0f, 0f), new Vector2(340f, 44f), 14);
+
+        Button CreateMqButton(string name, string label, Vector2 pos)
+        {
+            GameObject btnGo = new GameObject(name, typeof(RectTransform), typeof(Image), typeof(Button));
+            btnGo.transform.SetParent(mqBox.transform, false);
+            RectTransform rt = btnGo.GetComponent<RectTransform>();
+            rt.anchorMin = new Vector2(0.5f, 0.5f);
+            rt.anchorMax = new Vector2(0.5f, 0.5f);
+            rt.pivot = new Vector2(0.5f, 0.5f);
+            rt.anchoredPosition = pos;
+            rt.sizeDelta = new Vector2(140f, 36f);
+            btnGo.GetComponent<Image>().color = new Color(0.25f, 0.35f, 0.5f, 1f);
+            Button b = btnGo.GetComponent<Button>();
+            GameObject tg = new GameObject("Text", typeof(RectTransform), typeof(Text));
+            tg.transform.SetParent(btnGo.transform, false);
+            RectTransform tr = tg.GetComponent<RectTransform>();
+            tr.anchorMin = Vector2.zero;
+            tr.anchorMax = Vector2.one;
+            tr.offsetMin = Vector2.zero;
+            tr.offsetMax = Vector2.zero;
+            Text tx = tg.GetComponent<Text>();
+            tx.text = label;
+            tx.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+            tx.alignment = TextAnchor.MiddleCenter;
+            tx.color = Color.white;
+            return b;
+        }
+
+        Button mqLeaveBtn = CreateMqButton("Button_LeaveQueue", "Leave queue", new Vector2(-75f, -55f));
+        Button mqReadyBtn = CreateMqButton("Button_Ready", "Ready", new Vector2(75f, -55f));
+
         var soMatchmaking = new SerializedObject(matchmaking);
         soMatchmaking.FindProperty("_statusText").objectReferenceValue = statusTxt;
         soMatchmaking.FindProperty("_gameSceneName").stringValue = "MainScene";
+        soMatchmaking.FindProperty("_queuePanel").objectReferenceValue = mqPanel;
+        soMatchmaking.FindProperty("_queueProgressText").objectReferenceValue = mqProgTxt;
+        soMatchmaking.FindProperty("_queueModeText").objectReferenceValue = mqModeTxt;
+        soMatchmaking.FindProperty("_leaveQueueButton").objectReferenceValue = mqLeaveBtn;
+        soMatchmaking.FindProperty("_readyButton").objectReferenceValue = mqReadyBtn;
+        soMatchmaking.FindProperty("_readyHintText").objectReferenceValue = mqReadyHintTxt;
         soMatchmaking.ApplyModifiedPropertiesWithoutUndo();
 
         // Панель настроек
@@ -355,6 +458,10 @@ public static class MainMenuSetupTool
         so.FindProperty("_matchmaking").objectReferenceValue = matchmaking;
         so.FindProperty("_soloVsMonsterToggle").objectReferenceValue = soloToggle;
         so.FindProperty("_debugLocalhostToggle").objectReferenceValue = debugToggle;
+        so.FindProperty("_pvpMatchmakingModeDropdown").objectReferenceValue = null;
+        so.FindProperty("_matchTypeToggle1v1").objectReferenceValue = matchT1;
+        so.FindProperty("_matchTypeToggle3v3").objectReferenceValue = matchT3;
+        so.FindProperty("_matchTypeToggle5v5").objectReferenceValue = matchT5;
         so.FindProperty("_loginInputField").objectReferenceValue = loginField;
         so.FindProperty("_passwordInputField").objectReferenceValue = passwordField;
         so.ApplyModifiedPropertiesWithoutUndo();
@@ -409,7 +516,7 @@ public static class MainMenuSetupTool
         return (loginField, passwordField);
     }
 
-    private static InputField CreateAuthInputRow(
+    public static InputField CreateAuthInputRow(
         RectTransform parent,
         string labelObjectName,
         string inputObjectName,
@@ -486,7 +593,7 @@ public static class MainMenuSetupTool
     }
 
     /// <summary>Создаёт стандартный UI Toggle (чекбокс + подпись) под родителем меню.</summary>
-    private static Toggle CreateMenuToggle(Transform parent, string objectName, string label, float anchoredY)
+    public static Toggle CreateMenuToggle(Transform parent, string objectName, string label, float anchoredY)
     {
         Font font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
         var row = new GameObject(objectName, typeof(RectTransform));
@@ -542,6 +649,64 @@ public static class MainMenuSetupTool
         toggle.isOn = false;
 
         Undo.RegisterCreatedObjectUndo(row, "Main Menu Toggle");
+        return toggle;
+    }
+
+    static Toggle CreateMatchTypeToggle(Transform parent, string objectName, string label)
+    {
+        Font font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+        var row = new GameObject(objectName, typeof(RectTransform), typeof(LayoutElement));
+        row.transform.SetParent(parent, false);
+        var le = row.GetComponent<LayoutElement>();
+        le.minWidth = 84f;
+        le.preferredWidth = 84f;
+        le.minHeight = 28f;
+        le.preferredHeight = 28f;
+
+        var bg = new GameObject("Background", typeof(RectTransform), typeof(Image));
+        bg.transform.SetParent(row.transform, false);
+        var bgRt = bg.GetComponent<RectTransform>();
+        bgRt.anchorMin = new Vector2(0f, 0.5f);
+        bgRt.anchorMax = new Vector2(0f, 0.5f);
+        bgRt.pivot = new Vector2(0f, 0.5f);
+        bgRt.anchoredPosition = Vector2.zero;
+        bgRt.sizeDelta = new Vector2(22f, 22f);
+        var bgImg = bg.GetComponent<Image>();
+        bgImg.color = new Color(0.35f, 0.35f, 0.4f, 1f);
+        bgImg.raycastTarget = true;
+
+        var mark = new GameObject("Checkmark", typeof(RectTransform), typeof(Image));
+        mark.transform.SetParent(bg.transform, false);
+        var markRt = mark.GetComponent<RectTransform>();
+        markRt.anchorMin = Vector2.zero;
+        markRt.anchorMax = Vector2.one;
+        markRt.offsetMin = new Vector2(4f, 4f);
+        markRt.offsetMax = new Vector2(-4f, -4f);
+        var markImg = mark.GetComponent<Image>();
+        markImg.color = new Color(0.2f, 0.85f, 0.35f, 1f);
+        markImg.raycastTarget = false;
+
+        var labelGo = new GameObject("Label", typeof(RectTransform), typeof(Text));
+        labelGo.transform.SetParent(row.transform, false);
+        var labelRt = labelGo.GetComponent<RectTransform>();
+        labelRt.anchorMin = new Vector2(0f, 0f);
+        labelRt.anchorMax = new Vector2(1f, 1f);
+        labelRt.offsetMin = new Vector2(30f, 0f);
+        labelRt.offsetMax = Vector2.zero;
+        var labelTxt = labelGo.GetComponent<Text>();
+        labelTxt.font = font;
+        labelTxt.fontSize = 15;
+        labelTxt.alignment = TextAnchor.MiddleLeft;
+        labelTxt.color = Color.white;
+        labelTxt.text = label;
+        labelTxt.raycastTarget = false;
+
+        var toggle = row.AddComponent<Toggle>();
+        toggle.targetGraphic = bgImg;
+        toggle.graphic = markImg;
+        toggle.isOn = false;
+
+        Undo.RegisterCreatedObjectUndo(row, "Match type toggle");
         return toggle;
     }
 }

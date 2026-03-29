@@ -3,13 +3,45 @@ using UnityEngine;
 using UnityEngine.UI;
 
 /// <summary>
-/// Tools → Hex Grid → Setup AP UI — создаёт Canvas, Text и Button и вешает ActionPointsUI.
+/// Боевой HUD (AP, лог, диалоги). Вызывается из <b>Tools → Hope → Create MainScene</b>.
 /// </summary>
 public static class HexApUiSetupTool
 {
-    private const string MenuPath = "Tools/Hex Grid/Setup AP UI";
+    /// <summary>AP UI + Front Content Maker + оверлеи ожидания раунда / skip / escape / block.</summary>
+    public static void PerformFullBattleHudLayout()
+    {
+        SetupApUi();
+#if UNITY_2023_1_OR_NEWER
+        var apUi = Object.FindFirstObjectByType<ActionPointsUI>();
+#else
+        var apUi = Object.FindObjectOfType<ActionPointsUI>();
+#endif
+        if (apUi != null)
+            EnsureFrontContentMaker(apUi.GetComponent<Canvas>());
+        AddRoundWaitOverlay();
+        AddSkipDialog();
+        AddEscapeBattleDialog();
+        SetupBlockOverlay();
+    }
 
-    [MenuItem(MenuPath)]
+    /// <summary>Родитель для инвентаря и части UI; только добавляет объект, если его ещё нет.</summary>
+    public static void EnsureFrontContentMaker(Canvas canvas)
+    {
+        if (canvas == null)
+            return;
+        if (canvas.transform.Find(UiHierarchyNames.FrontContentMaker) != null)
+            return;
+        GameObject go = new GameObject(UiHierarchyNames.FrontContentMaker, typeof(RectTransform));
+        Undo.RegisterCreatedObjectUndo(go, "Front Content Maker");
+        go.transform.SetParent(canvas.transform, false);
+        var rt = go.GetComponent<RectTransform>();
+        rt.anchorMin = Vector2.zero;
+        rt.anchorMax = Vector2.one;
+        rt.offsetMin = Vector2.zero;
+        rt.offsetMax = Vector2.zero;
+        go.transform.SetAsFirstSibling();
+    }
+
     public static void SetupApUi()
     {
 #if UNITY_2023_1_OR_NEWER
@@ -167,9 +199,6 @@ public static class HexApUiSetupTool
         Debug.Log("Hex Grid: AP UI создан (Canvas + AP Text + End Turn Button + Log ScrollView).");
     }
 
-    private const string RoundWaitMenu = "Tools/Hex Grid/Add Round Wait Overlay to AP UI";
-
-    [MenuItem(RoundWaitMenu)]
     public static void AddRoundWaitOverlay()
     {
 #if UNITY_2023_1_OR_NEWER
@@ -272,12 +301,9 @@ public static class HexApUiSetupTool
         Debug.Log("Hex Grid: RoundWaitPanel добавлен (последний дочерний у Canvas — поверх UI). Перемести в конец иерархии Canvas при необходимости.");
     }
 
-    private const string SkipDialogMenu = "Tools/Hex Grid/Add Skip Dialog (пропуск ОД)";
-
     /// <summary>
     /// Создаёт панель «Сколько ОД пропустить» в Canvas и проставляет ссылки в ActionPointsUI (без runtime-генерации).
     /// </summary>
-    [MenuItem(SkipDialogMenu)]
     public static void AddSkipDialog()
     {
 #if UNITY_2023_1_OR_NEWER
@@ -387,12 +413,9 @@ public static class HexApUiSetupTool
         Debug.Log("Hex Grid: SkipDialogPanel добавлен на Canvas и привязан к ActionPointsUI. При необходимости перенеси в конец иерархии Canvas (поверх остального UI).");
     }
 
-    private const string EscapeBattleDialogMenu = "Tools/Hex Grid/Add Escape Battle Dialog";
-
     /// <summary>
     /// Создаёт <see cref="UiHierarchyNames.EscapeBattlePanel"/> на Canvas и проставляет ссылки в <see cref="ActionPointsUI"/>.
     /// </summary>
-    [MenuItem(EscapeBattleDialogMenu)]
     public static void AddEscapeBattleDialog()
     {
 #if UNITY_2023_1_OR_NEWER
@@ -516,12 +539,9 @@ public static class HexApUiSetupTool
         return button;
     }
 
-    private const string BlockOverlayMenuPath = "Tools/Hex Grid/Setup Block Overlay";
-
     /// <summary>
     /// Создаёт <see cref="UiHierarchyNames.BlockOverlay"/> под корневым Canvas и вешает <see cref="UiBlockOverlaySync"/>.
     /// </summary>
-    [MenuItem(BlockOverlayMenuPath)]
     public static void SetupBlockOverlay()
     {
         // Не FindFirstObjectByType<Canvas> — в сцене много Canvas; нужен тот же, что и ActionPointsUI.

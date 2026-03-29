@@ -6,9 +6,11 @@ using UnityEngine.UI;
 using UnityEngine.Video;
 
 /// <summary>
-/// При загрузке LoginScene и MainMenu добавляет полноэкранный зацикленный видеофон
+/// Полноэкранный зацикленный видеофон для LoginScene и MainMenu
 /// (<c>Resources/Video/tz_background</c> или <c>StreamingAssets/tz_background.mp4</c>).
-/// До первого кадра показывается чёрный плейсхолдер, чтобы меню не мигало «без фона».
+/// Хостится в <c>DontDestroyOnLoad</c> со своим Canvas (низкий sorting order), чтобы при переходе
+/// Login → MainMenu один и тот же <see cref="VideoPlayer"/> продолжал играть, а не стартовал заново.
+/// При входе в бой (<c>MainScene</c>) хост уничтожается.
 /// </summary>
 public static class UiLoopingVideoBackgroundSetup
 {
@@ -16,8 +18,13 @@ public static class UiLoopingVideoBackgroundSetup
     const string StreamingFileName = "tz_background.mp4";
     public const string RootObjectName = "VideoBackgroundRoot";
     const string PlaceholderObjectName = "VideoBackgroundPlaceholder";
+    const string MainBattleSceneName = "MainScene";
+
+    /// <summary>Behind default UI canvases (0).</summary>
+    const int MenuVideoCanvasSortOrder = -1000;
 
     static ResourceRequest _clipWarmup;
+    static GameObject _persistentHost;
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterAssembliesLoaded)]
     static void WarmupClip()
@@ -34,24 +41,60 @@ public static class UiLoopingVideoBackgroundSetup
 
     static void OnSceneLoaded(Scene scene, LoadSceneMode mode)
     {
+        if (mode == LoadSceneMode.Additive)
+            return;
+
+        if (scene.name == MainBattleSceneName)
+        {
+            DestroyPersistentHost();
+            return;
+        }
+
         if (scene.name != "LoginScene" && scene.name != "MainMenu")
             return;
-        EnsureVideoBackground(scene);
+
+        EnsureMenuVideoBackground();
     }
 
-    static void EnsureVideoBackground(Scene scene)
+    static void DestroyPersistentHost()
     {
-        Canvas canvas = FindCanvasInScene(scene);
-        if (canvas == null)
+        if (_persistentHost == null)
             return;
+        Object.Destroy(_persistentHost);
+        _persistentHost = null;
+    }
 
-        if (canvas.transform.Find(RootObjectName) != null)
+    static void EnsureMenuVideoBackground()
+    {
+        if (_persistentHost != null)
+        {
+            _persistentHost.SetActive(true);
             return;
+        }
+
+        var host = new GameObject("VideoBackgroundPersistentHost");
+        Object.DontDestroyOnLoad(host);
+        _persistentHost = host;
+
+        var canvasGo = new GameObject("MenuVideoBackgroundCanvas", typeof(RectTransform), typeof(Canvas), typeof(CanvasScaler));
+        canvasGo.transform.SetParent(host.transform, false);
+        var canvas = canvasGo.GetComponent<Canvas>();
+        canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+        canvas.sortingOrder = MenuVideoCanvasSortOrder;
+        canvas.overrideSorting = true;
+
+        var canvasRect = canvasGo.GetComponent<RectTransform>();
+        StretchFullScreen(canvasRect);
+
+        var scaler = canvasGo.GetComponent<CanvasScaler>();
+        scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
+        scaler.referenceResolution = new Vector2(1920, 1080);
+        scaler.matchWidthOrHeight = 0.5f;
 
         GameObject placeholder = CreateBlackPlaceholder(canvas);
 
         var root = new GameObject(RootObjectName);
-        root.transform.SetParent(canvas.transform, false);
+        root.transform.SetParent(canvasGo.transform, false);
         var rect = root.AddComponent<RectTransform>();
         StretchFullScreen(rect);
 
@@ -73,7 +116,6 @@ public static class UiLoopingVideoBackgroundSetup
         vp.renderMode = VideoRenderMode.RenderTexture;
         vp.audioOutputMode = VideoAudioOutputMode.None;
         vp.sendFrameReadyEvents = true;
-        // Иначе при соотношении сторон экрана ≠ ролика (например 16:10 vs 16:9) Unity «заполняет» RT с обрезкой краёв.
         vp.aspectRatio = VideoAspectRatio.Stretch;
 
         int w = Mathf.Max(256, Screen.width);
@@ -107,8 +149,11 @@ public static class UiLoopingVideoBackgroundSetup
             Debug.LogWarning(
                 $"UiLoopingVideoBackgroundSetup: не найдено видео. Ожидалось Resources/{ResourceClipPath} или StreamingAssets/{StreamingFileName}.");
             holder.ReleaseWithoutDestroy();
-            UnityEngine.Object.Destroy(placeholder);
-            UnityEngine.Object.Destroy(root);
+            Object.Destroy(placeholder);
+            Object.Destroy(root);
+            Object.Destroy(canvasGo);
+            Object.Destroy(host);
+            _persistentHost = null;
             return;
         }
 
@@ -142,21 +187,6 @@ public static class UiLoopingVideoBackgroundSetup
 #endif
     }
 
-    static Canvas FindCanvasInScene(Scene scene)
-    {
-        Canvas[] canvases = UnityEngine.Object.FindObjectsByType<Canvas>(
-            FindObjectsInactive.Include,
-            FindObjectsSortMode.None);
-
-        foreach (Canvas c in canvases)
-        {
-            if (c != null && c.gameObject.scene == scene)
-                return c;
-        }
-
-        return null;
-    }
-
     static void StretchFullScreen(RectTransform rt)
     {
         rt.anchorMin = Vector2.zero;
@@ -188,7 +218,7 @@ public static class UiLoopingVideoBackgroundSetup
             if (_rt != null)
             {
                 _rt.Release();
-                UnityEngine.Object.Destroy(_rt);
+                Object.Destroy(_rt);
                 _rt = null;
             }
 
@@ -258,7 +288,7 @@ public static class UiLoopingVideoBackgroundSetup
 
             if (_placeholder != null)
             {
-                UnityEngine.Object.Destroy(_placeholder);
+                Object.Destroy(_placeholder);
                 _placeholder = null;
             }
         }

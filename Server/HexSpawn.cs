@@ -71,6 +71,85 @@ public static class HexSpawn
     }
 
     /// <summary>
+    /// Спавны для двух команд: сначала <paramref name="playersPerTeam"/> слотов команды A (левая треть карты),
+    /// затем столько же — команда B (правая треть). Внутри команды — максимизация минимальной дистанции между игроками.
+    /// </summary>
+    public static List<(int col, int row)> FindTwoTeamSpawns(int playersPerTeam, int width, int length, int minWithinTeam)
+    {
+        int leftMax = Math.Max(0, width / 3 - 1);
+        int rightMin = Math.Min(width - 1, 2 * width / 3);
+        var teamA = GreedySpawnsInRect(playersPerTeam, 0, leftMax, 0, length - 1, minWithinTeam, width, length);
+        var teamB = GreedySpawnsInRect(playersPerTeam, rightMin, width - 1, 0, length - 1, minWithinTeam, width, length);
+        var all = new List<(int col, int row)>(teamA.Count + teamB.Count);
+        all.AddRange(teamA);
+        all.AddRange(teamB);
+        return all;
+    }
+
+    private static List<(int col, int row)> GreedySpawnsInRect(int count, int colMin, int colMax, int rowMin, int rowMax, int minWithinTeam, int width, int length)
+    {
+        var placed = new List<(int col, int row)>();
+        if (count <= 0)
+            return placed;
+        colMin = Math.Clamp(colMin, 0, width - 1);
+        colMax = Math.Clamp(colMax, 0, width - 1);
+        rowMin = Math.Clamp(rowMin, 0, length - 1);
+        rowMax = Math.Clamp(rowMax, 0, length - 1);
+        if (colMin > colMax || rowMin > rowMax)
+            return placed;
+
+        for (int k = 0; k < count; k++)
+        {
+            int bestC = -1, bestR = -1, bestScore = int.MinValue;
+            for (int c = colMin; c <= colMax; c++)
+            {
+                for (int r = rowMin; r <= rowMax; r++)
+                {
+                    int minD = int.MaxValue;
+                    foreach (var (pc, pr) in placed)
+                    {
+                        int d = HexDistance(c, r, pc, pr);
+                        if (d < minD)
+                            minD = d;
+                    }
+
+                    if (placed.Count > 0 && minD < minWithinTeam)
+                        continue;
+                    int score = placed.Count == 0 ? c + r : minD;
+                    if (score > bestScore)
+                    {
+                        bestScore = score;
+                        bestC = c;
+                        bestR = r;
+                    }
+                }
+            }
+
+            if (bestC < 0)
+            {
+                for (int c = colMin; c <= colMax; c++)
+                {
+                    for (int r = rowMin; r <= rowMax; r++)
+                    {
+                        int minD = placed.Count == 0 ? 999 : placed.Min(p => HexDistance(c, r, p.col, p.row));
+                        if (minD > bestScore)
+                        {
+                            bestScore = minD;
+                            bestC = c;
+                            bestR = r;
+                        }
+                    }
+                }
+            }
+
+            if (bestC >= 0)
+                placed.Add((bestC, bestR));
+        }
+
+        return placed;
+    }
+
+    /// <summary>
     /// Клетка ровно на <paramref name="dist"/> шагах от старта (идём по прямой в одном из 6 направлений).
     /// Для отладки спавна моба на фиксированной дистанции от игрока.
     /// </summary>

@@ -3,7 +3,7 @@ using BattleServer.Models;
 namespace BattleServer;
 
 /// <summary>Хранилище боёв в памяти. Одна глобальная комната для быстрого теста: первые два join попадают в один бой.</summary>
-public class BattleRoomStore
+public partial class BattleRoomStore
 {
     private readonly object _lock = new();
     private readonly BattleHistoryDatabase _battleHistoryDb;

@@ -250,8 +250,13 @@ BattleRoom.RoundClosedForPush += room =>
 
 // Фон: тик таймеров раундов раз в 0.2 сек
 var store = app.Services.GetRequiredService<BattleRoomStore>();
+UserSessionSocketRegistry.UserFullyDisconnected += userId => store.OnMatchmakingUserSessionEnded(userId);
 var timer = new System.Timers.Timer(200);
-timer.Elapsed += (_, _) => store.Tick(0.2f);
+timer.Elapsed += (_, _) =>
+{
+    store.Tick(0.2f);
+    store.MatchmakingTick();
+};
 timer.Start();
 
 // POST /api/auth/login — credentials → JWT (new session revokes previous tokens and battle WebSockets).
@@ -472,7 +477,7 @@ app.Map("/ws/battle", async (HttpContext ctx, BattleRoomStore store, BattleAuthS
 });
 
 // /ws/session — long-lived session channel; same JWT as HTTP APIs; new login closes this socket and revokes the old token.
-app.Map("/ws/session", async (HttpContext ctx, BattleAuthSession battleAuth) =>
+app.Map("/ws/session", async (HttpContext ctx, BattleAuthSession battleAuth, BattleRoomStore sessionMatchmakingStore) =>
 {
     if (!ctx.WebSockets.IsWebSocketRequest)
     {
@@ -500,10 +505,48 @@ app.Map("/ws/session", async (HttpContext ctx, BattleAuthSession battleAuth) =>
     {
         while (ws.State == WebSocketState.Open)
         {
-            var r = await ws.ReceiveAsync(new ArraySegment<byte>(buf), ctx.RequestAborted);
-            if (r.MessageType == WebSocketMessageType.Close)
-                break;
+            using var ms = new MemoryStream();
+            WebSocketReceiveResult r;
+            do
+            {
+                var seg = new ArraySegment<byte>(buf);
+                r = await ws.ReceiveAsync(seg, ctx.RequestAborted);
+                if (r.MessageType == WebSocketMessageType.Close)
+                    goto sessionWsEnd;
+                if (r.MessageType == WebSocketMessageType.Text)
+                    ms.Write(buf, 0, r.Count);
+            }
+            while (!r.EndOfMessage);
+
+            if (ms.Length == 0)
+                continue;
+            var text = Encoding.UTF8.GetString(ms.ToArray());
+            if (text.IndexOf("sessionRevoked", StringComparison.Ordinal) >= 0)
+                continue;
+            try
+            {
+                using var doc = JsonDocument.Parse(text);
+                var root = doc.RootElement;
+                if (!root.TryGetProperty("type", out var typeEl) || typeEl.ValueKind != JsonValueKind.String)
+                    continue;
+                string? msgType = typeEl.GetString();
+                if (msgType != "queueJoin" && msgType != "queueLeave" && msgType != "readyCheckConfirm")
+                    continue;
+                string? modeWire = null;
+                if (root.TryGetProperty("mode", out var modeEl) && modeEl.ValueKind == JsonValueKind.String)
+                    modeWire = modeEl.GetString();
+                string? readyCheckId = null;
+                if (root.TryGetProperty("readyCheckId", out var rcEl) && rcEl.ValueKind == JsonValueKind.String)
+                    readyCheckId = rcEl.GetString();
+                sessionMatchmakingStore.HandleMatchmakingWsMessageAndSend(wsUserId, msgType, modeWire, readyCheckId);
+            }
+            catch (JsonException)
+            {
+                // ignore malformed client payloads
+            }
         }
+
+    sessionWsEnd:;
     }
     catch (OperationCanceledException)
     {
@@ -1029,6 +1072,7 @@ public class LoginRequest
     public string password { get; set; } = "";
 }
 
+/// <summary>HTTP <c>/api/battle/join</c>: solo battles and legacy 1v1 waiter (second player completes the pair). Full 1v1/3v3/5v5 + ready-check uses <c>/ws/session</c> messages <c>queueJoin</c> / <c>queueLeave</c> / <c>readyCheckConfirm</c>.</summary>
 public class JoinRequest
 {
     public int startCol { get; set; }
