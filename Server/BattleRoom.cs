@@ -46,6 +46,26 @@ public partial class BattleRoom
     /// <summary>Флаг: бой создан как одиночный (1 игрок + серверный моб), а не матчмейкинг 1v1.</summary>
     public bool IsSolo { get; set; }
 
+    /// <summary>Two-sided PvP: team elimination win condition and team ids (not solo, at least two human slots).</summary>
+    public bool IsPvpTeamBattle => !IsSolo && Players.Count >= 2;
+
+    /// <summary>PvP team 0 = first half of <see cref="ParticipantIds"/>, team 1 = second half. Solo: 0. Mob teams use -1.</summary>
+    public int ComputePvpTeamIdForPlayer(string playerId)
+    {
+        if (IsSolo || string.IsNullOrEmpty(playerId))
+            return 0;
+        int n = Players.Count;
+        if (n < 2)
+            return 0;
+        int idx = ParticipantIds.IndexOf(playerId);
+        if (idx < 0)
+            return 0;
+        int perTeam = n / 2;
+        if (perTeam <= 0)
+            return 0;
+        return idx < perTeam ? 0 : 1;
+    }
+
     /// <summary>
     /// DEBUG: одиночный бой — моб на фиксированной дистанции от игрока, много HP, пустой AI (не преследует).
     /// По умолчанию <b>включён</b> (как раньше при const true). Чтобы выключить в проде: env <c>DEBUG_SOLO_MOB=0</c> или <c>false</c>.

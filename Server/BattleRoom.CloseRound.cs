@@ -999,7 +999,8 @@ public partial class BattleRoom
                 ExecutedActions = unitActions.ToArray(),
                 IsEscaping = isEscaping,
                 EscapeRoundsRemaining = escapeRoundsRemaining,
-                HasFled = hasFled
+                HasFled = hasFled,
+                TeamId = us.UnitType == UnitType.Player ? us.TeamId : -1
             });
         }
 
@@ -1034,7 +1035,20 @@ public partial class BattleRoom
 
         bool hasPlayersAlive = Units.Values.Any(u => u.UnitType == UnitType.Player);
         bool hasMobsAlive = Units.Values.Any(u => u.UnitType == UnitType.Mob);
-        bool battleFinished = IsSolo ? (!hasPlayersAlive || !hasMobsAlive) : Units.Values.Count(u => u.UnitType == UnitType.Player) <= 1;
+        bool battleFinished;
+        if (IsSolo)
+            battleFinished = !hasPlayersAlive || !hasMobsAlive;
+        else if (IsPvpTeamBattle)
+        {
+            var aliveTeams = Units.Values
+                .Where(u => u.UnitType == UnitType.Player && u.CurrentHp > 0 && u.TeamId >= 0)
+                .Select(u => u.TeamId)
+                .Distinct()
+                .ToList();
+            battleFinished = aliveTeams.Count <= 1;
+        }
+        else
+            battleFinished = Units.Values.Count(u => u.UnitType == UnitType.Player) <= 1;
 
         var mapState = new List<CellObject>();
         foreach (var kv in _obstacleTags.OrderBy(k => k.Key.col).ThenBy(k => k.Key.row))

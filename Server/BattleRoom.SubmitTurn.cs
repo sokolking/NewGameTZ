@@ -25,6 +25,7 @@ public partial class BattleRoom
                 {
                     UnitId = unitId,
                     UnitType = UnitType.Player,
+                    TeamId = ComputePvpTeamIdForPlayer(payload.PlayerId),
                     Col = pos.col,
                     Row = pos.row,
                     MaxAp = DefaultPlayerMaxAp,

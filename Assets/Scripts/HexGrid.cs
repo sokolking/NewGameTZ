@@ -272,6 +272,17 @@ public class HexGrid : MonoBehaviour
         }
     }
 
+    /// <summary>Clears blue/red PvP occupancy tint from all hexes (before recomputing).</summary>
+    public void ClearAllPvpOccupancyHighlights()
+    {
+        HexCell[] cells = GetComponentsInChildren<HexCell>(true);
+        for (int i = 0; i < cells.Length; i++)
+        {
+            if (cells[i] != null)
+                cells[i].ClearPvpOccupancyHighlight();
+        }
+    }
+
     private void BuildCellCacheIfNeeded()
     {
         if (_cellCache != null || _width <= 0 || _length <= 0) return;

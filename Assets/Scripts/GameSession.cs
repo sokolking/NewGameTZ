@@ -19,6 +19,7 @@ public class GameSession : MonoBehaviour
         public float PenaltyFraction;
         public string CurrentPosture;
         public bool IsLocal;
+        public int BattleTeamId = -1;
     }
 
     private sealed class LiveTurnDraftSnapshot
@@ -95,6 +96,8 @@ public class GameSession : MonoBehaviour
     private readonly Dictionary<string, RemoteBattleUnitView> _remoteUnits = new();
     private readonly HashSet<(int col, int row)> _obstacleCells = new();
     private readonly Dictionary<(int col, int row), float> _obstacleWallYawByCell = new();
+    /// <summary>Local human team from server (0/1); -1 unknown.</summary>
+    private int _localBattleTeamId = -1;
     private int _battleActiveMinCol;
     private int _battleActiveMaxCol;
     private int _battleActiveMinRow;
@@ -224,6 +227,9 @@ public class GameSession : MonoBehaviour
         }
     }
 
+    /// <summary>Server PvP team for the local player (0/1); -1 if unknown.</summary>
+    public int LocalBattleTeamId => _localBattleTeamId;
+
     private HexGridCamera CachedHexGridCamera
     {
         get
@@ -260,6 +266,43 @@ public class GameSession : MonoBehaviour
             if (unit != null)
                 buffer.Add(unit);
         }
+    }
+
+    /// <summary>Blue/red hex under units; call after spawn and after round snap.</summary>
+    public void RefreshPvpOccupancyHexHighlights()
+    {
+        HexGrid grid = CachedHexGrid;
+        if (grid == null)
+            return;
+
+        grid.ClearAllPvpOccupancyHighlights();
+
+        Player local = LocalPlayer;
+        int localTeam = _localBattleTeamId;
+
+        if (local != null && !local.IsDead && !local.IsHidden && local.CurrentHp > 0)
+        {
+            HexCell lc = grid.GetCell(local.CurrentCol, local.CurrentRow);
+            lc?.SetPvpOccupancyHighlight(HexCell.PvpOccupancyKind.Ally);
+        }
+
+        foreach (RemoteBattleUnitView remote in _remoteUnits.Values)
+        {
+            if (remote == null || remote.CurrentHp <= 0)
+                continue;
+            HexCell.PvpOccupancyKind occ = ResolvePvpOccupancyKind(remote, localTeam);
+            HexCell c = grid.GetCell(remote.CurrentCol, remote.CurrentRow);
+            c?.SetPvpOccupancyHighlight(occ);
+        }
+    }
+
+    private static HexCell.PvpOccupancyKind ResolvePvpOccupancyKind(RemoteBattleUnitView remote, int localTeam)
+    {
+        if (remote.IsMob)
+            return HexCell.PvpOccupancyKind.Enemy;
+        if (localTeam < 0 || remote.BattleTeamId < 0)
+            return HexCell.PvpOccupancyKind.Enemy;
+        return remote.BattleTeamId == localTeam ? HexCell.PvpOccupancyKind.Ally : HexCell.PvpOccupancyKind.Enemy;
     }
 
     public void RegisterProcessedTurnResult(int roundIndex)
@@ -655,7 +698,7 @@ public class GameSession : MonoBehaviour
 
             var go = new GameObject("Mob_" + id);
             var remote = go.AddComponent<RemoteBattleUnitView>();
-            remote.Initialize(id, grid, nc, nr, local.MoveDurationPerHex);
+            remote.Initialize(id, grid, nc, nr, local.MoveDurationPerHex, _localBattleTeamId, -1);
             _remoteUnits[id] = remote;
             _debugMobSpawned = true;
             return true;
@@ -752,6 +795,23 @@ public class GameSession : MonoBehaviour
         var animJobs = new List<(object unit, bool isLocal, HexPosition[] path)>();
         Player local = LocalPlayer;
 
+        if (result?.results != null)
+        {
+            foreach (var tr in result.results)
+            {
+                if (tr == null || tr.unitType != 0)
+                    continue;
+                if (tr.playerId == _playerId && tr.teamId >= 0)
+                {
+                    _localBattleTeamId = tr.teamId;
+                    break;
+                }
+            }
+        }
+
+        if (result?.results == null)
+            return animJobs;
+
         foreach (var r in result.results)
         {
             if (r == null) continue;
@@ -798,13 +858,16 @@ public class GameSession : MonoBehaviour
                     var first = r.actualPath[0];
                     var go = new GameObject(isMob ? ("Mob_" + id) : ("Remote_" + id));
                     remote = go.AddComponent<RemoteBattleUnitView>();
-                    remote.Initialize(id, grid, first.col, first.row, local != null ? local.MoveDurationPerHex : 0.2f);
+                    int rTeam = isMob ? -1 : r.teamId;
+                    remote.Initialize(id, grid, first.col, first.row, local != null ? local.MoveDurationPerHex : 0.2f, _localBattleTeamId, rTeam);
                     _remoteUnits[id] = remote;
                 }
             }
 
             if (remote != null)
             {
+                if (!isMob && r.teamId >= 0)
+                    remote.SetBattleTeamIds(_localBattleTeamId, r.teamId);
                 remote.ApplyServerTurnResult(r.finalPosition, r.actualPath, r.currentAp, r.penaltyFraction, prepareForAnimation);
                 remote.SetHealth(r.currentHp, r.maxHp > 0 ? r.maxHp : 10);
                 if (prepareForAnimation)
@@ -1773,6 +1836,7 @@ public class GameSession : MonoBehaviour
         CancelWaitingForServerRoundResolve();
         _battleFinished = false;
         LastBattleEndWasEscape = false;
+        _localBattleTeamId = -1;
 
         long deadlineUtcMs = payload.roundDeadlineUtcMs;
         if (deadlineUtcMs <= 0)
@@ -1802,6 +1866,19 @@ public class GameSession : MonoBehaviour
         {
             Debug.LogWarning("[GameSession] ApplyBattleStarted: no spawn data in payload; units will appear from first TurnResult over socket.");
             return;
+        }
+
+        if (payload.spawnPlayerIds != null && payload.spawnTeamIds != null
+            && payload.spawnPlayerIds.Length == payload.spawnTeamIds.Length)
+        {
+            for (int ti = 0; ti < payload.spawnPlayerIds.Length; ti++)
+            {
+                if (payload.spawnPlayerIds[ti] == _playerId)
+                {
+                    _localBattleTeamId = payload.spawnTeamIds[ti];
+                    break;
+                }
+            }
         }
 
         foreach (var (pid, col, row) in spawnList)
@@ -1838,6 +1915,7 @@ public class GameSession : MonoBehaviour
                         dispName = !string.IsNullOrEmpty(BattleSessionState.LastUsername) ? BattleSessionState.LastUsername : pid;
                     local.SetDisplayProfile(dispName, dispLevel);
                 }
+                int localTeamSnap = GetSpawnInt(payload.spawnTeamIds, spawnIndex, -1);
                 _initialReplayState[pid] = new ReplayUnitSnapshot
                 {
                     UnitId = pid,
@@ -1847,14 +1925,16 @@ public class GameSession : MonoBehaviour
                     CurrentAp = startAp,
                     PenaltyFraction = 0f,
                     CurrentPosture = GetSpawnString(payload.spawnCurrentPostures, spawnIndex, MovementPostureUtility.WalkId),
-                    IsLocal = true
+                    IsLocal = true,
+                    BattleTeamId = localTeamSnap
                 };
                 continue;
             }
 
             var go = new GameObject("Remote_" + pid);
             var rv = go.AddComponent<RemoteBattleUnitView>();
-            rv.Initialize(pid, grid, col, row, moveDur);
+            int remoteTeam = GetSpawnInt(payload.spawnTeamIds, spawnIndex, -1);
+            rv.Initialize(pid, grid, col, row, moveDur, _localBattleTeamId, remoteTeam);
             rv.SetHealth(currentHp, maxHp);
             int dispLevelR = GetSpawnInt(payload.spawnLevels, spawnIndex, 1);
             string dispNameR = GetSpawnString(payload.spawnDisplayNames, spawnIndex, "");
@@ -1871,13 +1951,15 @@ public class GameSession : MonoBehaviour
                 CurrentAp = startAp,
                 PenaltyFraction = 0f,
                 CurrentPosture = GetSpawnString(payload.spawnCurrentPostures, spawnIndex, MovementPostureUtility.WalkId),
-                IsLocal = false
+                IsLocal = false,
+                BattleTeamId = remoteTeam
             };
         }
 
         CachedHexGridCamera?.RefocusOnLocalPlayer();
 
         local?.ClearMovementFlag();
+        RefreshPvpOccupancyHexHighlights();
     }
 
     private void StartTurnHistoryReplay(int targetPointer)
@@ -2193,6 +2275,16 @@ public class GameSession : MonoBehaviour
         if (grid == null)
             return;
 
+        _localBattleTeamId = -1;
+        foreach (var snap in _initialReplayState.Values)
+        {
+            if (snap != null && snap.IsLocal && snap.BattleTeamId >= 0)
+            {
+                _localBattleTeamId = snap.BattleTeamId;
+                break;
+            }
+        }
+
         foreach (var snapshot in _initialReplayState.Values)
         {
             if (snapshot.IsLocal)
@@ -2208,7 +2300,7 @@ public class GameSession : MonoBehaviour
             {
                 var go = new GameObject(snapshot.UnitType == 1 ? ("Mob_" + snapshot.UnitId) : ("Remote_" + snapshot.UnitId));
                 remote = go.AddComponent<RemoteBattleUnitView>();
-                remote.Initialize(snapshot.UnitId, grid, snapshot.Col, snapshot.Row, moveDur);
+                remote.Initialize(snapshot.UnitId, grid, snapshot.Col, snapshot.Row, moveDur, _localBattleTeamId, snapshot.BattleTeamId);
                 _remoteUnits[snapshot.UnitId] = remote;
             }
 
@@ -2219,6 +2311,8 @@ public class GameSession : MonoBehaviour
                 snapshot.PenaltyFraction,
                 prepareForAnimation: false);
         }
+
+        RefreshPvpOccupancyHexHighlights();
     }
 
     private void ApplyBattleActiveBoundsFromPayload(BattleStartedPayload p, HexGrid grid)
@@ -2276,6 +2370,8 @@ public class GameSession : MonoBehaviour
                 continue;
             remote.transform.position = grid.GetCellWorldPosition(remote.CurrentCol, remote.CurrentRow);
         }
+
+        RefreshPvpOccupancyHexHighlights();
     }
 
     /// <summary>Remove obstacles, play falling hex animation, sync active rectangle from server.</summary>
@@ -2454,6 +2550,7 @@ public class GameSession : MonoBehaviour
     private IEnumerator HandleLocalDeathAfterMessage()
     {
         if (_battleFinished) yield break;
+        CachedHexGrid?.ClearAllPvpOccupancyHighlights();
         _battleFinished = true;
         OnNetworkMessage?.Invoke(Loc.T("ui.battle_lost"));
         OnBattleFinished?.Invoke(false);
@@ -2552,6 +2649,8 @@ public class GameSession : MonoBehaviour
     private void HandleBattleFinishedFromServer(TurnResultPayload result)
     {
         if (_battleFinished) return;
+
+        CachedHexGrid?.ClearAllPvpOccupancyHighlights();
 
         bool localDead = false;
         bool localFled = false;

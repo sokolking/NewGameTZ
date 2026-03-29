@@ -302,6 +302,8 @@ public class UnitStateDto
     /// <summary>Снайперское оружие: иная кривая p по дистанции за пределами дальности (урон без изменений).</summary>
     public bool WeaponIsSniper { get; set; }
     public string Posture { get; set; } = "walk";
+    /// <summary>PvP team: 0 or 1 for human players; -1 for mobs / unset.</summary>
+    public int TeamId { get; set; } = -1;
 }
 
 public class PlayerTurnResultDto
@@ -342,6 +344,8 @@ public class PlayerTurnResultDto
     public int EscapeRoundsRemaining { get; set; }
     /// <summary>Removed from the battle this round after completing flee.</summary>
     public bool HasFled { get; set; }
+    /// <summary>PvP team (0/1) for players; -1 for mobs.</summary>
+    public int TeamId { get; set; } = -1;
 }
 
 public enum CellObjectState
@@ -430,6 +434,8 @@ public class BattleStartedPayloadDto
     public bool[]? SpawnWeaponIsSnipers { get; set; }
     public string[]? SpawnDisplayNames { get; set; }
     public int[]? SpawnLevels { get; set; }
+    /// <summary>Parallel to <see cref="SpawnPlayerIds"/>; 0/1 for PvP players, -1 for mobs.</summary>
+    public int[]? SpawnTeamIds { get; set; }
     public int[]? ObstacleCols { get; set; }
     public int[]? ObstacleRows { get; set; }
     /// <summary>Теги: wall | tree | rock — параллельно obstacleCols/Rows.</summary>

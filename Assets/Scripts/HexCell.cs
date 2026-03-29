@@ -6,11 +6,20 @@ using UnityEngine;
 /// </summary>
 public class HexCell : MonoBehaviour
 {
+    public enum PvpOccupancyKind
+    {
+        None = 0,
+        Ally = 1,
+        Enemy = 2
+    }
+
     private static readonly int BaseColorId = Shader.PropertyToID("_BaseColor");
     private static readonly int ColorId = Shader.PropertyToID("_Color");
     private static readonly Color HoverColor = new Color(0.5f, 0.5f, 0.5f, 0.6f);
     private static readonly Color ObstacleColor = new Color(0.28f, 0.28f, 0.28f, 1f);
     private static readonly Color MovementFlagTint = new Color(0.95f, 0.75f, 0.1f, 1f);
+    private static readonly Color PvpAllyOccupancy = new Color(0.22f, 0.48f, 0.95f, 1f);
+    private static readonly Color PvpEnemyOccupancy = new Color(0.92f, 0.22f, 0.18f, 1f);
 
     [SerializeField] private int _col;
     [SerializeField] private int _row;
@@ -32,6 +41,7 @@ public class HexCell : MonoBehaviour
     private GameObject _obstacleModelInstance;
     private bool _excludedFromPlay;
     private Coroutine _zoneFallCoroutine;
+    private PvpOccupancyKind _pvpOccupancy;
 
     private static GameObject _cachedPrefabWall;
     private static GameObject _cachedPrefabDamagedWall;
@@ -112,6 +122,15 @@ public class HexCell : MonoBehaviour
         _movementFlag = active;
         ApplyCurrentColor();
     }
+
+    /// <summary>Persistent PvP tint for hex under an ally (blue) or enemy (red) unit.</summary>
+    public void SetPvpOccupancyHighlight(PvpOccupancyKind kind)
+    {
+        _pvpOccupancy = kind;
+        ApplyCurrentColor();
+    }
+
+    public void ClearPvpOccupancyHighlight() => SetPvpOccupancyHighlight(PvpOccupancyKind.None);
 
     public void SetObstacle(bool active)
     {
@@ -199,6 +218,12 @@ public class HexCell : MonoBehaviour
             color = _defaultColor;
             if (_movementFlag)
                 color = Color.Lerp(color, MovementFlagTint, 0.5f);
+            if (_pvpOccupancy != PvpOccupancyKind.None)
+            {
+                Color occ = _pvpOccupancy == PvpOccupancyKind.Ally ? PvpAllyOccupancy : PvpEnemyOccupancy;
+                occ.a = gridAlpha;
+                color = Color.Lerp(color, occ, 0.52f);
+            }
             if (_apMaskActive)
                 color = _apMaskColor;
         }

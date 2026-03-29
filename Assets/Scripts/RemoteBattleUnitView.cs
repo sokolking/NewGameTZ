@@ -14,6 +14,7 @@ public class RemoteBattleUnitView : MonoBehaviour
 
     [Header("PvP visuals")]
     [SerializeField] private Color _enemyModelTint = new Color(0.95f, 0.28f, 0.22f, 1f);
+    [SerializeField] private Color _allyModelTint = new Color(0.28f, 0.52f, 0.98f, 1f);
 
     [Header("Mob visuals")]
     [Tooltip("Resources path without extension, e.g. Mob/mob for Assets/Resources/Mob/mob.fbx")]
@@ -35,6 +36,9 @@ public class RemoteBattleUnitView : MonoBehaviour
     private int _characterLevel = 1;
     private CharacterNameplateView _nameplateInstance;
 
+    private int _localBattleTeamId = -1;
+    private int _remoteBattleTeamId = -1;
+
     public string NetworkPlayerId { get; private set; }
     public bool IsMoving => _isMoving;
     public bool IsMob =>
@@ -47,6 +51,13 @@ public class RemoteBattleUnitView : MonoBehaviour
     public int MaxHp => _maxHp;
     public string DisplayName => string.IsNullOrEmpty(_displayName) ? (NetworkPlayerId ?? "?") : _displayName;
     public int CharacterLevel => Mathf.Max(1, _characterLevel);
+
+    /// <summary>Server PvP team (0/1); -1 if unknown or mob.</summary>
+    public int BattleTeamId => _remoteBattleTeamId;
+
+    /// <summary>True when server team ids match local player (excludes mobs).</summary>
+    public bool IsAllyVersusLocal =>
+        !IsMob && _localBattleTeamId >= 0 && _remoteBattleTeamId >= 0 && _localBattleTeamId == _remoteBattleTeamId;
 
     public event Action<int, int> OnHealthChanged;
     public event Action OnDisplayProfileChanged;
@@ -96,9 +107,12 @@ public class RemoteBattleUnitView : MonoBehaviour
         transform.rotation = Quaternion.Slerp(transform.rotation, target, Time.deltaTime * _rangedFaceRotationSpeed);
     }
 
-    public void Initialize(string playerId, HexGrid grid, int startCol, int startRow, float moveDurationPerHex = -1f)
+    public void Initialize(string playerId, HexGrid grid, int startCol, int startRow, float moveDurationPerHex = -1f,
+        int localBattleTeamId = -1, int remoteBattleTeamId = -1)
     {
         NetworkPlayerId = playerId;
+        _localBattleTeamId = localBattleTeamId;
+        _remoteBattleTeamId = remoteBattleTeamId;
         _grid = grid;
         if (moveDurationPerHex > 0f) _moveDurationPerHex = moveDurationPerHex;
         if (_grid != null)
@@ -108,6 +122,14 @@ public class RemoteBattleUnitView : MonoBehaviour
             CurrentRow = startRow;
         }
         EnsureVisual();
+    }
+
+    /// <summary>Updates ally/enemy tint when team info arrives (e.g. first turn result).</summary>
+    public void SetBattleTeamIds(int localBattleTeamId, int remoteBattleTeamId)
+    {
+        _localBattleTeamId = localBattleTeamId;
+        _remoteBattleTeamId = remoteBattleTeamId;
+        ReapplyNonMobTintIfVisualExists();
     }
 
     public void SetDisplayProfile(string displayName, int level)
@@ -166,7 +188,7 @@ public class RemoteBattleUnitView : MonoBehaviour
         clone.transform.localRotation = Quaternion.identity;
         clone.transform.localScale = Vector3.one;
 
-        ApplyEnemyTint(clone);
+        ApplyPlayerModelTint(clone);
         foreach (Player p in clone.GetComponentsInChildren<Player>(true))
         {
             if (p != null)
@@ -224,7 +246,21 @@ public class RemoteBattleUnitView : MonoBehaviour
         box.size = new Vector3(ext.x / sx, ext.y / sy, ext.z / sz);
     }
 
-    private void ApplyEnemyTint(GameObject root)
+    private void ReapplyNonMobTintIfVisualExists()
+    {
+        if (IsMob)
+            return;
+        Transform vis = transform.Find("RemoteVisual");
+        if (vis == null)
+            return;
+        ApplyTintToRenderers(vis.gameObject, ChoosePlayerTint());
+    }
+
+    private Color ChoosePlayerTint() => IsAllyVersusLocal ? _allyModelTint : _enemyModelTint;
+
+    private void ApplyPlayerModelTint(GameObject root) => ApplyTintToRenderers(root, ChoosePlayerTint());
+
+    private static void ApplyTintToRenderers(GameObject root, Color tint)
     {
         Renderer[] renderers = root.GetComponentsInChildren<Renderer>(true);
         for (int i = 0; i < renderers.Length; i++)
@@ -236,15 +272,15 @@ public class RemoteBattleUnitView : MonoBehaviour
             if (r.sharedMaterial != null)
             {
                 if (r.sharedMaterial.HasProperty("_BaseColor"))
-                    mpb.SetColor("_BaseColor", _enemyModelTint);
+                    mpb.SetColor("_BaseColor", tint);
                 else if (r.sharedMaterial.HasProperty("_Color"))
-                    mpb.SetColor("_Color", _enemyModelTint);
+                    mpb.SetColor("_Color", tint);
                 else
-                    mpb.SetColor("_BaseColor", _enemyModelTint);
+                    mpb.SetColor("_BaseColor", tint);
             }
             else
             {
-                mpb.SetColor("_BaseColor", _enemyModelTint);
+                mpb.SetColor("_BaseColor", tint);
             }
 
             r.SetPropertyBlock(mpb);

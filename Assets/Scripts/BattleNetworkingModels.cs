@@ -171,6 +171,9 @@ public class PlayerTurnResult
     public int escapeRoundsRemaining;
     [JsonProperty("hasFled")]
     public bool hasFled;
+    /// <summary>0/1 for PvP players; -1 for mobs or legacy payloads.</summary>
+    [JsonProperty("teamId")]
+    public int teamId = -1;
 }
 
 /// <summary>Клиент → сервер: ход по WebSocket.</summary>
@@ -301,6 +304,8 @@ public class BattleStartedPayload
     public string[] spawnDisplayNames;
     /// <summary>Уровень персонажа (параллельно spawnPlayerIds).</summary>
     public int[] spawnLevels;
+    /// <summary>PvP team id parallel to spawnPlayerIds (0/1 players, -1 mobs).</summary>
+    public int[] spawnTeamIds;
     public int[] obstacleCols;
     public int[] obstacleRows;
     /// <summary>wall | tree | rock — параллельно obstacleCols/Rows.</summary>

@@ -6,11 +6,11 @@ namespace BattleServer;
 
 public partial class BattleRoom
 {
-    public void FillSpawnArrays(out string[] ids, out int[] cols, out int[] rows, out int[] currentAps, out int[] maxAps, out int[] maxHps, out int[] currentHps, out string[] currentPostures, out string[] weaponCodes, out int[] weaponDamageMins, out int[] weaponDamages, out int[] weaponRanges, out int[] weaponAttackApCosts, out int[] currentMagazineRounds, out double[] weaponTightnesses, out int[] weaponTrajectoryHeights, out bool[] weaponIsSnipers, out string[] spawnDisplayNames, out int[] spawnLevels)
+    public void FillSpawnArrays(out string[] ids, out int[] cols, out int[] rows, out int[] currentAps, out int[] maxAps, out int[] maxHps, out int[] currentHps, out string[] currentPostures, out string[] weaponCodes, out int[] weaponDamageMins, out int[] weaponDamages, out int[] weaponRanges, out int[] weaponAttackApCosts, out int[] currentMagazineRounds, out double[] weaponTightnesses, out int[] weaponTrajectoryHeights, out bool[] weaponIsSnipers, out string[] spawnDisplayNames, out int[] spawnLevels, out int[] spawnTeamIds)
     {
         EnsureUnitsInitialized();
 
-        var items = new List<(string id, int col, int row, int currentAp, int maxAp, int maxHp, int currentHp, string posture, string wc, int wdm, int wd, int wr, int wac, int wmag, double wtn, int wth, bool wsn, string displayName, int level)>();
+        var items = new List<(string id, int col, int row, int currentAp, int maxAp, int maxHp, int currentHp, string posture, string wc, int wdm, int wd, int wr, int wac, int wmag, double wtn, int wth, bool wsn, string displayName, int level, int teamId)>();
 
         foreach (var playerId in ParticipantIds.Where(Players.ContainsKey))
         {
@@ -37,7 +37,8 @@ public partial class BattleRoom
                     unit.WeaponTrajectoryHeight,
                     unit.WeaponIsSniper,
                     dn,
-                    lv));
+                    lv,
+                    unit.TeamId));
             }
             else
             {
@@ -66,7 +67,7 @@ public partial class BattleRoom
                     maxAp = prof.Item2;
                 }
 
-                items.Add((playerId, Players[playerId].col, Players[playerId].row, maxAp, maxAp, maxHp, maxHp, PostureWalk, wc, wdm, wd, wr, wac, wmag, wtn, wth, wsn, dn, lv));
+                items.Add((playerId, Players[playerId].col, Players[playerId].row, maxAp, maxAp, maxHp, maxHp, PostureWalk, wc, wdm, wd, wr, wac, wmag, wtn, wth, wsn, dn, lv, ComputePvpTeamIdForPlayer(playerId)));
             }
         }
 
@@ -91,7 +92,8 @@ public partial class BattleRoom
                 unit.WeaponTrajectoryHeight,
                 unit.WeaponIsSniper,
                 unit.UnitId,
-                1));
+                1,
+                -1));
         }
 
         ids = items.Select(x => x.id).ToArray();
@@ -113,6 +115,7 @@ public partial class BattleRoom
         weaponIsSnipers = items.Select(x => x.wsn).ToArray();
         spawnDisplayNames = items.Select(x => x.displayName).ToArray();
         spawnLevels = items.Select(x => x.level).ToArray();
+        spawnTeamIds = items.Select(x => x.teamId).ToArray();
     }
 
     public BattleStartedPayloadDto BuildBattleStartedFor(string playerId)
@@ -124,7 +127,7 @@ public partial class BattleRoom
             Col = p.Value.col,
             Row = p.Value.row
         }).ToArray();
-        FillSpawnArrays(out var sid, out var sc, out var sr, out var sap, out var smap, out var smh, out var sch, out var spos, out var swc, out var swdm, out var swd, out var swr, out var swac, out var swmag, out var swtn, out var swth, out var swsn, out var sdn, out var slv);
+        FillSpawnArrays(out var sid, out var sc, out var sr, out var sap, out var smap, out var smh, out var sch, out var spos, out var swc, out var swdm, out var swd, out var swr, out var swac, out var swmag, out var swtn, out var swth, out var swsn, out var sdn, out var slv, out var steam);
         var sortedKeys = _obstacleTags.Keys.OrderBy(k => k.col).ThenBy(k => k.row).ToArray();
         var obstacleCols = sortedKeys.Select(k => k.col).ToArray();
         var obstacleRows = sortedKeys.Select(k => k.row).ToArray();
@@ -171,6 +174,7 @@ public partial class BattleRoom
             SpawnWeaponIsSnipers = swsn,
             SpawnDisplayNames = sdn,
             SpawnLevels = slv,
+            SpawnTeamIds = steam,
             ObstacleCols = obstacleCols,
             ObstacleRows = obstacleRows,
             ObstacleTags = obstacleTags,

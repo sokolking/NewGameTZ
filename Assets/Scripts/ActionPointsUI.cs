@@ -96,6 +96,7 @@ public class ActionPointsUI : MonoBehaviour
     private float _miniMapMarkerSize = 7f;
     [SerializeField] private Color _miniMapPlayerColor = Color.white;
     [SerializeField] private Color _miniMapEnemyColor = Color.red;
+    [SerializeField] private Color _miniMapAllyColor = new Color(0.25f, 0.55f, 1f, 1f);
     [SerializeField] private Color _miniMapMobColor = new Color(1f, 0.55f, 0.15f, 1f);
     [Tooltip("Color of the camera viewport rectangle on the minimap.")]
     [SerializeField] private Color _miniMapViewportRectColor = new Color(1f, 1f, 1f, 0.9f);
@@ -1357,13 +1358,16 @@ public class ActionPointsUI : MonoBehaviour
             _miniMapActiveRemoteIds.Add(remote.NetworkPlayerId);
             if (!_miniMapRemoteMarkers.TryGetValue(remote.NetworkPlayerId, out var marker) || marker == null)
             {
-                Color color = remote.IsMob ? _miniMapMobColor : _miniMapEnemyColor;
+                Color color = remote.IsMob ? _miniMapMobColor : (remote.IsAllyVersusLocal ? _miniMapAllyColor : _miniMapEnemyColor);
                 marker = CreateMiniMapMarker($"Marker_{remote.NetworkPlayerId}", color);
                 _miniMapRemoteMarkers[remote.NetworkPlayerId] = marker;
             }
 
             if (marker != null)
             {
+                Color wantColor = remote.IsMob ? _miniMapMobColor : (remote.IsAllyVersusLocal ? _miniMapAllyColor : _miniMapEnemyColor);
+                if (marker.color != wantColor)
+                    marker.color = wantColor;
                 marker.gameObject.SetActive(true);
                 SetMiniMapMarkerPositionFullMap(marker.rectTransform, remote.transform.position,
                     mapMinX, mapMaxX, mapMinZ, mapMaxZ, markerUsableWidth, markerUsableHeight);

@@ -22,10 +22,12 @@ public partial class BattleRoom
                 ? p
                 : (DefaultPlayerMaxHp, DefaultPlayerMaxAp, DefaultWeaponCode, DefaultWeaponDamage, DefaultWeaponDamage, DefaultWeaponRange, GetWeaponAttackApCostFromDb(DefaultWeaponCode), 10, 1.0, 1, false);
             PlayerToUnitId[playerId] = unitId;
+            int pvpTeam = ComputePvpTeamIdForPlayer(playerId);
             Units[unitId] = new UnitStateDto
             {
                 UnitId = unitId,
                 UnitType = UnitType.Player,
+                TeamId = pvpTeam,
                 Col = col,
                 Row = row,
                 MaxAp = profile.Item2,
@@ -93,6 +95,7 @@ public partial class BattleRoom
                 {
                     UnitId = mobId,
                     UnitType = UnitType.Mob,
+                    TeamId = -1,
                     Col = mobCol,
                     Row = mobRow,
                     MaxAp = MobMaxAp,
