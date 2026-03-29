@@ -59,6 +59,8 @@ public partial class BattleRoom
         Console.WriteLine($"[tzInfo] CloseRound begin: battleId={BattleId}, roundIndex={RoundIndex}, reason={resolveReason}, submissions={Submissions.Count}, units={Units.Count}");
         EnsureMobCommandsForCurrentRound();
 
+        var escapeChannelAtRoundStart = new Dictionary<string, int>(EscapingPlayers);
+
         var order = new List<string>();
         foreach (var pid in SubmissionOrder)
         {
@@ -132,9 +134,20 @@ public partial class BattleRoom
             runNormalHexCount[uid] = 0;
             runPenaltyHexCount[uid] = 0;
             apSpentByUnit[uid] = 0;
-            actionQueues[uid] = UnitCommands.TryGetValue(uid, out var cmd) && cmd.Actions != null
+            var queued = UnitCommands.TryGetValue(uid, out var cmd) && cmd.Actions != null
                 ? cmd.Actions
                 : Array.Empty<QueuedBattleActionDto>();
+            if (us.UnitType == UnitType.Player)
+            {
+                string escPid = PlayerToUnitId.FirstOrDefault(kv => kv.Value == uid).Key ?? "";
+                if (!string.IsNullOrEmpty(escPid) && EscapingPlayers.ContainsKey(escPid))
+                {
+                    queued = Array.Empty<QueuedBattleActionDto>();
+                    roundStartAp[uid] = 0;
+                }
+            }
+
+            actionQueues[uid] = queued;
         }
 
         var occupied = new HashSet<(int col, int row)>(positions
@@ -189,7 +202,20 @@ public partial class BattleRoom
                         action = queue[actionCursor[uid]];
                         string queuedActionType = action?.ActionType ?? string.Empty;
                         if (string.Equals(queuedActionType, ActionMoveStep, StringComparison.OrdinalIgnoreCase))
+                        {
                             cost = GetMovementStepCost(currentPosture, movementStepsTaken[uid] + 1);
+                            var moveTp = action?.TargetPosition;
+                            if (moveTp != null
+                                && unit.UnitType == UnitType.Player
+                                && positions.TryGetValue(uid, out var moveFrom)
+                                && !IsEscapeBorderHex(moveFrom.col, moveFrom.row)
+                                && IsEscapeBorderHex(moveTp.Col, moveTp.Row))
+                            {
+                                int remainingAp = Math.Max(0, roundStartAp[uid] - apSpentByUnit.GetValueOrDefault(uid));
+                                if (remainingAp >= 1)
+                                    cost = remainingAp;
+                            }
+                        }
                         else if (string.Equals(queuedActionType, ActionChangePosture, StringComparison.OrdinalIgnoreCase))
                             cost = ChangePostureCost;
                         else if (string.Equals(queuedActionType, ActionWait, StringComparison.OrdinalIgnoreCase))
@@ -242,8 +268,10 @@ public partial class BattleRoom
                         else
                         {
                             var targetCell = (action.TargetPosition.Col, action.TargetPosition.Row);
-                            if (!IsInActiveZone(targetCell.Item1, targetCell.Item2))
+                            if (!IsLegalMoveDestinationHex(targetCell.Item1, targetCell.Item2))
                                 executed.FailureReason = "Move target out of bounds";
+                            else if (!IsInActiveZone(currentPos.col, currentPos.row) && !IsEscapeBorderHex(currentPos.col, currentPos.row))
+                                executed.FailureReason = "Invalid move origin";
                             else if (_obstacleTags.ContainsKey(targetCell))
                                 executed.FailureReason = "Move blocked by obstacle";
                             else if (!AreAdjacent(currentPos, targetCell))
@@ -846,6 +874,8 @@ public partial class BattleRoom
         }
 
         var results = new List<PlayerTurnResultDto>();
+        var nextEscapeChannel = new Dictionary<string, int>();
+        var fledPlayerIds = new List<string>();
         foreach (var uid in order)
         {
             if (!positions.TryGetValue(uid, out var final))
@@ -879,6 +909,40 @@ public partial class BattleRoom
             Units[uid] = us;
 
             string playerId = PlayerToUnitId.FirstOrDefault(kv => kv.Value == uid).Key ?? uid;
+            bool isEscaping = false;
+            int escapeRoundsRemaining = 0;
+            bool hasFled = false;
+            bool playerMoveAccepted = accepted.TryGetValue(uid, out var moveAcc) && moveAcc;
+            bool finalOnEscape = us.UnitType == UnitType.Player && IsEscapeBorderHex(final.col, final.row);
+
+            if (us.UnitType == UnitType.Player)
+            {
+                bool hadChannel = escapeChannelAtRoundStart.TryGetValue(playerId, out int escStart);
+                if (hadChannel && finalOnEscape)
+                {
+                    isEscaping = true;
+                    int nl = escStart - 1;
+                    escapeRoundsRemaining = Math.Max(0, nl);
+                    hasFled = nl <= 0;
+                    if (hasFled)
+                        fledPlayerIds.Add(playerId);
+                    else
+                        nextEscapeChannel[playerId] = nl;
+                }
+                else if (!hadChannel && finalOnEscape && playerMoveAccepted)
+                {
+                    isEscaping = true;
+                    escapeRoundsRemaining = EscapeChannelRounds;
+                    nextEscapeChannel[playerId] = EscapeChannelRounds;
+                }
+            }
+
+            if (us.UnitType == UnitType.Player && nextEscapeChannel.ContainsKey(playerId))
+            {
+                us.CurrentAp = 0;
+                Units[uid] = us;
+            }
+
             var unitActions = executedActions.TryGetValue(uid, out var executed) ? executed : new List<ExecutedBattleActionDto>();
             if (us.UnitType == UnitType.Player && TryGetBattlePlayerUserId(playerId, out long persistUid))
             {
@@ -932,9 +996,16 @@ public partial class BattleRoom
                 WeaponTightness = us.WeaponTightness,
                 WeaponTrajectoryHeight = us.WeaponTrajectoryHeight,
                 WeaponIsSniper = us.WeaponIsSniper,
-                ExecutedActions = unitActions.ToArray()
+                ExecutedActions = unitActions.ToArray(),
+                IsEscaping = isEscaping,
+                EscapeRoundsRemaining = escapeRoundsRemaining,
+                HasFled = hasFled
             });
         }
+
+        EscapingPlayers.Clear();
+        foreach (var kv in nextEscapeChannel)
+            EscapingPlayers[kv.Key] = kv.Value;
 
         var deadIds = order.Where(uid => alive.TryGetValue(uid, out var isAlive) && !isAlive).ToList();
         foreach (var deadId in deadIds)
@@ -943,6 +1014,19 @@ public partial class BattleRoom
             UnitCommands.Remove(deadId);
             foreach (var kv in PlayerToUnitId.Where(kv => kv.Value == deadId).ToList())
                 PlayerToUnitId.Remove(kv.Key);
+        }
+
+        foreach (var fpid in fledPlayerIds.Distinct())
+        {
+            if (!PlayerToUnitId.TryGetValue(fpid, out var fuid))
+                continue;
+            Units.Remove(fuid);
+            UnitCommands.Remove(fuid);
+            PlayerToUnitId.Remove(fpid);
+            Players.Remove(fpid);
+            CurrentState.Remove(fpid);
+            Submissions.Remove(fpid);
+            EndedTurnEarlyThisRound.Remove(fpid);
         }
 
         EnsureActiveZoneInitialized();
@@ -987,8 +1071,13 @@ public partial class BattleRoom
         SubmissionOrder.Clear();
         EndedTurnEarlyThisRound.Clear();
         UnitCommands.Clear();
+        if (!battleFinished)
+            InjectAutoSubmissionsForEscapingPlayers();
         RoundInProgress = !battleFinished;
         Console.WriteLine($"[tzInfo] CloseRound end: battleId={BattleId}, nextRoundIndex={RoundIndex}, results={results.Count}");
         RoundClosedForPush?.Invoke(this);
+        // Solo / auto-submitted escapers: everyone already in Submissions — close the next round immediately (no timer wait for "mob").
+        if (!battleFinished && Players.Count > 0 && Submissions.Count >= Players.Count)
+            CloseRound(fromTimer: false);
     }
 }

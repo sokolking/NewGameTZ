@@ -342,8 +342,7 @@ public class BattleSignalRConnection : MonoBehaviour
         _gameSession.RegisterProcessedTurnResult(resolvedRound);
         // Hide "round wait" as soon as the result arrives; planning stays blocked until resolve animations finish (GameSession).
         GameSession.OnWebSocketRoundPushReceived?.Invoke();
-        bool pendingSubmit = _gameSession.IsWaitingForServerRoundResolve;
-        _gameSession.ApplyTurnResultThenRoundState(push.turnResult, push.roundIndex, push.roundDeadlineUtcMs, pendingSubmit);
+        _gameSession.ApplyTurnResultThenRoundState(push.turnResult, push.roundIndex, push.roundDeadlineUtcMs);
     }
 
     private async Task DisconnectAsync()

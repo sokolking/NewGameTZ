@@ -73,6 +73,8 @@ public class Player : MonoBehaviour
     private readonly List<(int col, int row)> _moveSubPathScratch = new(32);
     /// <summary>Автопродолжение к цели после раунда — без аллокации.</summary>
     private readonly List<(int col, int row)> _movementFlagPathBuffer = new(64);
+    /// <summary>Per-edge AP for current <see cref="MoveAlongPath"/> subpath (includes escape-entry lump).</summary>
+    private int[] _moveEdgeCostsScratch = Array.Empty<int>();
     private bool _movementFlagActive;
     private int _movementFlagCol;
     private int _movementFlagRow;
@@ -100,6 +102,8 @@ public class Player : MonoBehaviour
     private int _magazineCapacity;
     private int _currentMagazineRounds;
     private int _reserveAmmoRounds;
+    /// <summary>From last <see cref="PlayerTurnResult.isEscaping"/> — server runs empty turns until flee completes or the unit leaves the escape ring.</summary>
+    private bool _serverIsEscaping;
 
     public int CurrentCol => _currentCol;
     public int CurrentRow => _currentRow;
@@ -144,8 +148,17 @@ public class Player : MonoBehaviour
     public bool IsDead => _currentHp <= 0;
     public MovementPosture CurrentMovementPosture => _currentPosture;
     public MovementPosture PreviewMovementPosture => MovementPostureUtility.GetPreviewMovementPosture(_currentPosture);
-    /// <summary>Текущие ОД.</summary>
-    public int CurrentAp => _currentAp;
+    /// <summary>Текущие ОД (0 while <see cref="IsServerEscaping"/>).</summary>
+    public int CurrentAp => _serverIsEscaping ? 0 : _currentAp;
+
+    public bool IsServerEscaping => _serverIsEscaping;
+
+    public void SetServerEscapeState(bool escaping)
+    {
+        _serverIsEscaping = escaping;
+        if (escaping)
+            _currentAp = 0;
+    }
     public int TurnCount => _turnCount;
     /// <summary>Сколько ОД уже потрачено в текущем ходу.</summary>
     public int ApSpentThisTurn => _apSpentThisTurn;
@@ -338,7 +351,7 @@ public class Player : MonoBehaviour
 
     /// <summary>Запускает движение по пути (список (col, row)), ограничивая длину по ОД. animate=false – телепорт.
     /// Стоимость перехода на L клеток при уже сделанных K шагах = GetStepCost(K+L) − GetStepCost(K).</summary>
-    public void MoveAlongPath(List<(int col, int row)> path, bool animate)
+    public void MoveAlongPath(List<(int col, int row)> path, bool animate, System.Action onMovementFullyComplete = null)
     {
         if (path == null || path.Count < 2 || _isMoving || _grid == null) return;
         if (IsDead || _isHidden) return;
@@ -348,31 +361,30 @@ public class Player : MonoBehaviour
         if (stepsToMove <= 0) return;
 
         int stepsAlready = _stepsTakenThisTurn;
-        int allowedSteps = GetAllowedSteps(PreviewMovementPosture, stepsAlready, stepsToMove, _currentAp);
-        if (allowedSteps <= 0) return;
+        int allowedSteps = GetAllowedStepsAlongHexPath(PreviewMovementPosture, path, stepsToMove);
+        if (allowedSteps <= 0)
+            return;
 
         if (_turnPath == null)
             _turnPath = new List<(int col, int row)>();
         if (_turnActions == null)
             _turnActions = new List<BattleQueuedAction>();
 
-        int actionsBeforeThisMove = _turnActions.Count;
-        int pathCountBeforeThisMove = _turnPath.Count;
-        int stepsBeforeThisMove = _stepsTakenThisTurn;
-
         MovementPosture posture = PreviewMovementPosture;
-        int moveCost = GetMoveCost(posture, stepsAlready, allowedSteps);
-        _apSpentThisTurn += moveCost;
-        _stepsTakenThisTurn = stepsAlready + allowedSteps;
-        _currentAp -= moveCost;
-        if (posture == MovementPosture.Run)
-            _runMovementApSpentThisTurn += moveCost;
-
         int subLen = allowedSteps + 1;
         _moveSubPathScratch.Clear();
         for (int i = 0; i < subLen; i++)
             _moveSubPathScratch.Add(path[i]);
         List<(int col, int row)> subPath = _moveSubPathScratch;
+
+        if (!TryComputeSequentialMoveEdgeApCosts(posture, stepsAlready, subPath, allowedSteps, _currentAp, out int moveCost, out int[] edgeCosts))
+            return;
+
+        _apSpentThisTurn += moveCost;
+        _stepsTakenThisTurn = stepsAlready + allowedSteps;
+        _currentAp -= moveCost;
+        if (posture == MovementPosture.Run)
+            _runMovementApSpentThisTurn += moveCost;
 
         // Накопить полный путь за ход:
         // при первом перемещении добавляем стартовую клетку, далее — только новые шаги.
@@ -381,7 +393,7 @@ public class Player : MonoBehaviour
         for (int i = 1; i < subPath.Count; i++)
         {
             _turnPath.Add(subPath[i]);
-            int stepCost = GetMoveCost(posture, stepsAlready + i - 1, 1);
+            int stepCost = edgeCosts[i - 1];
             _turnActions.Add(new BattleQueuedAction
             {
                 actionType = "MoveStep",
@@ -403,12 +415,13 @@ public class Player : MonoBehaviour
             OnMovedToCell?.Invoke(cell);
             TryClearMovementFlagIfReachedDestination();
             ClearRangedFacingOverrideForLocomotion();
+            onMovementFullyComplete?.Invoke();
         }
         else
-            StartCoroutine(MoveAlongPathCoroutine(subPath));
+            StartCoroutine(MoveAlongPathCoroutine(subPath, onMovementFullyComplete));
     }
 
-    private IEnumerator MoveAlongPathCoroutine(List<(int col, int row)> path)
+    private IEnumerator MoveAlongPathCoroutine(List<(int col, int row)> path, System.Action onMovementFullyComplete)
     {
         int interruptVersion = _movementInterruptVersion;
         _isMoving = true;
@@ -460,14 +473,15 @@ public class Player : MonoBehaviour
 
         _isMoving = false;
         TryClearMovementFlagIfReachedDestination();
+        onMovementFullyComplete?.Invoke();
     }
 
     /// <summary>Сколько шагов по пути можно пройти за текущие ОД (учёт позы и шагов в ходу).</summary>
-    public int GetAllowedMoveStepsForPath(int pathEdgeCount)
+    public int GetAllowedMoveStepsForPath(List<(int col, int row)> path)
     {
-        if (pathEdgeCount <= 0)
+        if (path == null || path.Count < 2)
             return 0;
-        return GetAllowedSteps(PreviewMovementPosture, _stepsTakenThisTurn, pathEdgeCount, _currentAp);
+        return GetAllowedStepsAlongHexPath(PreviewMovementPosture, path, path.Count - 1);
     }
 
     /// <summary>Цель «добежать» на следующих ходах; подсветка на гексе.</summary>
@@ -516,6 +530,7 @@ public class Player : MonoBehaviour
         if (GameSession.Active != null)
         {
             if (GameSession.Active.IsWaitingForServerRoundResolve) return;
+            if (GameSession.Active.LocalPlayerIsEscaping) return;
             if (GameSession.Active.IsTurnHistoryReplayPlaying) return;
             if (GameSession.Active.IsViewingHistoricalTurn) return;
         }
@@ -976,6 +991,116 @@ public class Player : MonoBehaviour
             allowed = steps;
         }
         return allowed;
+    }
+
+    /// <summary>Ordinary edge cost (no escape lump). Full path uses sequential simulation in <see cref="GetAllowedStepsAlongHexPath"/>.</summary>
+    public int GetMoveStepApCostForEdge(MovementPosture posture, int stepIndexWithinTurn, (int col, int row) from, (int col, int row) to) =>
+        GetMoveStepCost(posture, stepIndexWithinTurn);
+
+    private static bool IsPlanningEscapeEntry((int col, int row) from, (int col, int row) to)
+    {
+        GameSession s = GameSession.Active;
+        return s != null
+            && !s.IsEscapeBorderHex(from.col, from.row)
+            && s.IsEscapeBorderHex(to.col, to.row);
+    }
+
+    private bool TryComputeSequentialMoveEdgeApCosts(
+        MovementPosture posture,
+        int stepsAlreadyAtSubPathStart,
+        List<(int col, int row)> subPath,
+        int edgeCount,
+        int startingAp,
+        out int totalCost,
+        out int[] stepCosts)
+    {
+        totalCost = 0;
+        stepCosts = null;
+        if (subPath == null || edgeCount <= 0 || subPath.Count < edgeCount + 1)
+            return false;
+        if (_moveEdgeCostsScratch.Length < edgeCount)
+            _moveEdgeCostsScratch = new int[Math.Max(edgeCount, 16)];
+        int ap = startingAp;
+        for (int i = 0; i < edgeCount; i++)
+        {
+            var from = subPath[i];
+            var to = subPath[i + 1];
+            int c;
+            if (IsPlanningEscapeEntry(from, to))
+            {
+                if (ap < 1)
+                    return false;
+                c = ap;
+            }
+            else
+                c = GetMoveStepApCostForEdge(posture, stepsAlreadyAtSubPathStart + i, from, to);
+            if (c > ap)
+                return false;
+            _moveEdgeCostsScratch[i] = c;
+            ap -= c;
+            totalCost += c;
+        }
+        stepCosts = _moveEdgeCostsScratch;
+        return true;
+    }
+
+    private int GetAllowedStepsAlongHexPath(MovementPosture posture, List<(int col, int row)> path, int maxEdges)
+    {
+        if (path == null || path.Count < 2 || maxEdges <= 0)
+            return 0;
+        int cap = Mathf.Min(maxEdges, path.Count - 1);
+        int stepsAlready = _stepsTakenThisTurn;
+        int allowed = 0;
+        int ap = _currentAp;
+        for (int edges = 1; edges <= cap; edges++)
+        {
+            var from = path[edges - 1];
+            var to = path[edges];
+            int c;
+            if (IsPlanningEscapeEntry(from, to))
+            {
+                if (ap < 1)
+                    break;
+                c = ap;
+            }
+            else
+                c = GetMoveStepApCostForEdge(posture, stepsAlready + edges - 1, from, to);
+            if (c > ap)
+                break;
+            ap -= c;
+            allowed = edges;
+        }
+        return allowed;
+    }
+
+    private int SumApCostForHexPathEdges(MovementPosture posture, int stepsAlready, List<(int col, int row)> path, int edgeCount)
+    {
+        if (path == null || path.Count < 2 || edgeCount <= 0)
+            return 0;
+        int cap = Mathf.Min(edgeCount, path.Count - 1);
+        int ap = _currentAp;
+        int total = 0;
+        for (int i = 1; i <= cap; i++)
+        {
+            var from = path[i - 1];
+            var to = path[i];
+            int c;
+            if (IsPlanningEscapeEntry(from, to))
+                c = ap >= 1 ? ap : 0;
+            else
+                c = GetMoveStepApCostForEdge(posture, stepsAlready + i - 1, from, to);
+            total += c;
+            ap -= c;
+        }
+        return total;
+    }
+
+    /// <summary>Total AP to walk the full path from current planning state (for hover labels).</summary>
+    public int SumApCostForHexPath(List<(int col, int row)> path)
+    {
+        if (path == null || path.Count < 2)
+            return 0;
+        return SumApCostForHexPathEdges(PreviewMovementPosture, _stepsTakenThisTurn, path, path.Count - 1);
     }
 
     /// <summary>Установить штраф с сервера (доля 0–0.9).</summary>

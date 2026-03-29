@@ -971,6 +971,24 @@ app.MapGet("/hit_formula.html", (IWebHostEnvironment env) =>
     return Results.Content(HitFormulaPage.Html, "text/html; charset=utf-8");
 });
 
+// POST flee — start escape channel (stand on escape-border hex); JWT + player must belong to token user.
+app.MapPost("/api/battle/{battleId}/escape", (HttpContext http, string battleId, BattleRoomStore s, BattleAuthSession auth) =>
+{
+    if (!BattleAuthHttp.TryGetBearerUserId(http.Request, auth, out long uid))
+        return Results.Json(new ErrorResponse { Error = "Unauthorized" }, jsonOpt, statusCode: 401);
+    string playerId = http.Request.Query["playerId"].FirstOrDefault() ?? "";
+    if (string.IsNullOrEmpty(playerId))
+        return Results.Json(new { error = "playerId required" }, statusCode: 400);
+    var room = s.GetRoom(battleId);
+    if (room == null)
+        return Results.Json(new { error = "Battle not found" }, statusCode: 404);
+    if (!room.TryGetBattlePlayerUserId(playerId, out long slotUid) || slotUid != uid)
+        return Results.Json(new ErrorResponse { Error = "Forbidden" }, jsonOpt, statusCode: 403);
+    if (!room.TryBeginEscape(playerId, out var escErr))
+        return Results.Json(new { error = escErr ?? "Cannot flee" }, jsonOpt, statusCode: 400);
+    return Results.Ok(new { escaping = true });
+});
+
 // POST leave — отмена очереди; JWT + player must belong to token user.
 app.MapPost("/api/battle/{battleId}/leave", (HttpContext http, string battleId, string playerId, BattleRoomStore s, BattleAuthSession auth) =>
 {

@@ -1,6 +1,6 @@
 /// <summary>
 /// Имена объектов UI по <c>Assets/Scenes/MainScene.unity</c>.
-/// Прямые дочерние объекты корневого Canvas (fileID 1216319917): Front Content Maker, RoundWaitPanel, SkipDialogPanel (+ BlockOverlay при добавлении).
+/// Прямые дочерние объекты корневого Canvas (fileID 1216319917): Front Content Maker, RoundWaitPanel, SkipDialogPanel, EscapeBattlePanel (+ BlockOverlay при добавлении).
 /// При переименовании в редакторе обновляй здесь — автопоиск в <see cref="ActionPointsUI"/> опирается на эти строки.
 /// </summary>
 public static class UiHierarchyNames
@@ -59,6 +59,13 @@ public static class UiHierarchyNames
     public const string SkipDialogInput = "SkipDialogInput";
     public const string SkipDialogOkButton = "SkipDialogOkButton";
     public const string SkipDialogCancelButton = "SkipDialogCancelButton";
+
+    /// <summary>Battle flee confirmation (same Canvas as SkipDialog; assign via Tools menu or inspector).</summary>
+    public const string EscapeBattlePanel = "EscapeBattlePanel";
+    public const string EscapeBattleTitleText = "EscapeBattleTitleText";
+    public const string EscapeBattleBodyText = "EscapeBattleBodyText";
+    public const string EscapeBattleConfirmButton = "EscapeBattleConfirmButton";
+    public const string EscapeBattleCancelButton = "EscapeBattleCancelButton";
 
     public const string SkipGlobalNameShort = "Skip";
     public const string SkipGlobalNameBtn = "BtnSkip";

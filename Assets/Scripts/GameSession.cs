@@ -44,6 +44,12 @@ public class GameSession : MonoBehaviour
     /// <summary>Итог боя: true = победа, false = поражение.</summary>
     public static System.Action<bool> OnBattleFinished;
 
+    /// <summary>Active rectangle from server changed — refresh <see cref="MapBorderEscapeRing"/> etc.</summary>
+    public static event System.Action ActiveBattleZoneChanged;
+
+    /// <summary>Set for one <see cref="OnBattleFinished"/> tick when the local player fled (escape), not a normal win.</summary>
+    public static bool LastBattleEndWasEscape { get; private set; }
+
     [Header("Mode & IDs")]
     [Tooltip("Send turn to server when the local turn ends.")]
     [SerializeField] private bool _isOnlineMode;
@@ -121,7 +127,12 @@ public class GameSession : MonoBehaviour
     private HexGridCamera _hexGridCamera;
     private HexGrid _hexGrid;
     /// <summary>Блокировка ввода: ожидание результата раунда или анимация.</summary>
-    public bool BlockPlayerInput => _waitingForServerRoundResolve || IsBattleAnimationPlaying || IsTurnHistoryReplayPlaying || IsViewingHistoricalTurn;
+    public bool BlockPlayerInput =>
+        _waitingForServerRoundResolve || IsBattleAnimationPlaying || IsTurnHistoryReplayPlaying || IsViewingHistoricalTurn
+        || LocalPlayerIsEscaping;
+
+    /// <summary>Server marked the local unit as fleeing: no planning until they leave the battle or cancel by leaving the escape ring.</summary>
+    public bool LocalPlayerIsEscaping => LocalPlayer != null && LocalPlayer.IsServerEscaping;
 
     public bool IsWaitingForServerRoundResolve => _waitingForServerRoundResolve;
     public int LastProcessedTurnResultRound => _lastProcessedTurnResultRound;
@@ -146,6 +157,63 @@ public class GameSession : MonoBehaviour
         return col >= _battleActiveMinCol && col <= _battleActiveMaxCol
             && row >= _battleActiveMinRow && row <= _battleActiveMaxRow;
     }
+
+    /// <summary>True when the playable rectangle is the whole <see cref="HexGrid"/> (no zone shrink yet).</summary>
+    public bool ActiveBattleZoneCoversFullGrid()
+    {
+        if (!_battleActiveBoundsInitialized)
+            return false;
+        HexGrid grid = CachedHexGrid;
+        if (grid == null)
+            return false;
+        return _battleActiveMinCol == 0 && _battleActiveMaxCol == grid.Width - 1
+            && _battleActiveMinRow == 0 && _battleActiveMaxRow == grid.Length - 1;
+    }
+
+    /// <summary>Current server active rectangle (inclusive). False if bounds not initialized.</summary>
+    public bool TryGetActiveBattleBounds(out int minCol, out int maxCol, out int minRow, out int maxRow)
+    {
+        minCol = maxCol = minRow = maxRow = 0;
+        if (!_battleActiveBoundsInitialized)
+            return false;
+        minCol = _battleActiveMinCol;
+        maxCol = _battleActiveMaxCol;
+        minRow = _battleActiveMinRow;
+        maxRow = _battleActiveMaxRow;
+        return true;
+    }
+
+    /// <summary>
+    /// One-hex frame outside the active battle rectangle (col/row ±1 from limits); may include coordinates outside the physical grid.
+    /// </summary>
+    public bool IsEscapeBorderHex(int col, int row)
+    {
+        if (!_battleActiveBoundsInitialized)
+            return false;
+        if (IsHexInActiveBattleZone(col, row))
+            return false;
+        return col >= _battleActiveMinCol - 1 && col <= _battleActiveMaxCol + 1
+            && row >= _battleActiveMinRow - 1 && row <= _battleActiveMaxRow + 1;
+    }
+
+    /// <summary>Escape edges use normal movement AP (server matches).</summary>
+    public bool IsFreeApStepFromActiveToEscapeBorder(int fromCol, int fromRow, int toCol, int toRow) => false;
+
+    public bool LocalPlayerStandsOnEscapeBorderHex()
+    {
+        Player p = LocalPlayer;
+        return p != null && !p.IsDead && !p.IsHidden && IsEscapeBorderHex(p.CurrentCol, p.CurrentRow);
+    }
+
+    public void RefreshEscapeBorderRing()
+    {
+        MapBorderEscapeRing ring = FindFirstObjectByType<MapBorderEscapeRing>();
+        ring?.RefreshMarkers();
+    }
+
+    private static void RaiseActiveBattleZoneChanged() =>
+        ActiveBattleZoneChanged?.Invoke();
+
     public Player LocalPlayer
     {
         get
@@ -624,6 +692,8 @@ public class GameSession : MonoBehaviour
     {
         if (_battleFinished)
             return;
+        if (LocalPlayerIsEscaping)
+            return;
         var payload = BuildSubmitPayload(actions, roundIndex);
         // Одиночный бой через меню тоже идёт по серверу при IsInBattle — без проверки только _isOnlineMode,
         // иначе UI ждёт раунд, а submit не уходит.
@@ -659,11 +729,12 @@ public class GameSession : MonoBehaviour
     // Одиночная игра теперь тоже синхронизируется через сервер; локальный ИИ-ход больше не требуется.
 
     /// <summary>Результат раунда с сервера: сначала анимации журнала/путей, затем <see cref="ApplyRoundState"/> и снятие <c>_waitingForServerRoundResolve</c> (если ждали свой сабмит).</summary>
-    public void ApplyTurnResultThenRoundState(TurnResultPayload result, int nextRoundIndex, long roundDeadlineUtcMs, bool pendingSubmitFlow)
+    public void ApplyTurnResultThenRoundState(TurnResultPayload result, int nextRoundIndex, long roundDeadlineUtcMs)
     {
         if (result == null || result.results == null) return;
-        bool animateResolvedRound = !pendingSubmitFlow || _animateResolvedRoundForPendingSubmit;
-        if (pendingSubmitFlow)
+        RemoveFledRemoteUnitsFromTurnResult(result);
+        bool animateResolvedRound = !_waitingForServerRoundResolve || _animateResolvedRoundForPendingSubmit;
+        if (_waitingForServerRoundResolve)
             _animateResolvedRoundForPendingSubmit = true;
         if (!animateResolvedRound)
         {
@@ -673,7 +744,7 @@ public class GameSession : MonoBehaviour
         LogHitRollsFromTurnResult(result);
         var playback = animateResolvedRound ? BuildExecutedActionPlayback(result) : null;
         var animJobs = BuildTurnResultAnimationJobs(result, animateResolvedRound, deferLocomotionPosture: playback != null && playback.Count > 0);
-        StartCoroutine(DeferredRoundAfterAnimations(animJobs, playback, nextRoundIndex, roundDeadlineUtcMs, result, pendingSubmitFlow));
+        StartCoroutine(DeferredRoundAfterAnimations(animJobs, playback, nextRoundIndex, roundDeadlineUtcMs, result));
     }
 
     private List<(object unit, bool isLocal, HexPosition[] path)> BuildTurnResultAnimationJobs(TurnResultPayload result, bool prepareForAnimation, bool deferLocomotionPosture = false)
@@ -698,6 +769,7 @@ public class GameSession : MonoBehaviour
                     OnNetworkMessage?.Invoke(Loc.T("ui.cell_occupied"));
 
                 local.ApplyServerTurnResult(r.finalPosition, r.actualPath, r.currentAp, r.penaltyFraction, r.currentPosture, prepareForAnimation, applyLocomotionPosture: !deferLocomotionPosture);
+                local.SetServerEscapeState(r.isEscaping);
                 local.SetHealth(r.currentHp, r.maxHp > 0 ? r.maxHp : local.MaxHp);
                 if (!string.IsNullOrEmpty(r.weaponCode))
                 {
@@ -753,8 +825,7 @@ public class GameSession : MonoBehaviour
         List<ExecutedActionPlaybackEntry> playback,
         int nextRoundIndex,
         long roundDeadlineUtcMs,
-        TurnResultPayload result,
-        bool pendingSubmitFlow)
+        TurnResultPayload result)
     {
         if (playback != null && playback.Count > 0)
             yield return PlayExecutedActionTimeline(result, playback);
@@ -775,11 +846,8 @@ public class GameSession : MonoBehaviour
         {
             ApplyRoundState(nextRoundIndex, roundDeadlineUtcMs);
             var p = LocalPlayer;
-            if (pendingSubmitFlow)
-            {
-                p?.SetTurnTimerPaused(false);
-                _waitingForServerRoundResolve = false;
-            }
+            p?.SetTurnTimerPaused(false);
+            _waitingForServerRoundResolve = false;
 
             if (p != null && !BlockPlayerInput)
                 p.TryAutoMoveTowardFlag();
@@ -1263,7 +1331,7 @@ public class GameSession : MonoBehaviour
     /// <summary>Отправка хода по сети: при дальнобойной атаке в очереди — разворот локального игрока, затем submit.</summary>
     public void SubmitTurnOnlineWithOptionalRangedFacing(BattleQueuedAction[] actions, int roundIndex, bool animateResolvedRound)
     {
-        if (_battleFinished || !IsInBattleWithServer())
+        if (_battleFinished || !IsInBattleWithServer() || LocalPlayerIsEscaping)
             return;
 
         BattleQueuedAction[] safe = actions ?? Array.Empty<BattleQueuedAction>();
@@ -1704,6 +1772,7 @@ public class GameSession : MonoBehaviour
         _initialReplayState.Clear();
         CancelWaitingForServerRoundResolve();
         _battleFinished = false;
+        LastBattleEndWasEscape = false;
 
         long deadlineUtcMs = payload.roundDeadlineUtcMs;
         if (deadlineUtcMs <= 0)
@@ -1721,6 +1790,12 @@ public class GameSession : MonoBehaviour
             grid.ClearAllZoneShrinkExclusions();
         ApplyBattleActiveBoundsFromPayload(payload, grid);
         ApplyObstacleMap(payload, grid);
+        if (grid != null && FindFirstObjectByType<MapBorderEscapeRing>() == null)
+        {
+            var ringGo = new GameObject("MapBorderEscapeRing");
+            ringGo.AddComponent<MapBorderEscapeRing>();
+        }
+        RefreshEscapeBorderRing();
 
         var spawnList = BuildSpawnListFromPayload(payload);
         if (spawnList == null || spawnList.Count == 0)
@@ -1756,6 +1831,7 @@ public class GameSession : MonoBehaviour
                     int wRng = GetSpawnInt(payload.spawnWeaponRanges, spawnIndex, 1);
                     int wAtk = GetSpawnInt(payload.spawnWeaponAttackApCosts, spawnIndex, 1);
                     local.SetEquippedWeapon(wCode, wDmg, wRng, wAtk, wDmgMin);
+                    local.SetServerEscapeState(false);
                     int dispLevel = GetSpawnInt(payload.spawnLevels, spawnIndex, 1);
                     string dispName = GetSpawnString(payload.spawnDisplayNames, spawnIndex, "");
                     if (string.IsNullOrEmpty(dispName))
@@ -2166,6 +2242,7 @@ public class GameSession : MonoBehaviour
         }
 
         _battleActiveBoundsInitialized = true;
+        RaiseActiveBattleZoneChanged();
     }
 
     private void ApplyActiveZoneBoundsFromTurnResult(TurnResultPayload result, HexGrid grid)
@@ -2179,6 +2256,7 @@ public class GameSession : MonoBehaviour
         _battleActiveMinRow = result.activeMinRow;
         _battleActiveMaxRow = result.activeMaxRow;
         _battleActiveBoundsInitialized = true;
+        RaiseActiveBattleZoneChanged();
     }
 
     /// <summary>After turn-resolve animations: snap units to server hex, then remove obstacles, play falling hex animation, sync active rectangle.</summary>
@@ -2220,6 +2298,7 @@ public class GameSession : MonoBehaviour
         }
 
         ApplyActiveZoneBoundsFromTurnResult(result, grid);
+        RefreshEscapeBorderRing();
     }
 
     private void ApplyObstacleMap(BattleStartedPayload payload, HexGrid grid)
@@ -2424,11 +2503,58 @@ public class GameSession : MonoBehaviour
         }
     }
 
+    private void RemoveFledRemoteUnitsFromTurnResult(TurnResultPayload result)
+    {
+        if (result?.results == null)
+            return;
+        foreach (var r in result.results)
+        {
+            if (r == null || !r.hasFled || string.IsNullOrEmpty(r.playerId))
+                continue;
+            if (r.playerId == _playerId)
+                continue;
+            if (_remoteUnits.TryGetValue(r.playerId, out var rem) && rem != null)
+            {
+                _remoteUnits.Remove(r.playerId);
+                Destroy(rem.gameObject);
+            }
+        }
+    }
+
+    /// <summary>Legacy single-click flee entry removed — use double-click movement onto the orange ring; <see cref="ActionPointsUI.TryShowEscapeStepOntoBorderDialog"/> handles confirmation.</summary>
+    public void TryOpenBattleEscapeConfirmFromMapClick()
+    {
+    }
+
+    /// <summary>HTTP POST /api/battle/.../escape after the player confirms in <see cref="ActionPointsUI"/>.</summary>
+    public IEnumerator CoPostBattleEscapeRequest(System.Action<string> onError)
+    {
+        if (_serverConnection == null)
+            _serverConnection = FindFirstObjectByType<BattleServerConnection>();
+        if (_serverConnection == null || !_serverConnection.IsInBattle)
+        {
+            onError?.Invoke(Loc.T("escape.request_failed"));
+            yield break;
+        }
+
+        string url = $"{_serverConnection.ServerUrl.TrimEnd('/')}/api/battle/{HttpSimple.Escape(_battleId)}/escape?playerId={HttpSimple.Escape(_playerId)}";
+        string err = null;
+        yield return HttpSimple.PostJsonWithAuth(url, "{}", BattleSessionState.AccessToken, _ => { }, e => err = e);
+        if (!string.IsNullOrEmpty(err))
+        {
+            onError?.Invoke(err);
+            yield break;
+        }
+
+        OnNetworkMessage?.Invoke(Loc.T("battle.escape_started"));
+    }
+
     private void HandleBattleFinishedFromServer(TurnResultPayload result)
     {
         if (_battleFinished) return;
 
         bool localDead = false;
+        bool localFled = false;
         if (result != null && result.results != null)
         {
             foreach (var item in result.results)
@@ -2437,19 +2563,21 @@ public class GameSession : MonoBehaviour
                 if (item.playerId == _playerId)
                 {
                     localDead = item.isDead;
+                    localFled = item.hasFled;
                     break;
                 }
             }
         }
 
-        if (!localDead)
+        if (localFled || !localDead)
         {
             _battleFinished = true;
             _waitingForServerRoundResolve = false;
             var p = LocalPlayer;
             p?.SetTurnTimerPaused(true);
+            LastBattleEndWasEscape = localFled;
             OnBattleFinished?.Invoke(true);
-            OnNetworkMessage?.Invoke(Loc.T("ui.battle_won"));
+            OnNetworkMessage?.Invoke(localFled ? Loc.T("ui.battle_escaped") : Loc.T("ui.battle_won"));
         }
     }
 

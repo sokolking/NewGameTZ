@@ -34,12 +34,15 @@ public class HexInputManager : MonoBehaviour
     private Vector2 _holdIndicatorAnchorScreen;
     private bool _hasHoldIndicatorAnchor;
 
-    private static readonly RaycastHit[] _hexRaycastHits = new RaycastHit[1];
     /// <summary>Двойной клик: порядок попаданий луча (гекс vs моб) без аллокации.</summary>
     private static readonly RaycastHit[] _doubleClickRaycastHits = new RaycastHit[48];
     /// <summary>Удержание ЛКМ по юниту — без <see cref="Physics.RaycastAll"/> (GC).</summary>
     private static readonly RaycastHit[] _remoteHoldRaycastHits = new RaycastHit[64];
     private readonly List<(int col, int row)> _doubleClickPathBuffer = new(64);
+    private readonly List<(int col, int row)> _hoverPathApBuffer = new(64);
+    private readonly List<(int col, int row)> _pendingEscapeConfirmPath = new(64);
+    private int _lastHoverDestCol = int.MinValue;
+    private int _lastHoverDestRow = int.MinValue;
     [SerializeField] private AttackRangeHexOutline _attackRangeOutline;
     public static bool IsHoldingRemoteTargetWithLeftMouse { get; private set; }
 
@@ -277,8 +280,6 @@ public class HexInputManager : MonoBehaviour
             cameraMoved = dx * dx + dy * dy + dz * dz > 1e-10f;
             if (!cameraMoved)
             {
-                // Dot product вместо Quaternion.Angle (избегаем Acos).
-                // dot^2 < 1 означает ненулевой угол; порог ~0.01 deg.
                 Quaternion cr = _cameraTransform.rotation;
                 float dot = cr.x * _lastHoverCamRot.x + cr.y * _lastHoverCamRot.y
                            + cr.z * _lastHoverCamRot.z + cr.w * _lastHoverCamRot.w;
@@ -286,12 +287,23 @@ public class HexInputManager : MonoBehaviour
             }
         }
 
+        int hCol;
+        int hRow;
         HexCell cell;
         if (!mouseMoved && !cameraMoved && _hoverRaycastCacheValid)
+        {
+            hCol = _lastHoverDestCol;
+            hRow = _lastHoverDestRow;
             cell = _lastHoveredCell;
+        }
         else
         {
-            cell = GetHexUnderCursor(mouse);
+            if (!TryRaycastMoveDestination(mouse, out hCol, out hRow, out cell))
+            {
+                hCol = int.MinValue;
+                hRow = int.MinValue;
+            }
+
             _lastHoverMousePos = mousePos;
             if (_cameraTransform != null)
             {
@@ -303,7 +315,22 @@ public class HexInputManager : MonoBehaviour
 
         MovementPosture posture = _player != null ? _player.CurrentMovementPosture : MovementPosture.Walk;
         int currentAp = _player != null ? _player.CurrentAp : int.MinValue;
-        if (cell == _lastHoveredCell && currentAp == _lastHoverAp && posture == _lastHoverPosture)
+        if (hCol == int.MinValue)
+        {
+            if (_lastHoveredCell != null)
+            {
+                _lastHoveredCell.SetHighlight(false);
+                _lastHoveredCell.SetCostLabel(-1);
+                _lastHoveredCell = null;
+            }
+
+            _lastHoverDestCol = int.MinValue;
+            _lastHoverDestRow = int.MinValue;
+            return;
+        }
+
+        if (hCol == _lastHoverDestCol && hRow == _lastHoverDestRow && currentAp == _lastHoverAp && posture == _lastHoverPosture
+            && cell == _lastHoveredCell)
             return;
 
         if (_lastHoveredCell != null)
@@ -312,25 +339,24 @@ public class HexInputManager : MonoBehaviour
             _lastHoveredCell.SetCostLabel(-1);
         }
 
+        _lastHoverDestCol = hCol;
+        _lastHoverDestRow = hRow;
         _lastHoveredCell = cell;
         _lastHoverAp = currentAp;
         _lastHoverPosture = posture;
         if (cell != null)
-        {
             cell.SetHighlight(true);
 
-            if (_player != null)
-            {
-                if (HexPathfinding.TryGetShortestPathStepCount(_grid, _player.CurrentCol, _player.CurrentRow, cell.Col, cell.Row, out int steps)
-                    && steps > 0)
-                {
-                    int stepCost = _player.GetMoveCost(_player.StepsTakenThisTurn, steps);
-                    cell.SetCostLabel(stepCost);
-                }
-                else
-                    cell.SetCostLabel(-1);
-            }
+        if (_player != null
+            && HexPathfinding.TryBuildPath(_grid, _player.CurrentCol, _player.CurrentRow, hCol, hRow, _hoverPathApBuffer)
+            && _hoverPathApBuffer.Count > 1)
+        {
+            int apCost = _player.SumApCostForHexPath(_hoverPathApBuffer);
+            if (cell != null)
+                cell.SetCostLabel(apCost);
         }
+        else if (cell != null)
+            cell.SetCostLabel(-1);
     }
 
     private void UpdateDoubleClick(Mouse mouse)
@@ -357,9 +383,9 @@ public class HexInputManager : MonoBehaviour
 
     private void OnDoubleClick(Mouse mouse)
     {
-        // Двойной клик по коллайдеру юнита — только атака (удержание/клики), не ход.
-        // Двойной клик по гексу (в т.ч. клетка под мобом, если луч попал в пол) — движение.
-        if (!TryGetHexCellForDoubleClickMove(mouse, out HexCell cell) || _player == null || _player.IsMoving || _player.IsDead || _player.IsHidden)
+        if (_player == null || _player.IsMoving || _player.IsDead || _player.IsHidden)
+            return;
+        if (!TryRaycastMoveDestination(mouse, out int destCol, out int destRow, out _))
             return;
 
         if (!_player.EnsureMovablePostureForMovement())
@@ -371,7 +397,7 @@ public class HexInputManager : MonoBehaviour
         if (!HexPathfinding.TryBuildPath(
                 _grid,
                 _player.CurrentCol, _player.CurrentRow,
-                cell.Col, cell.Row,
+                destCol, destRow,
                 _doubleClickPathBuffer))
             return;
 
@@ -379,41 +405,83 @@ public class HexInputManager : MonoBehaviour
         if (stepsToMove <= 0)
             return;
 
-        int allowed = _player.GetAllowedMoveStepsForPath(stepsToMove);
+        if (PathFirstEntersEscapeRingFromInside(_doubleClickPathBuffer))
+        {
+            _pendingEscapeConfirmPath.Clear();
+            _pendingEscapeConfirmPath.AddRange(_doubleClickPathBuffer);
+#if UNITY_2023_1_OR_NEWER
+            ActionPointsUI apUi = FindFirstObjectByType<ActionPointsUI>();
+#else
+            ActionPointsUI apUi = FindObjectOfType<ActionPointsUI>();
+#endif
+            if (apUi != null && apUi.TryShowEscapeStepOntoBorderDialog())
+                return;
+            _pendingEscapeConfirmPath.Clear();
+            GameSession.OnNetworkMessage?.Invoke(Loc.T("escape.dialog_misconfigured"));
+            return;
+        }
+
+        int allowed = _player.GetAllowedMoveStepsForPath(_doubleClickPathBuffer);
         if (allowed >= stepsToMove)
             _player.ClearMovementFlag();
         else
-            _player.SetMovementFlag(cell.Col, cell.Row);
+            _player.SetMovementFlag(destCol, destRow);
 
         if (allowed > 0)
             _player.MoveAlongPath(_doubleClickPathBuffer, MovementPlanningVisualSettings.ShowMovementAnimation);
     }
 
-    private HexCell GetHexUnderCursor(Mouse mouse)
-    {
-        Vector2 pos = mouse.position.ReadValue();
-        Ray ray = _camera.ScreenPointToRay(new Vector3(pos.x, pos.y, 0f));
-        if (Physics.RaycastNonAlloc(ray, _hexRaycastHits, 1000f, _hexLayer) <= 0)
-            return null;
+    public void CancelPendingEscapeConfirmPath() => _pendingEscapeConfirmPath.Clear();
 
-        Collider col = _hexRaycastHits[0].collider;
-        if (col == null)
-            return null;
-        return col.GetComponent<HexCell>();
+    public bool TryConsumePendingEscapeConfirmPath()
+    {
+        if (_player == null || _grid == null || _pendingEscapeConfirmPath.Count < 2)
+        {
+            _pendingEscapeConfirmPath.Clear();
+            return false;
+        }
+
+        var path = new List<(int col, int row)>(_pendingEscapeConfirmPath);
+        _pendingEscapeConfirmPath.Clear();
+        int stepsToMove = path.Count - 1;
+        int allowed = _player.GetAllowedMoveStepsForPath(path);
+        if (allowed >= stepsToMove)
+            _player.ClearMovementFlag();
+        else
+            _player.SetMovementFlag(path[^1].col, path[^1].row);
+        if (allowed > 0)
+            _player.MoveAlongPath(path, MovementPlanningVisualSettings.ShowMovementAnimation);
+
+        return allowed > 0;
     }
 
-    /// <summary>
-    /// Клетка для движения по двойному клику: по лучу по расстоянию ищем первое попадание в юнита или в гекс.
-    /// Если раньше гекса идёт <see cref="RemoteBattleUnitView"/> — клик по силуэту, движение не выполняем.
-    /// </summary>
-    private bool TryGetHexCellForDoubleClickMove(Mouse mouse, out HexCell cell)
+    private static bool PathFirstEntersEscapeRingFromInside(IReadOnlyList<(int col, int row)> path)
     {
+        GameSession gs = GameSession.Active;
+        if (gs == null || path == null || path.Count < 2)
+            return false;
+        for (int i = 1; i < path.Count; i++)
+        {
+            if (gs.IsEscapeBorderHex(path[i].col, path[i].row)
+                && !gs.IsEscapeBorderHex(path[i - 1].col, path[i - 1].row))
+                return true;
+        }
+
+        return false;
+    }
+
+    private bool TryRaycastMoveDestination(Mouse mouse, out int col, out int row, out HexCell cell)
+    {
+        col = 0;
+        row = 0;
         cell = null;
-        if (_camera == null) return false;
+        if (_camera == null)
+            return false;
         Vector2 pos = mouse.position.ReadValue();
         Ray ray = _camera.ScreenPointToRay(new Vector3(pos.x, pos.y, 0f));
         int n = Physics.RaycastNonAlloc(ray, _doubleClickRaycastHits, 1000f, Physics.DefaultRaycastLayers, QueryTriggerInteraction.Collide);
-        if (n <= 0) return false;
+        if (n <= 0)
+            return false;
         if (n > MaxRaycastHitsToProcess)
             n = MaxRaycastHitsToProcess;
         SortRaycastHitsByDistance(_doubleClickRaycastHits, n);
@@ -421,14 +489,71 @@ public class HexInputManager : MonoBehaviour
         for (int i = 0; i < n; i++)
         {
             Collider c = _doubleClickRaycastHits[i].collider;
-            if (c == null) continue;
+            if (c == null)
+                continue;
             if (c.GetComponentInParent<RemoteBattleUnitView>() != null)
                 return false;
+            if (_player != null)
+            {
+                Player pl = c.GetComponentInParent<Player>();
+                if (pl != null && pl == _player)
+                {
+                    col = pl.CurrentCol;
+                    row = pl.CurrentRow;
+                    cell = _grid.GetCell(col, row);
+                    return true;
+                }
+            }
+
             HexCell hex = c.GetComponent<HexCell>();
-            if (hex == null)
+            if (hex != null)
+            {
+                col = hex.Col;
+                row = hex.Row;
+                cell = hex;
+                return true;
+            }
+
+            BorderHexMarker bm = c.GetComponent<BorderHexMarker>();
+            if (bm != null)
+            {
+                col = bm.Col;
+                row = bm.Row;
+                cell = _grid.GetCell(col, row);
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private HexCell GetHexUnderCursor(Mouse mouse) =>
+        TryRaycastMoveDestination(mouse, out _, out _, out HexCell cell) ? cell : null;
+
+    private bool TryGetBorderHexMarkerUnderCursor(Mouse mouse, out BorderHexMarker marker)
+    {
+        marker = null;
+        if (_camera == null)
+            return false;
+        Vector2 pos = mouse.position.ReadValue();
+        Ray ray = _camera.ScreenPointToRay(new Vector3(pos.x, pos.y, 0f));
+        int n = Physics.RaycastNonAlloc(ray, _doubleClickRaycastHits, 1000f, Physics.DefaultRaycastLayers, QueryTriggerInteraction.Collide);
+        if (n <= 0)
+            return false;
+        if (n > MaxRaycastHitsToProcess)
+            n = MaxRaycastHitsToProcess;
+        SortRaycastHitsByDistance(_doubleClickRaycastHits, n);
+        for (int i = 0; i < n; i++)
+        {
+            Collider c = _doubleClickRaycastHits[i].collider;
+            if (c == null)
                 continue;
-            cell = hex;
-            return true;
+            BorderHexMarker bm = c.GetComponent<BorderHexMarker>();
+            if (bm != null)
+            {
+                marker = bm;
+                return true;
+            }
         }
 
         return false;

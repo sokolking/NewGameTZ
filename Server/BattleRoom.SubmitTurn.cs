@@ -64,18 +64,15 @@ public partial class BattleRoom
         if (RoundTimeLeft > 0.01f)
             EndedTurnEarlyThisRound[payload.PlayerId] = true;
 
-        // Убедиться, что у всех мобов есть команды на этот раунд.
+        // Pre-fill mob queues for logging / any reader; actual mob resolution in CloseRound uses
+        // BuildMobActionForCurrentState (tick sim), not these queues. Never block round close on mobs —
+        // they are not separate "submitters" and have no round timer slot.
         EnsureMobCommandsForCurrentRound();
 
         // Все игроки прислали ходы?
         bool allPlayersSubmitted = Submissions.Count >= Players.Count;
 
-        // Все мобы имеют команды?
-        bool allMobsHaveCommands = Units.Values
-            .Where(u => u.UnitType == UnitType.Mob)
-            .All(m => UnitCommands.ContainsKey(m.UnitId));
-
-        return allPlayersSubmitted && allMobsHaveCommands;
+        return allPlayersSubmitted;
     }
 
     /// <summary>Статусы участников для опроса: кто сдал ход, кто досрочно.</summary>

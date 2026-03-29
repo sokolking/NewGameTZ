@@ -7,6 +7,23 @@ using UnityEngine;
 /// </summary>
 public static class HexPathfinding
 {
+    private static bool IsWalkableBattleHex(int col, int row)
+    {
+        var s = GameSession.Active;
+        return s == null
+            || s.IsHexInActiveBattleZone(col, row)
+            || s.IsEscapeBorderHex(col, row);
+    }
+
+    private static bool IsValidPathEndpoint(HexGrid grid, int col, int row)
+    {
+        if (grid == null)
+            return false;
+        if (GameSession.Active == null)
+            return grid.IsInBounds(col, row);
+        return IsWalkableBattleHex(col, row);
+    }
+
     private static readonly List<(int col, int row)> OpenList = new(256);
     private static readonly HashSet<(int col, int row)> ClosedSet = new(256);
     private static readonly HashSet<(int col, int row)> InOpenSet = new(256);
@@ -24,16 +41,10 @@ public static class HexPathfinding
         out int stepCount)
     {
         stepCount = 0;
-        if (grid == null || !grid.IsInBounds(startCol, startRow) || !grid.IsInBounds(endCol, endRow))
+        if (grid == null || !IsValidPathEndpoint(grid, startCol, startRow) || !IsValidPathEndpoint(grid, endCol, endRow))
             return false;
 
-        if (GameSession.Active != null)
-        {
-            if (!GameSession.Active.IsHexInActiveBattleZone(startCol, startRow) || !GameSession.Active.IsHexInActiveBattleZone(endCol, endRow))
-                return false;
-        }
-
-        if (GameSession.Active != null && GameSession.Active.IsObstacleCell(endCol, endRow))
+        if (GameSession.Active != null && grid.IsInBounds(endCol, endRow) && GameSession.Active.IsObstacleCell(endCol, endRow))
             return false;
 
         if (startCol == endCol && startRow == endRow)
@@ -58,16 +69,10 @@ public static class HexPathfinding
         if (pathOut == null)
             return false;
 
-        if (grid == null || !grid.IsInBounds(startCol, startRow) || !grid.IsInBounds(endCol, endRow))
+        if (grid == null || !IsValidPathEndpoint(grid, startCol, startRow) || !IsValidPathEndpoint(grid, endCol, endRow))
             return false;
 
-        if (GameSession.Active != null)
-        {
-            if (!GameSession.Active.IsHexInActiveBattleZone(startCol, startRow) || !GameSession.Active.IsHexInActiveBattleZone(endCol, endRow))
-                return false;
-        }
-
-        if (GameSession.Active != null && GameSession.Active.IsObstacleCell(endCol, endRow))
+        if (GameSession.Active != null && grid.IsInBounds(endCol, endRow) && GameSession.Active.IsObstacleCell(endCol, endRow))
             return false;
 
         if (startCol == endCol && startRow == endRow)
@@ -153,9 +158,15 @@ public static class HexPathfinding
             for (int dir = 0; dir < 6; dir++)
             {
                 HexGrid.GetNeighbor(curCol, curRow, dir, out int nCol, out int nRow);
-                if (!grid.IsInBounds(nCol, nRow)) continue;
-                if (GameSession.Active != null && !GameSession.Active.IsHexInActiveBattleZone(nCol, nRow)) continue;
-                if (GameSession.Active != null && GameSession.Active.IsObstacleCell(nCol, nRow)) continue;
+                if (GameSession.Active != null)
+                {
+                    if (!IsWalkableBattleHex(nCol, nRow))
+                        continue;
+                    if (grid.IsInBounds(nCol, nRow) && GameSession.Active.IsObstacleCell(nCol, nRow))
+                        continue;
+                }
+                else if (!grid.IsInBounds(nCol, nRow))
+                    continue;
 
                 var neighbor = (nCol, nRow);
                 if (ClosedSet.Contains(neighbor)) continue;

@@ -126,6 +126,9 @@ public partial class BattleRoom
 
     /// <summary>Кто в этом раунде завершил ход досрочно (пока таймер не истёк).</summary>
     public Dictionary<string, bool> EndedTurnEarlyThisRound { get; } = new();
+
+    /// <summary>Human players channeling flee: rounds left after the next <see cref="CloseRound"/> boundary (decremented each close).</summary>
+    public Dictionary<string, int> EscapingPlayers { get; } = new();
     /// <summary>Тег препятствия: wall | wall_low | damaged_* | tree | rock (ЛС стен — см. BattleRoom.LineOfFire).</summary>
     private readonly Dictionary<(int col, int row), string> _obstacleTags = new();
     private readonly Dictionary<(int col, int row), int> _wallHpRemaining = new();

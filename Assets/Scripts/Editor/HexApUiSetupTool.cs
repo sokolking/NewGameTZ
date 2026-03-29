@@ -387,6 +387,104 @@ public static class HexApUiSetupTool
         Debug.Log("Hex Grid: SkipDialogPanel добавлен на Canvas и привязан к ActionPointsUI. При необходимости перенеси в конец иерархии Canvas (поверх остального UI).");
     }
 
+    private const string EscapeBattleDialogMenu = "Tools/Hex Grid/Add Escape Battle Dialog";
+
+    /// <summary>
+    /// Создаёт <see cref="UiHierarchyNames.EscapeBattlePanel"/> на Canvas и проставляет ссылки в <see cref="ActionPointsUI"/>.
+    /// </summary>
+    [MenuItem(EscapeBattleDialogMenu)]
+    public static void AddEscapeBattleDialog()
+    {
+#if UNITY_2023_1_OR_NEWER
+        ActionPointsUI apUi = Object.FindFirstObjectByType<ActionPointsUI>();
+#else
+        ActionPointsUI apUi = Object.FindObjectOfType<ActionPointsUI>();
+#endif
+        if (apUi == null)
+        {
+            Debug.LogError("Hex Grid: не найден ActionPointsUI.");
+            return;
+        }
+
+        Transform canvas = apUi.transform;
+        while (canvas != null && canvas.GetComponent<Canvas>() == null)
+            canvas = canvas.parent;
+        if (canvas == null)
+        {
+            Debug.LogError("Hex Grid: нет Canvas.");
+            return;
+        }
+
+        Transform existing = canvas.Find(UiHierarchyNames.EscapeBattlePanel);
+        if (existing != null)
+            Object.DestroyImmediate(existing.gameObject);
+
+        Font legacyFont = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+
+        GameObject panel = new GameObject(UiHierarchyNames.EscapeBattlePanel, typeof(RectTransform));
+        Undo.RegisterCreatedObjectUndo(panel, "Escape Battle Dialog");
+        panel.transform.SetParent(canvas, false);
+        RectTransform prt = panel.GetComponent<RectTransform>();
+        prt.anchorMin = Vector2.zero;
+        prt.anchorMax = Vector2.one;
+        prt.offsetMin = Vector2.zero;
+        prt.offsetMax = Vector2.zero;
+
+        Image dim = panel.AddComponent<Image>();
+        dim.color = new Color(0f, 0f, 0f, 0.72f);
+        dim.raycastTarget = true;
+
+        Transform panelTf = panel.transform;
+
+        GameObject titleGo = new GameObject(UiHierarchyNames.EscapeBattleTitleText, typeof(RectTransform), typeof(Text));
+        titleGo.transform.SetParent(panelTf, false);
+        RectTransform titleRt = titleGo.GetComponent<RectTransform>();
+        titleRt.anchorMin = new Vector2(0.5f, 0.5f);
+        titleRt.anchorMax = new Vector2(0.5f, 0.5f);
+        titleRt.pivot = new Vector2(0.5f, 0.5f);
+        titleRt.sizeDelta = new Vector2(520f, 44f);
+        titleRt.anchoredPosition = new Vector2(0f, 88f);
+        Text titleT = titleGo.GetComponent<Text>();
+        titleT.text = "Flee the battle?";
+        titleT.alignment = TextAnchor.MiddleCenter;
+        titleT.color = Color.white;
+        titleT.fontSize = 26;
+        if (legacyFont != null)
+            titleT.font = legacyFont;
+
+        GameObject bodyGo = new GameObject(UiHierarchyNames.EscapeBattleBodyText, typeof(RectTransform), typeof(Text));
+        bodyGo.transform.SetParent(panelTf, false);
+        RectTransform bodyRt = bodyGo.GetComponent<RectTransform>();
+        bodyRt.anchorMin = new Vector2(0.5f, 0.5f);
+        bodyRt.anchorMax = new Vector2(0.5f, 0.5f);
+        bodyRt.pivot = new Vector2(0.5f, 0.5f);
+        bodyRt.sizeDelta = new Vector2(520f, 120f);
+        bodyRt.anchoredPosition = new Vector2(0f, 12f);
+        Text bodyT = bodyGo.GetComponent<Text>();
+        bodyT.text = "Reach an orange escape hex (0 AP from zone), stand on it, then confirm.";
+        bodyT.alignment = TextAnchor.MiddleCenter;
+        bodyT.color = Color.white;
+        bodyT.fontSize = 18;
+        if (legacyFont != null)
+            bodyT.font = legacyFont;
+
+        Button okBtn = CreateSkipDialogUiButton(panelTf, UiHierarchyNames.EscapeBattleConfirmButton, "Flee", new Vector2(-90f, -78f), legacyFont);
+        Button cancelBtn = CreateSkipDialogUiButton(panelTf, UiHierarchyNames.EscapeBattleCancelButton, "Cancel", new Vector2(90f, -78f), legacyFont);
+
+        panel.SetActive(false);
+
+        SerializedObject so = new SerializedObject(apUi);
+        so.FindProperty("_escapeBattlePanel").objectReferenceValue = panel;
+        so.FindProperty("_escapeBattleTitleText").objectReferenceValue = titleT;
+        so.FindProperty("_escapeBattleBodyText").objectReferenceValue = bodyT;
+        so.FindProperty("_escapeBattleConfirmButton").objectReferenceValue = okBtn;
+        so.FindProperty("_escapeBattleCancelButton").objectReferenceValue = cancelBtn;
+        so.ApplyModifiedPropertiesWithoutUndo();
+
+        Selection.activeGameObject = panel;
+        Debug.Log("Hex Grid: EscapeBattlePanel added and wired to ActionPointsUI. Text/buttons refresh at runtime from Loc.");
+    }
+
     private static Button CreateSkipDialogUiButton(Transform parent, string name, string caption, Vector2 anchoredPos, Font font)
     {
         GameObject go = new GameObject(name, typeof(RectTransform), typeof(Image), typeof(Button));

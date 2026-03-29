@@ -336,6 +336,12 @@ public class PlayerTurnResultDto
     public int WeaponTrajectoryHeight { get; set; } = 1;
     public bool WeaponIsSniper { get; set; }
     public ExecutedBattleActionDto[]? ExecutedActions { get; set; }
+    /// <summary>Player is in the flee channel (forced empty queue / 0 AP for the round).</summary>
+    public bool IsEscaping { get; set; }
+    /// <summary>Rounds remaining in the flee channel after this round resolves (0 when <see cref="HasFled"/>).</summary>
+    public int EscapeRoundsRemaining { get; set; }
+    /// <summary>Removed from the battle this round after completing flee.</summary>
+    public bool HasFled { get; set; }
 }
 
 public enum CellObjectState

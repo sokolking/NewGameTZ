@@ -3,7 +3,7 @@ using UnityEngine.UI;
 
 /// <summary>
 /// Показывает <see cref="UiHierarchyNames.BlockOverlay"/> при открытии любой из панелей:
-/// RoundWaitPanel, SkipDialogPanel (логика совпадает с <see cref="GameplayMapInputBlock"/>).
+/// RoundWaitPanel, SkipDialogPanel, EscapeBattlePanel (логика совпадает с <see cref="GameplayMapInputBlock"/>).
 /// Скрывает оверлей, когда все они закрыты.
 /// Повесь на корневой Canvas (тот же, где ActionPointsUI) — или компонент добавится из <see cref="ActionPointsUI"/> автоматически.
 /// Если объекта BlockOverlay нет в сцене, он будет создан при старте.

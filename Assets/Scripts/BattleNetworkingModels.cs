@@ -165,6 +165,12 @@ public class PlayerTurnResult
     /// <summary>Rounds currently loaded in magazine after round resolve.</summary>
     public int currentMagazineRounds;
     public BattleExecutedAction[] executedActions;
+    [JsonProperty("isEscaping")]
+    public bool isEscaping;
+    [JsonProperty("escapeRoundsRemaining")]
+    public int escapeRoundsRemaining;
+    [JsonProperty("hasFled")]
+    public bool hasFled;
 }
 
 /// <summary>Клиент → сервер: ход по WebSocket.</summary>

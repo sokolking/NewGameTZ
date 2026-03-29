@@ -43,6 +43,17 @@ public class ActionPointsUI : MonoBehaviour
     [SerializeField] private Button _skipDialogCancelButton;
     [Tooltip("Default value placed in the field when the dialog opens.")]
     [SerializeField] private string _skipDialogInitialInput = "1";
+    [Header("Escape battle dialog")]
+    [Tooltip("Root: UiHierarchyNames.EscapeBattlePanel. Children: title, body, Confirm/Cancel (see Tools → Hex Grid → Add Escape Battle Dialog).")]
+    [SerializeField] private GameObject _escapeBattlePanel;
+    [SerializeField] private Text _escapeBattleTitleText;
+    [Tooltip("TMP variant for title.")]
+    [SerializeField] private TextMeshProUGUI _escapeBattleTitleTmpText;
+    [SerializeField] private Text _escapeBattleBodyText;
+    [Tooltip("TMP variant for body.")]
+    [SerializeField] private TextMeshProUGUI _escapeBattleBodyTmpText;
+    [SerializeField] private Button _escapeBattleConfirmButton;
+    [SerializeField] private Button _escapeBattleCancelButton;
     [Header("Turn log")]
     [SerializeField] private Text _loggerText;
     [SerializeField] private Button _loggerUpButton;
@@ -118,6 +129,7 @@ public class ActionPointsUI : MonoBehaviour
     private RectTransform _miniMapViewportRect;
     private static Sprite _miniMapCircleSprite;
     private static Sprite _miniMapWhiteSprite;
+    private bool _escapeDialogPendingPathConfirm;
     private bool _battleBeginSequencePlayed;
     private bool _battleBeginSequenceRunning;
     private MovementPosture _skipReturnPosture = MovementPosture.Walk;
@@ -185,6 +197,7 @@ public class ActionPointsUI : MonoBehaviour
         if (_roundWaitPanel != null) _roundWaitPanel.SetActive(false);
         if (_battleEndPanel != null) _battleEndPanel.SetActive(false);
         if (_skipDialogPanel != null) _skipDialogPanel.SetActive(false);
+        if (_escapeBattlePanel != null) _escapeBattlePanel.SetActive(false);
         IsModalDialogOpen = false;
         IsRoundWaitPanelVisible = false;
 
@@ -251,6 +264,10 @@ public class ActionPointsUI : MonoBehaviour
         }
         if (_skipDialogTmpInput != null)
             _skipDialogTmpInput.onValueChanged.RemoveListener(OnSkipDialogTmpInputValueChanged);
+        if (_escapeBattleConfirmButton != null)
+            _escapeBattleConfirmButton.onClick.RemoveListener(OnEscapeBattleDialogConfirmClicked);
+        if (_escapeBattleCancelButton != null)
+            _escapeBattleCancelButton.onClick.RemoveListener(OnEscapeBattleDialogCancelClicked);
         GameSession.OnNetworkMessage -= AppendLog;
         GameSession.OnSubmitTurnDeliveredToServer -= ShowRoundWaitAfterSubmitDelivered;
         GameSession.OnWebSocketRoundPushReceived -= HideRoundWaitPanel;
@@ -279,6 +296,8 @@ public class ActionPointsUI : MonoBehaviour
         UpdateMiniMapStats(_player);
         UpdateTurnTrackerUi();
         UpdateMiniMap();
+        if (_endTurnButton != null && !_roundWaitVisible && _gameSession != null && !_gameSession.IsBattleFinished)
+            _endTurnButton.interactable = !_gameSession.LocalPlayerIsEscaping;
 
         bool isViewingHistory = _gameSession != null && (_gameSession.IsViewingHistoricalTurn || _gameSession.IsTurnHistoryReplayPlaying);
         if (isViewingHistory && !_roundWaitVisible && _gameSession != null && !_gameSession.IsWaitingForServerRoundResolve)
@@ -461,6 +480,9 @@ public class ActionPointsUI : MonoBehaviour
         if (_player == null)
             return;
 
+        if (_escapeBattlePanel != null && _escapeBattlePanel.activeSelf)
+            return;
+
         if (!HasSkipDialogUi())
         {
             AppendLog(Loc.Tf("battle_log.skip_dialog_misconfigured", UiHierarchyNames.SkipDialogPanel));
@@ -551,6 +573,7 @@ public class ActionPointsUI : MonoBehaviour
         if (_endTurnInProgress) return;
         if (_roundWaitVisible) return;
         if (_gameSession != null && _gameSession.IsBattleFinished) return;
+        if (_gameSession != null && _gameSession.LocalPlayerIsEscaping) return;
         if (_gameSession != null && _gameSession.IsWaitingForServerRoundResolve) return;
 
         bool isViewingHistory = _gameSession != null && (_gameSession.IsViewingHistoricalTurn || _gameSession.IsTurnHistoryReplayPlaying);
@@ -586,6 +609,8 @@ public class ActionPointsUI : MonoBehaviour
     {
         if (_player == null || _roundWaitVisible || IsModalDialogOpen)
             return;
+        if (_gameSession != null && _gameSession.LocalPlayerIsEscaping)
+            return;
         if (_gameSession != null && (_gameSession.IsWaitingForServerRoundResolve || _gameSession.IsBattleFinished))
             return;
         if (_inventoryUi == null)
@@ -598,6 +623,8 @@ public class ActionPointsUI : MonoBehaviour
     private void TryQueueUseItem()
     {
         if (_player == null || _roundWaitVisible || IsModalDialogOpen)
+            return;
+        if (_gameSession != null && _gameSession.LocalPlayerIsEscaping)
             return;
         if (_gameSession != null && (_gameSession.IsWaitingForServerRoundResolve || _gameSession.IsBattleFinished))
             return;
@@ -671,7 +698,8 @@ public class ActionPointsUI : MonoBehaviour
         if (_roundWaitPanel != null) _roundWaitPanel.SetActive(false);
         _roundWaitVisible = false;
         IsRoundWaitPanelVisible = false;
-        if (_endTurnButton != null) _endTurnButton.interactable = true;
+        if (_endTurnButton != null)
+            _endTurnButton.interactable = !(_gameSession != null && _gameSession.LocalPlayerIsEscaping && !_gameSession.IsBattleFinished);
     }
 
     private void ShowRoundWaitAfterSubmitDelivered()
@@ -764,6 +792,8 @@ public class ActionPointsUI : MonoBehaviour
         if (_roundWaitVisible)
             return false;
         if (_gameSession != null && (_gameSession.IsWaitingForServerRoundResolve || _gameSession.IsBattleFinished))
+            return false;
+        if (_gameSession != null && _gameSession.LocalPlayerIsEscaping)
             return false;
         if (_gameSession != null && _gameSession.IsBattleAnimationPlaying)
             return false;
@@ -1439,8 +1469,10 @@ public class ActionPointsUI : MonoBehaviour
             if (!_fallbackBindDoneWhenNoFrontContent)
             {
                 BindSkipDialogReferences(null);
+                BindEscapeBattleDialogReferences(null);
                 BindGlobalUiFallbacks();
                 BindUiCallbacks();
+                RefreshEscapeBattleDialogCallbacks();
                 _fallbackBindDoneWhenNoFrontContent = true;
             }
 
@@ -1459,6 +1491,7 @@ public class ActionPointsUI : MonoBehaviour
             _miniMapApText = FindChildComponent<Text>(frontContent, UiHierarchyNames.MiniMapApText);
         BindTurnTrackerTextReferences(frontContent);
         BindSkipDialogReferences(frontContent);
+        BindEscapeBattleDialogReferences(frontContent);
         if (_turnTrackerPrevButton == null)
             _turnTrackerPrevButton = FindChildComponent<Button>(frontContent, UiHierarchyNames.TurnTrackerPrevButton);
         if (_turnTrackerNextButton == null)
@@ -1564,6 +1597,7 @@ public class ActionPointsUI : MonoBehaviour
 
         BindGlobalUiFallbacks();
         BindUiCallbacks();
+        RefreshEscapeBattleDialogCallbacks();
     }
 
     /// <summary>
@@ -1715,6 +1749,236 @@ public class ActionPointsUI : MonoBehaviour
         }
     }
 
+    private Transform FindEscapeBattleDialogNamedTransform(string objectName, Transform frontContent, Transform panelTransform)
+    {
+        if (panelTransform != null)
+        {
+            Transform t = FindNamedTransform(objectName, panelTransform);
+            if (t != null)
+                return t;
+        }
+
+        if (frontContent != null)
+        {
+            Transform t = FindNamedTransform(objectName, frontContent);
+            if (t != null)
+                return t;
+        }
+
+        return FindNamedTransform(objectName);
+    }
+
+    private void BindEscapeBattleDialogReferences(Transform frontContent)
+    {
+        if (_escapeBattlePanel != null && _escapeBattleConfirmButton != null && _escapeBattleCancelButton != null)
+            return;
+
+        Transform escapeRoot = _escapeBattlePanel == null
+            ? FindNamedTransform(UiHierarchyNames.EscapeBattlePanel)
+            : _escapeBattlePanel.transform;
+        if (escapeRoot != null)
+            _escapeBattlePanel = escapeRoot.gameObject;
+        else if (_escapeBattlePanel != null && _escapeBattlePanel.name != UiHierarchyNames.EscapeBattlePanel)
+        {
+            Transform t = _escapeBattlePanel.transform;
+            while (t != null)
+            {
+                if (t.name == UiHierarchyNames.EscapeBattlePanel)
+                {
+                    _escapeBattlePanel = t.gameObject;
+                    break;
+                }
+                t = t.parent;
+            }
+        }
+        else if (_escapeBattlePanel == null)
+        {
+            Transform t = frontContent != null ? FindNamedTransform(UiHierarchyNames.EscapeBattlePanel, frontContent) : null;
+            if (t != null)
+                _escapeBattlePanel = t.gameObject;
+        }
+
+        Transform escapePanelTransform = _escapeBattlePanel != null ? _escapeBattlePanel.transform : null;
+
+        if (_escapeBattleTitleText == null)
+        {
+            Transform t = FindEscapeBattleDialogNamedTransform(UiHierarchyNames.EscapeBattleTitleText, frontContent, escapePanelTransform);
+            if (t != null)
+                _escapeBattleTitleText = t.GetComponent<Text>() ?? t.GetComponentInChildren<Text>(true);
+        }
+
+        if (_escapeBattleTitleTmpText == null)
+        {
+            Transform t = FindEscapeBattleDialogNamedTransform(UiHierarchyNames.EscapeBattleTitleText, frontContent, escapePanelTransform);
+            if (t != null)
+                _escapeBattleTitleTmpText = t.GetComponent<TextMeshProUGUI>() ?? t.GetComponentInChildren<TextMeshProUGUI>(true);
+        }
+
+        if (_escapeBattleBodyText == null)
+        {
+            Transform t = FindEscapeBattleDialogNamedTransform(UiHierarchyNames.EscapeBattleBodyText, frontContent, escapePanelTransform);
+            if (t != null)
+                _escapeBattleBodyText = t.GetComponent<Text>() ?? t.GetComponentInChildren<Text>(true);
+        }
+
+        if (_escapeBattleBodyTmpText == null)
+        {
+            Transform t = FindEscapeBattleDialogNamedTransform(UiHierarchyNames.EscapeBattleBodyText, frontContent, escapePanelTransform);
+            if (t != null)
+                _escapeBattleBodyTmpText = t.GetComponent<TextMeshProUGUI>() ?? t.GetComponentInChildren<TextMeshProUGUI>(true);
+        }
+
+        if (_escapeBattleConfirmButton == null)
+        {
+            Transform t = FindEscapeBattleDialogNamedTransform(UiHierarchyNames.EscapeBattleConfirmButton, frontContent, escapePanelTransform);
+            if (t != null)
+                _escapeBattleConfirmButton = t.GetComponent<Button>() ?? t.GetComponentInChildren<Button>(true);
+        }
+
+        if (_escapeBattleCancelButton == null)
+        {
+            Transform t = FindEscapeBattleDialogNamedTransform(UiHierarchyNames.EscapeBattleCancelButton, frontContent, escapePanelTransform);
+            if (t != null)
+                _escapeBattleCancelButton = t.GetComponent<Button>() ?? t.GetComponentInChildren<Button>(true);
+        }
+    }
+
+    private void RefreshEscapeBattleDialogCallbacks()
+    {
+        if (_escapeBattleConfirmButton != null)
+        {
+            _escapeBattleConfirmButton.onClick.RemoveListener(OnEscapeBattleDialogConfirmClicked);
+            _escapeBattleConfirmButton.onClick.AddListener(OnEscapeBattleDialogConfirmClicked);
+        }
+
+        if (_escapeBattleCancelButton != null)
+        {
+            _escapeBattleCancelButton.onClick.RemoveListener(OnEscapeBattleDialogCancelClicked);
+            _escapeBattleCancelButton.onClick.AddListener(OnEscapeBattleDialogCancelClicked);
+        }
+    }
+
+    /// <summary>True after <see cref="AutoBindSceneReferences"/> if EscapeBattlePanel and buttons exist in the scene.</summary>
+    public bool HasEscapeBattleDialogUiBound()
+    {
+        AutoBindSceneReferences();
+        return _escapeBattlePanel != null && _escapeBattleConfirmButton != null && _escapeBattleCancelButton != null;
+    }
+
+    /// <summary>Scene flee dialog (EscapeBattlePanel). False if missing UI or Skip dialog is already open.</summary>
+    public bool TryShowEscapeBattleDialog()
+    {
+        AutoBindSceneReferences();
+        if (_skipDialogPanel != null && _skipDialogPanel.activeSelf)
+            return false;
+        if (_escapeBattlePanel == null || _escapeBattleConfirmButton == null || _escapeBattleCancelButton == null)
+            return false;
+
+        _escapeDialogPendingPathConfirm = false;
+        ApplyEscapeBattleDialogTexts();
+        _escapeBattlePanel.SetActive(true);
+        IsModalDialogOpen = true;
+        return true;
+    }
+
+    /// <summary>Warn before the first step onto the escape ring; confirm runs <see cref="HexInputManager.TryConsumePendingEscapeConfirmPath"/>.</summary>
+    public bool TryShowEscapeStepOntoBorderDialog()
+    {
+        AutoBindSceneReferences();
+        if (_skipDialogPanel != null && _skipDialogPanel.activeSelf)
+            return false;
+        if (_escapeBattlePanel == null || _escapeBattleConfirmButton == null || _escapeBattleCancelButton == null)
+            return false;
+
+        _escapeDialogPendingPathConfirm = true;
+        string title = Loc.T("escape.step_onto_border_title");
+        string body = Loc.T("escape.step_onto_border_body");
+        if (_escapeBattleTitleText != null)
+            _escapeBattleTitleText.text = title;
+        if (_escapeBattleTitleTmpText != null)
+            _escapeBattleTitleTmpText.text = title;
+        if (_escapeBattleBodyText != null)
+            _escapeBattleBodyText.text = body;
+        if (_escapeBattleBodyTmpText != null)
+            _escapeBattleBodyTmpText.text = body;
+        SetButtonLabelText(_escapeBattleConfirmButton, Loc.T("battle.escape_confirm_yes"));
+        SetButtonLabelText(_escapeBattleCancelButton, Loc.T("battle.escape_confirm_cancel"));
+        _escapeBattlePanel.SetActive(true);
+        IsModalDialogOpen = true;
+        return true;
+    }
+
+    private void ApplyEscapeBattleDialogTexts()
+    {
+        string title = Loc.T("escape.confirm_title");
+        string body = Loc.T("escape.confirm_body");
+        if (_escapeBattleTitleText != null)
+            _escapeBattleTitleText.text = title;
+        if (_escapeBattleTitleTmpText != null)
+            _escapeBattleTitleTmpText.text = title;
+        if (_escapeBattleBodyText != null)
+            _escapeBattleBodyText.text = body;
+        if (_escapeBattleBodyTmpText != null)
+            _escapeBattleBodyTmpText.text = body;
+        SetButtonLabelText(_escapeBattleConfirmButton, Loc.T("battle.escape_confirm_yes"));
+        SetButtonLabelText(_escapeBattleCancelButton, Loc.T("battle.escape_confirm_cancel"));
+    }
+
+    private static void SetButtonLabelText(Button btn, string caption)
+    {
+        if (btn == null || string.IsNullOrEmpty(caption))
+            return;
+        Text leg = btn.GetComponentInChildren<Text>(true);
+        if (leg != null)
+            leg.text = caption;
+        TextMeshProUGUI tmp = btn.GetComponentInChildren<TextMeshProUGUI>(true);
+        if (tmp != null)
+            tmp.text = caption;
+    }
+
+    private void CloseEscapeBattleDialog()
+    {
+        if (_escapeBattlePanel != null)
+            _escapeBattlePanel.SetActive(false);
+        IsModalDialogOpen = false;
+    }
+
+    private void OnEscapeBattleDialogCancelClicked()
+    {
+        if (_escapeDialogPendingPathConfirm)
+        {
+            _escapeDialogPendingPathConfirm = false;
+#if UNITY_2023_1_OR_NEWER
+            HexInputManager him = FindFirstObjectByType<HexInputManager>();
+#else
+            HexInputManager him = FindObjectOfType<HexInputManager>();
+#endif
+            him?.CancelPendingEscapeConfirmPath();
+        }
+
+        CloseEscapeBattleDialog();
+    }
+
+    private void OnEscapeBattleDialogConfirmClicked()
+    {
+        AutoBindSceneReferences();
+        if (_escapeDialogPendingPathConfirm)
+        {
+            _escapeDialogPendingPathConfirm = false;
+            CloseEscapeBattleDialog();
+#if UNITY_2023_1_OR_NEWER
+            HexInputManager him = FindFirstObjectByType<HexInputManager>();
+#else
+            HexInputManager him = FindObjectOfType<HexInputManager>();
+#endif
+            if (him != null && !him.TryConsumePendingEscapeConfirmPath())
+                AppendLog(Loc.T("escape.path_confirm_failed"));
+            return;
+        }
+
+        CloseEscapeBattleDialog();
+    }
+
     private void BindUiCallbacks()
     {
         if (_uiCallbacksBound)
@@ -1823,7 +2087,12 @@ public class ActionPointsUI : MonoBehaviour
     {
         EnsureBattleEndPanel();
         if (_battleEndTitleText != null)
-            _battleEndTitleText.text = victory ? Loc.T("ui.battle_won") : Loc.T("ui.battle_lost");
+        {
+            if (GameSession.LastBattleEndWasEscape)
+                _battleEndTitleText.text = Loc.T("ui.battle_escaped");
+            else
+                _battleEndTitleText.text = victory ? Loc.T("ui.battle_won") : Loc.T("ui.battle_lost");
+        }
         if (_battleEndPanel != null)
             _battleEndPanel.SetActive(true);
         HideRoundWaitPanel();

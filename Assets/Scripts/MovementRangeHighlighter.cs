@@ -189,14 +189,23 @@ public class MovementRangeHighlighter : MonoBehaviour
             {
                 HexGrid.GetNeighbor(col, row, dir, out int nc, out int nr);
                 var key = (nc, nr);
-                if (_visitedBfs.Contains(key) || !_grid.IsInBounds(nc, nr))
+                if (_visitedBfs.Contains(key))
                     continue;
-                if (GameSession.Active != null && !GameSession.Active.IsHexInActiveBattleZone(nc, nr))
+                if (GameSession.Active != null)
+                {
+                    if (!GameSession.Active.IsHexInActiveBattleZone(nc, nr)
+                        && !GameSession.Active.IsEscapeBorderHex(nc, nr))
+                        continue;
+                }
+                else if (!_grid.IsInBounds(nc, nr))
                     continue;
 
-                HexCell nextCell = _grid.GetCell(nc, nr);
-                if (nextCell == null || nextCell.IsObstacle)
-                    continue;
+                if (_grid.IsInBounds(nc, nr))
+                {
+                    HexCell nextCell = _grid.GetCell(nc, nr);
+                    if (nextCell == null || nextCell.IsObstacle)
+                        continue;
+                }
 
                 _visitedBfs.Add(key);
                 _queueBfs.Enqueue((nc, nr, dist + 1));
