@@ -11,7 +11,6 @@ public partial class BattleRoomStore
     };
 
     private const int ReadyCheckDeadlineSeconds = 45;
-    private const int MinHexDistanceWithinTeam = 3;
 
     private readonly Dictionary<MatchQueueMode, List<long>> _matchQueues = new();
     private readonly Dictionary<long, UserMatchmakingState> _matchmakingByUser = new();
@@ -221,7 +220,7 @@ public partial class BattleRoomStore
     private List<(IReadOnlyList<long> targets, string json)> CompleteReadyCheckAndStartBattleLocked(MatchQueueMode mode, ReadyCheckState ready)
     {
         int perTeam = mode.PlayersPerTeam();
-        var spawns = HexSpawn.FindTwoTeamSpawns(perTeam, HexSpawn.DefaultGridWidth, HexSpawn.DefaultGridLength, MinHexDistanceWithinTeam);
+        var spawns = HexSpawn.FindTwoTeamSpawnsOnOppositeHorizontalSides(perTeam, HexSpawn.DefaultGridWidth, HexSpawn.DefaultGridLength);
         if (spawns.Count < ready.UserIds.Count)
         {
             Console.WriteLine($"[Matchmaking] spawn count {spawns.Count} < players {ready.UserIds.Count}");

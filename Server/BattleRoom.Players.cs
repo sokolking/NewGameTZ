@@ -13,6 +13,24 @@ public partial class BattleRoom
             ParticipantIds.Add(playerId);
     }
 
+    /// <summary>
+    /// Обновить стартовую клетку игрока и синхронизировать уже созданный юнит (если был — например после poll до прихода второго игрока в 1v1).
+    /// </summary>
+    public void SetPlayerSpawnPosition(string playerId, int col, int row)
+    {
+        if (string.IsNullOrWhiteSpace(playerId) || !Players.ContainsKey(playerId))
+            return;
+        col = Math.Clamp(col, 0, HexSpawn.DefaultGridWidth - 1);
+        row = Math.Clamp(row, 0, HexSpawn.DefaultGridLength - 1);
+        Players[playerId] = (col, row);
+        if (PlayerToUnitId.TryGetValue(playerId, out var unitId) &&
+            Units.TryGetValue(unitId, out var unit))
+        {
+            unit.Col = col;
+            unit.Row = row;
+        }
+    }
+
     public void SetPlayerDisplayInfo(string playerId, string displayName, int level)
     {
         if (string.IsNullOrWhiteSpace(playerId) || !Players.ContainsKey(playerId))

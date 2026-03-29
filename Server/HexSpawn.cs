@@ -71,6 +71,99 @@ public static class HexSpawn
     }
 
     /// <summary>
+    /// PvP: две команды на противоположных горизонтальных сторонах прямоугольника (<paramref name="rowMin"/> и <paramref name="rowMax"/>),
+    /// по <paramref name="playersPerTeam"/> игроков в линию по колонкам с шагом 2 от центра ширины (1 → центр; 3 → -2,0,+2; 5 → -4..+4).
+    /// Порядок в списке: вся команда A (ближний к <paramref name="rowMin"/> ряд), затем вся команда B (ближний к <paramref name="rowMax"/>).
+    /// </summary>
+    public static List<(int col, int row)> FindTwoTeamSpawnsOnOppositeHorizontalSides(
+        int playersPerTeam,
+        int gridWidth,
+        int gridLength,
+        int colMin,
+        int colMax,
+        int rowMin,
+        int rowMax)
+    {
+        colMin = Math.Clamp(colMin, 0, gridWidth - 1);
+        colMax = Math.Clamp(colMax, 0, gridWidth - 1);
+        rowMin = Math.Clamp(rowMin, 0, gridLength - 1);
+        rowMax = Math.Clamp(rowMax, 0, gridLength - 1);
+        if (colMin > colMax)
+            (colMin, colMax) = (colMax, colMin);
+        if (rowMin > rowMax)
+            (rowMin, rowMax) = (rowMax, rowMin);
+
+        int teamRowA = rowMin;
+        int teamRowB = rowMax;
+        int centerCol = (colMin + colMax) / 2;
+        int[] offsets = GetSpawnLineOffsetsForTeamSize(playersPerTeam);
+        List<int> cols = BuildLinePositionsFromOffsets(centerCol, offsets, colMin, colMax);
+
+        var list = new List<(int col, int row)>(playersPerTeam * 2);
+        foreach (int c in cols)
+            list.Add((c, teamRowA));
+        foreach (int c in cols)
+            list.Add((c, teamRowB));
+        return list;
+    }
+
+    /// <inheritdoc cref="FindTwoTeamSpawnsOnOppositeHorizontalSides(int,int,int,int,int,int,int)"/>
+    public static List<(int col, int row)> FindTwoTeamSpawnsOnOppositeHorizontalSides(int playersPerTeam, int gridWidth, int gridLength) =>
+        FindTwoTeamSpawnsOnOppositeHorizontalSides(
+            playersPerTeam,
+            gridWidth,
+            gridLength,
+            0,
+            gridWidth - 1,
+            0,
+            gridLength - 1);
+
+    /// <summary>
+    /// Смещения вдоль линии (колонки или ряды) от центра с шагом 2: n=1 → [0], n=3 → [-2,0,2], n=5 → [-4,-2,0,2,4].
+    /// </summary>
+    private static int[] GetSpawnLineOffsetsForTeamSize(int n)
+    {
+        if (n <= 0)
+            return Array.Empty<int>();
+        var arr = new int[n];
+        for (int i = 0; i < n; i++)
+            arr[i] = (i * 2) - (n - 1);
+        return arr;
+    }
+
+    private static List<int> BuildLinePositionsFromOffsets(int center, int[] offsets, int axisMin, int axisMax)
+    {
+        if (offsets.Length == 0)
+            return new List<int>();
+
+        int minB = int.MaxValue;
+        int maxB = int.MinValue;
+        for (int i = 0; i < offsets.Length; i++)
+        {
+            int v = center + offsets[i];
+            if (v < minB) minB = v;
+            if (v > maxB) maxB = v;
+        }
+
+        int shiftLo = axisMin - minB;
+        int shiftHi = axisMax - maxB;
+        int shift;
+        if (shiftLo > shiftHi)
+            shift = shiftLo;
+        else if (0 < shiftLo)
+            shift = shiftLo;
+        else if (0 > shiftHi)
+            shift = shiftHi;
+        else
+            shift = 0;
+
+        var positions = new List<int>(offsets.Length);
+        for (int i = 0; i < offsets.Length; i++)
+            positions.Add(Math.Clamp(center + offsets[i] + shift, axisMin, axisMax));
+        return positions;
+    }
+
+    /// <summary>
     /// Спавны для двух команд: сначала <paramref name="playersPerTeam"/> слотов команды A (левая треть карты),
     /// затем столько же — команда B (правая треть). Внутри команды — максимизация минимальной дистанции между игроками.
     /// </summary>

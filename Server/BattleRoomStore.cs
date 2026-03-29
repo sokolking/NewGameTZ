@@ -49,8 +49,11 @@ public partial class BattleRoomStore
                 var bid = Guid.NewGuid().ToString("N")[..8];
                 _waitingBattleId = bid;
                 var room = new BattleRoom(bid, _weaponDb, _obstacleDb, _bodyPartDb, _userDb, _zoneShrinkDb);
-                int p1c = Math.Clamp(startCol, 0, HexSpawn.DefaultGridWidth - 1);
-                int p1r = Math.Clamp(startRow, 0, HexSpawn.DefaultGridLength - 1);
+                var sp1 = HexSpawn.FindTwoTeamSpawnsOnOppositeHorizontalSides(1, HexSpawn.DefaultGridWidth, HexSpawn.DefaultGridLength);
+                if (sp1.Count < 1)
+                    throw new InvalidOperationException("PVP 1v1 spawn failed");
+                int p1c = sp1[0].col;
+                int p1r = sp1[0].row;
                 room.AddPlayer("P1", p1c, p1r);
                 room.SetPlayerDisplayInfo("P1", "P1", 1);
                 _rooms[bid] = room;
@@ -59,9 +62,11 @@ public partial class BattleRoomStore
             }
 
             var existingRoom = _rooms[_waitingBattleId];
-            var (firstCol, firstRow) = existingRoom.Players["P1"];
-            var (p2c, p2r) = HexSpawn.FindOpponentSpawn(firstCol, firstRow, HexSpawn.DefaultGridWidth, HexSpawn.DefaultGridLength, HexSpawn.MinSpawnHexDistance);
-            existingRoom.AddPlayer("P2", p2c, p2r);
+            var sp = HexSpawn.FindTwoTeamSpawnsOnOppositeHorizontalSides(1, HexSpawn.DefaultGridWidth, HexSpawn.DefaultGridLength);
+            if (sp.Count < 2)
+                throw new InvalidOperationException("PVP 1v1 spawn failed");
+            existingRoom.SetPlayerSpawnPosition("P1", sp[0].col, sp[0].row);
+            existingRoom.AddPlayer("P2", sp[1].col, sp[1].row);
             existingRoom.SetPlayerDisplayInfo("P2", "P2", 1);
             existingRoom.MatchModeWire = "1v1";
             existingRoom.StartFirstRound();
@@ -79,9 +84,11 @@ public partial class BattleRoomStore
             if (!_rooms.TryGetValue(battleId, out var room) || room.Players.Count != 1)
                 throw new InvalidOperationException("No waiting room for this battleId");
 
-            var (p1c, p1r) = room.Players["P1"];
-            var (p2c, p2r) = HexSpawn.FindOpponentSpawn(p1c, p1r, HexSpawn.DefaultGridWidth, HexSpawn.DefaultGridLength, HexSpawn.MinSpawnHexDistance);
-            room.AddPlayer("P2", p2c, p2r);
+            var spJv = HexSpawn.FindTwoTeamSpawnsOnOppositeHorizontalSides(1, HexSpawn.DefaultGridWidth, HexSpawn.DefaultGridLength);
+            if (spJv.Count < 2)
+                throw new InvalidOperationException("PVP 1v1 spawn failed");
+            room.SetPlayerSpawnPosition("P1", spJv[0].col, spJv[0].row);
+            room.AddPlayer("P2", spJv[1].col, spJv[1].row);
             room.SetPlayerDisplayInfo("P2", "P2", 1);
             room.MatchModeWire = "1v1";
             room.StartFirstRound();
@@ -136,9 +143,11 @@ public partial class BattleRoomStore
             if (_waitingBattleId != null && _rooms.TryGetValue(_waitingBattleId, out var waitingRoom))
             {
                 var battleId = _waitingBattleId;
-                var (p1c, p1r) = waitingRoom.Players["P1"];
-                var (p2c, p2r) = HexSpawn.FindOpponentSpawn(p1c, p1r, HexSpawn.DefaultGridWidth, HexSpawn.DefaultGridLength, HexSpawn.MinSpawnHexDistance);
-                waitingRoom.AddPlayer("P2", p2c, p2r);
+                var spPair = HexSpawn.FindTwoTeamSpawnsOnOppositeHorizontalSides(1, HexSpawn.DefaultGridWidth, HexSpawn.DefaultGridLength);
+                if (spPair.Count < 2)
+                    throw new InvalidOperationException("PVP 1v1 spawn failed");
+                waitingRoom.SetPlayerSpawnPosition("P1", spPair[0].col, spPair[0].row);
+                waitingRoom.AddPlayer("P2", spPair[1].col, spPair[1].row);
                 waitingRoom.SetPlayerDisplayInfo("P2", displayName, characterLevel);
                 if (haveBattleUserId)
                     waitingRoom.RegisterBattlePlayerUserId("P2", battleUserId);
@@ -146,15 +155,19 @@ public partial class BattleRoomStore
                 waitingRoom.SetPlayerCurrentHpOverride("P2", playerCurrentHp);
                 waitingRoom.MatchModeWire = "1v1";
                 waitingRoom.StartFirstRound();
-                Console.WriteLine($"[tzInfo] Matchmaking pair completed: battleId={battleId}, P1=({p1c},{p1r}), P2=({p2c},{p2r})");
+                var p1Pos = waitingRoom.Players["P1"];
+                Console.WriteLine($"[tzInfo] Matchmaking pair completed: battleId={battleId}, P1=({p1Pos.col},{p1Pos.row}), P2=({spPair[1].col},{spPair[1].row})");
                 _waitingBattleId = null;
                 return new JoinResponse { BattleId = battleId, PlayerId = "P2", Status = "battle", BattleStarted = waitingRoom.BuildBattleStartedFor("P2") };
             }
 
             var bid = Guid.NewGuid().ToString("N")[..8];
             var r = new BattleRoom(bid, _weaponDb, _obstacleDb, _bodyPartDb, _userDb, _zoneShrinkDb);
-            int pc = Math.Clamp(startCol, 0, HexSpawn.DefaultGridWidth - 1);
-            int pr = Math.Clamp(startRow, 0, HexSpawn.DefaultGridLength - 1);
+            var spWait = HexSpawn.FindTwoTeamSpawnsOnOppositeHorizontalSides(1, HexSpawn.DefaultGridWidth, HexSpawn.DefaultGridLength);
+            if (spWait.Count < 1)
+                throw new InvalidOperationException("PVP 1v1 spawn failed");
+            int pc = spWait[0].col;
+            int pr = spWait[0].row;
             r.AddPlayer("P1", pc, pr);
             r.SetPlayerDisplayInfo("P1", displayName, characterLevel);
             if (haveBattleUserId)

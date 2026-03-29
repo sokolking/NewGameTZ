@@ -9,15 +9,22 @@ public partial class BattleRoom
     private void EnsureUnitsInitialized()
     {
         EnsureActiveZoneInitialized();
-        if (Units.Count > 0) return;
         if (Players.Count == 0) return;
 
-        // Игроки как юниты.
+        // Игроки как юниты: новых создаём целиком; существующих только подтягиваем клетку из Players (1v1 poll до второго join и т.п.).
         foreach (var kv in Players)
         {
             var playerId = kv.Key;
             var (col, row) = kv.Value;
             var unitId = GetPlayerUnitId(playerId);
+            if (Units.TryGetValue(unitId, out var existing))
+            {
+                existing.Col = col;
+                existing.Row = row;
+                PlayerToUnitId[playerId] = unitId;
+                continue;
+            }
+
             var profile = PlayerCombatProfiles.TryGetValue(playerId, out var p)
                 ? p
                 : (DefaultPlayerMaxHp, DefaultPlayerMaxAp, DefaultWeaponCode, DefaultWeaponDamage, DefaultWeaponDamage, DefaultWeaponRange, GetWeaponAttackApCostFromDb(DefaultWeaponCode), 10, 1.0, 1, false);
