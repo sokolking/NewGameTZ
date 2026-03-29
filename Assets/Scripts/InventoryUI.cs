@@ -117,6 +117,8 @@ public sealed class InventoryUI : MonoBehaviour
     /// </summary>
     private void OnBattleIdentifiedForInventory(string battleId, string playerId, string serverUrl)
     {
+        if (GameSession.Active != null && GameSession.Active.IsSpectatorMode)
+            return;
         if (!string.IsNullOrEmpty(serverUrl))
             StartCoroutine(LoadInventoryFromServerCoroutine());
     }
@@ -384,6 +386,8 @@ public sealed class InventoryUI : MonoBehaviour
 
     public void ReloadInventoryFromServer()
     {
+        if (GameSession.Active != null && GameSession.Active.IsSpectatorMode)
+            return;
         StartCoroutine(LoadInventoryFromServerCoroutine());
     }
 

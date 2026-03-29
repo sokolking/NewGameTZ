@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Collections.Concurrent;
 using System.IO;
 using System.Net.WebSockets;
@@ -34,6 +35,10 @@ public sealed class SessionWebSocketConnection : MonoBehaviour
     public static event Action<string, string, string> OnMatchmakingReadyCheckCancelled;
     public static event Action<MatchmakingMatchStartedMessage> OnMatchmakingMatchStarted;
     public static event Action<string> OnMatchmakingQueueError;
+
+    public static event Action<SpectatorBattleListItem[]> OnSpectatorListReceived;
+
+    public static event Action<bool, string, BattleStartedPayload> OnSpectatorWatchReceived;
 
     public static bool IsSessionSocketConnected =>
         _instance != null && _instance._ws != null && _instance._ws.State == WebSocketState.Open;
@@ -84,6 +89,18 @@ public sealed class SessionWebSocketConnection : MonoBehaviour
         if (string.IsNullOrEmpty(readyCheckId))
             return;
         TrySendJson(new { type = "readyCheckConfirm", readyCheckId });
+    }
+
+    public static void SendSpectatorListRequest()
+    {
+        TrySendJson(new { type = "spectatorListRequest" });
+    }
+
+    public static void SendSpectatorWatchRequest(string battleId)
+    {
+        if (string.IsNullOrEmpty(battleId))
+            return;
+        TrySendJson(new { type = "spectatorWatchRequest", battleId });
     }
 
     private static void TrySendJson(object payload)
@@ -433,6 +450,62 @@ public sealed class SessionWebSocketConnection : MonoBehaviour
             {
                 string code = (string)jo["code"] ?? "error";
                 _mainThread.Enqueue(() => OnMatchmakingQueueError?.Invoke(code));
+                break;
+            }
+            case "spectatorListResponse":
+            {
+                SpectatorBattleListItem[] items = Array.Empty<SpectatorBattleListItem>();
+                try
+                {
+                    var arr = jo["battles"] as JArray;
+                    if (arr != null && arr.Count > 0)
+                    {
+                        var list = new List<SpectatorBattleListItem>(arr.Count);
+                        foreach (var el in arr)
+                        {
+                            if (el is not JObject o)
+                                continue;
+                            list.Add(new SpectatorBattleListItem
+                            {
+                                battleId = (string)o["battleId"] ?? "",
+                                mode = (string)o["mode"] ?? ""
+                            });
+                        }
+
+                        items = list.ToArray();
+                    }
+                }
+                catch
+                {
+                    items = Array.Empty<SpectatorBattleListItem>();
+                }
+
+                SpectatorBattleListItem[] captured = items;
+                _mainThread.Enqueue(() => OnSpectatorListReceived?.Invoke(captured));
+                break;
+            }
+            case "spectatorWatchResponse":
+            {
+                bool ok = jo["ok"]?.Value<bool>() ?? false;
+                string code = (string)jo["code"] ?? "";
+                BattleStartedPayload started = null;
+                if (ok && jo["battleStarted"] != null)
+                {
+                    try
+                    {
+                        started = jo["battleStarted"].ToObject<BattleStartedPayload>(
+                            JsonSerializer.Create(HopeBattleJson.DeserializeSettings));
+                    }
+                    catch
+                    {
+                        started = null;
+                    }
+                }
+
+                bool okCap = ok;
+                string codeCap = code ?? "";
+                BattleStartedPayload stCap = started;
+                _mainThread.Enqueue(() => OnSpectatorWatchReceived?.Invoke(okCap, codeCap, stCap));
                 break;
             }
         }

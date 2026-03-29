@@ -9,6 +9,8 @@
   "ui.battle_lost": "Battle lost",
   "ui.battle_won": "Battle won",
   "ui.battle_escaped": "You escaped the battle",
+  "ui.spectator_battle_ended": "The battle has ended.",
+  "spectator.no_players": "(no players)",
   "ui.escape_dialog_no_canvas": "Cannot show flee dialog (no Canvas).",
   "ui.escape_request_failed": "Flee request failed: {0}",
   "battle.escape_confirm_question": "Flee the battle? You will leave after the escape countdown completes.",

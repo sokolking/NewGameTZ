@@ -233,7 +233,10 @@ public partial class BattleRoomStore
             _matchmakingByUser.Remove(uid);
 
         var bid = Guid.NewGuid().ToString("N")[..8];
-        var room = new BattleRoom(bid, _weaponDb, _obstacleDb, _bodyPartDb, _userDb, _zoneShrinkDb);
+        var room = new BattleRoom(bid, _weaponDb, _obstacleDb, _bodyPartDb, _userDb, _zoneShrinkDb)
+        {
+            MatchModeWire = mode.ToWireString()
+        };
         for (int i = 0; i < ready.UserIds.Count; i++)
         {
             string pid = "P" + (i + 1);

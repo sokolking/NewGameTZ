@@ -5,12 +5,17 @@ using UnityEngine;
 /// </summary>
 public static class BattleSessionState
 {
+    public const string SpectatorPlayerId = "__spectator__";
+
     public static string BattleId { get; private set; }
     public static string PlayerId { get; private set; }
     public static string ServerUrl { get; private set; }
     public static BattleStartedPayload BattleStarted { get; private set; }
 
     public static bool HasPendingBattle { get; private set; }
+
+    /// <summary>Watching another user's battle (no submit / no local combatant).</summary>
+    public static bool IsSpectatorMode { get; private set; }
 
     /// <summary>Bearer token for <c>Authorization</c> on all game APIs.</summary>
     public static string AccessToken { get; private set; } = "";
@@ -39,12 +44,24 @@ public static class BattleSessionState
         SessionBaseUrl = "";
         PendingLoginNotice = "";
         PendingLoginNoticeLocKey = "";
+        IsSpectatorMode = false;
     }
 
     public static void SetPending(string battleId, string playerId, string serverUrl, BattleStartedPayload battleStarted)
     {
+        IsSpectatorMode = false;
         BattleId = battleId ?? "";
         PlayerId = playerId ?? "";
+        ServerUrl = serverUrl ?? "";
+        BattleStarted = battleStarted;
+        HasPendingBattle = battleStarted != null;
+    }
+
+    public static void SetSpectatorPending(string battleId, string serverUrl, BattleStartedPayload battleStarted)
+    {
+        IsSpectatorMode = true;
+        BattleId = battleId ?? "";
+        PlayerId = SpectatorPlayerId;
         ServerUrl = serverUrl ?? "";
         BattleStarted = battleStarted;
         HasPendingBattle = battleStarted != null;
@@ -54,5 +71,12 @@ public static class BattleSessionState
     {
         HasPendingBattle = false;
         BattleStarted = null;
+        // Keep IsSpectatorMode — still needed for battle WebSocket query string and UI after payload is consumed.
+    }
+
+    /// <summary>Clears spectator flag after the watched battle ends or when resetting session.</summary>
+    public static void ClearSpectatorMode()
+    {
+        IsSpectatorMode = false;
     }
 }

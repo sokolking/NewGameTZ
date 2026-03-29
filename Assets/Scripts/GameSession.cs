@@ -129,13 +129,20 @@ public class GameSession : MonoBehaviour
     private bool _battleFinished;
     private HexGridCamera _hexGridCamera;
     private HexGrid _hexGrid;
+    /// <summary>Watching via MainMenu Watch — no submit, no map actions; camera + history only.</summary>
+    private bool _spectatorMode;
+    private readonly List<string> _spectatedHumanIds = new();
+    private int _spectatedHumanIndex;
     /// <summary>Блокировка ввода: ожидание результата раунда или анимация.</summary>
     public bool BlockPlayerInput =>
-        _waitingForServerRoundResolve || IsBattleAnimationPlaying || IsTurnHistoryReplayPlaying || IsViewingHistoricalTurn
+        _spectatorMode
+        || _waitingForServerRoundResolve || IsBattleAnimationPlaying || IsTurnHistoryReplayPlaying || IsViewingHistoricalTurn
         || LocalPlayerIsEscaping;
 
+    public bool IsSpectatorMode => _spectatorMode;
+
     /// <summary>Server marked the local unit as fleeing: no planning until they leave the battle or cancel by leaving the escape ring.</summary>
-    public bool LocalPlayerIsEscaping => LocalPlayer != null && LocalPlayer.IsServerEscaping;
+    public bool LocalPlayerIsEscaping => !_spectatorMode && LocalPlayer != null && LocalPlayer.IsServerEscaping;
 
     public bool IsWaitingForServerRoundResolve => _waitingForServerRoundResolve;
     public int LastProcessedTurnResultRound => _lastProcessedTurnResultRound;
@@ -204,6 +211,8 @@ public class GameSession : MonoBehaviour
 
     public bool LocalPlayerStandsOnEscapeBorderHex()
     {
+        if (_spectatorMode)
+            return false;
         Player p = LocalPlayer;
         return p != null && !p.IsDead && !p.IsHidden && IsEscapeBorderHex(p.CurrentCol, p.CurrentRow);
     }
@@ -280,7 +289,8 @@ public class GameSession : MonoBehaviour
         Player local = LocalPlayer;
         int localTeam = _localBattleTeamId;
 
-        if (local != null && !local.IsDead && !local.IsHidden && local.CurrentHp > 0)
+        // Spectator: scene Player is not a combatant — only remotes occupy the map.
+        if (!_spectatorMode && local != null && !local.IsDead && !local.IsHidden && local.CurrentHp > 0)
         {
             HexCell lc = grid.GetCell(local.CurrentCol, local.CurrentRow);
             lc?.SetPvpOccupancyHighlight(HexCell.PvpOccupancyKind.Ally);
@@ -386,14 +396,14 @@ public class GameSession : MonoBehaviour
 
     public bool TryAutoSubmitTimedOutLiveTurn(bool animateResolvedRound)
     {
-        if (_battleFinished)
+        if (_battleFinished || _spectatorMode)
             return false;
         return TrySubmitCurrentLiveTurnDraft(animateResolvedRound);
     }
 
     public bool TrySubmitCurrentLiveTurnDraft(bool animateResolvedRound)
     {
-        if (_battleFinished)
+        if (_battleFinished || _spectatorMode)
             return false;
         if (_waitingForServerRoundResolve || !IsInBattleWithServer())
             return false;
@@ -434,6 +444,8 @@ public class GameSession : MonoBehaviour
     /// <param name="weaponRangeFromDb">Дальность из слота. Если &lt; 0 — подставляется 1.</param>
     public void RequestEquipWeapon(string weaponCode, int weaponAttackApCost = 1, int weaponDamageFromDb = -1, int weaponRangeFromDb = -1)
     {
+        if (_spectatorMode)
+            return;
         if (string.IsNullOrWhiteSpace(weaponCode))
             return;
         weaponCode = weaponCode.Trim().ToLowerInvariant();
@@ -504,7 +516,7 @@ public class GameSession : MonoBehaviour
     /// <param name="shiftRepeat">Зажат Shift: поставить в очередь атак столько раз, сколько <c>текущие ОД / стоимость атаки</c> (целочисленно).</param>
     public bool TryPerformSilhouetteAttack(RemoteBattleUnitView target, int bodyPartId, bool shiftRepeat = false)
     {
-        if (_battleFinished || target == null) return false;
+        if (_spectatorMode || _battleFinished || target == null) return false;
         var local = LocalPlayer;
         if (local == null) return false;
 
@@ -541,7 +553,7 @@ public class GameSession : MonoBehaviour
 
     public bool TryUseSelfItem()
     {
-        if (_battleFinished) return false;
+        if (_spectatorMode || _battleFinished) return false;
         var local = LocalPlayer;
         if (local == null) return false;
 #if UNITY_2023_1_OR_NEWER
@@ -566,7 +578,7 @@ public class GameSession : MonoBehaviour
     /// <summary>Ctrl+клик по гексу: дальнобойный выстрел по направлению (стена на ЛС / враг на клетке).</summary>
     public bool TryPerformHexAimAttack(int col, int row, bool shiftRepeat = false)
     {
-        if (_battleFinished) return false;
+        if (_spectatorMode || _battleFinished) return false;
         var local = LocalPlayer;
         if (local == null) return false;
 
@@ -733,7 +745,7 @@ public class GameSession : MonoBehaviour
     /// </summary>
     public void SubmitTurnLocal(BattleQueuedAction[] actions, int roundIndex)
     {
-        if (_battleFinished)
+        if (_battleFinished || _spectatorMode)
             return;
         if (LocalPlayerIsEscaping)
             return;
@@ -1394,7 +1406,7 @@ public class GameSession : MonoBehaviour
     /// <summary>Отправка хода по сети: при дальнобойной атаке в очереди — разворот локального игрока, затем submit.</summary>
     public void SubmitTurnOnlineWithOptionalRangedFacing(BattleQueuedAction[] actions, int roundIndex, bool animateResolvedRound)
     {
-        if (_battleFinished || !IsInBattleWithServer() || LocalPlayerIsEscaping)
+        if (_battleFinished || _spectatorMode || !IsInBattleWithServer() || LocalPlayerIsEscaping)
             return;
 
         BattleQueuedAction[] safe = actions ?? Array.Empty<BattleQueuedAction>();
@@ -1818,6 +1830,10 @@ public class GameSession : MonoBehaviour
         CancelTurnReplayPlayback();
         _battleId = payload.battleId ?? _battleId;
         _playerId = payload.playerId ?? _playerId;
+        _spectatorMode = BattleSessionState.IsSpectatorMode
+            || string.Equals(_playerId, BattleSessionState.SpectatorPlayerId, StringComparison.Ordinal);
+        _spectatedHumanIds.Clear();
+        _spectatedHumanIndex = 0;
 
         foreach (var kv in _remoteUnits)
         {
@@ -1880,6 +1896,9 @@ public class GameSession : MonoBehaviour
                 }
             }
         }
+
+        if (_spectatorMode)
+            _localBattleTeamId = 0;
 
         foreach (var (pid, col, row) in spawnList)
         {
@@ -1956,10 +1975,136 @@ public class GameSession : MonoBehaviour
             };
         }
 
-        CachedHexGridCamera?.RefocusOnLocalPlayer();
+        if (_spectatorMode)
+        {
+            if (local != null)
+            {
+                local.SetHidden(true);
+                local.SetTurnTimerPaused(true);
+                local.ClearMovementFlag();
+                // Keep the scene Player off the battlefield (no ghost hex / minimap confusion).
+                local.transform.position = new Vector3(-10000f, -500f, -10000f);
+            }
+            RebuildSpectatedHumansFromRemotes();
+            if (_spectatedHumanIds.Count > 0)
+                _spectatedHumanIndex = UnityEngine.Random.Range(0, _spectatedHumanIds.Count);
+            FocusCameraOnCurrentSpectated();
+        }
+        else
+        {
+            CachedHexGridCamera?.RefocusOnLocalPlayer();
+            local?.ClearMovementFlag();
+        }
 
-        local?.ClearMovementFlag();
         RefreshPvpOccupancyHexHighlights();
+    }
+
+    private void RebuildSpectatedHumansFromRemotes()
+    {
+        _spectatedHumanIds.Clear();
+        foreach (var kv in _remoteUnits)
+        {
+            if (kv.Value != null && !kv.Value.IsMob)
+                _spectatedHumanIds.Add(kv.Key);
+        }
+        _spectatedHumanIds.Sort(StringComparer.Ordinal);
+    }
+
+    private void PruneSpectatedHumanList()
+    {
+        if (!_spectatorMode)
+            return;
+        for (int i = _spectatedHumanIds.Count - 1; i >= 0; i--)
+        {
+            string id = _spectatedHumanIds[i];
+            if (!_remoteUnits.TryGetValue(id, out RemoteBattleUnitView rv) || rv == null || rv.IsMob)
+                _spectatedHumanIds.RemoveAt(i);
+        }
+        if (_spectatedHumanIds.Count == 0)
+            _spectatedHumanIndex = 0;
+        else
+            _spectatedHumanIndex = Mathf.Clamp(_spectatedHumanIndex, 0, _spectatedHumanIds.Count - 1);
+    }
+
+    /// <summary>Cycle observed PvP human (spectator mode).</summary>
+    public bool TrySpectateNextHuman()
+    {
+        if (!_spectatorMode)
+            return false;
+        PruneSpectatedHumanList();
+        if (_spectatedHumanIds.Count == 0)
+            return false;
+        _spectatedHumanIndex = (_spectatedHumanIndex + 1) % _spectatedHumanIds.Count;
+        FocusCameraOnCurrentSpectated();
+        return true;
+    }
+
+    /// <summary>Cycle observed PvP human (spectator mode).</summary>
+    public bool TrySpectatePrevHuman()
+    {
+        if (!_spectatorMode)
+            return false;
+        PruneSpectatedHumanList();
+        if (_spectatedHumanIds.Count == 0)
+            return false;
+        _spectatedHumanIndex = (_spectatedHumanIndex - 1 + _spectatedHumanIds.Count) % _spectatedHumanIds.Count;
+        FocusCameraOnCurrentSpectated();
+        return true;
+    }
+
+    public string GetSpectatedHumanDisplayName()
+    {
+        if (!_spectatorMode)
+            return "";
+        PruneSpectatedHumanList();
+        if (_spectatedHumanIds.Count == 0)
+            return Loc.T("spectator.no_players");
+        string id = _spectatedHumanIds[Mathf.Clamp(_spectatedHumanIndex, 0, _spectatedHumanIds.Count - 1)];
+        return _remoteUnits.TryGetValue(id, out RemoteBattleUnitView rv) && rv != null ? rv.DisplayName : id;
+    }
+
+    /// <summary>Current spectated human for third-person camera (spectator only).</summary>
+    public bool TryGetSpectatedHumanFollowTransform(out Transform followTransform)
+    {
+        followTransform = null;
+        if (!_spectatorMode)
+            return false;
+        PruneSpectatedHumanList();
+        if (_spectatedHumanIds.Count == 0)
+            return false;
+        string id = _spectatedHumanIds[Mathf.Clamp(_spectatedHumanIndex, 0, _spectatedHumanIds.Count - 1)];
+        if (!_remoteUnits.TryGetValue(id, out RemoteBattleUnitView rv) || rv == null)
+            return false;
+        followTransform = rv.transform;
+        return true;
+    }
+
+    public void FocusCameraOnCurrentSpectated()
+    {
+        if (!_spectatorMode)
+            return;
+        PruneSpectatedHumanList();
+        if (_spectatedHumanIds.Count == 0)
+            return;
+        string id = _spectatedHumanIds[_spectatedHumanIndex];
+        if (!_remoteUnits.TryGetValue(id, out RemoteBattleUnitView rv) || rv == null)
+            return;
+
+        HexGridCamera cam = CachedHexGridCamera;
+        if (cam == null)
+            return;
+
+        Vector3 flatForward = rv.transform.forward;
+        flatForward.y = 0f;
+        if (flatForward.sqrMagnitude < 1e-6f)
+            flatForward = Vector3.forward;
+        else
+            flatForward.Normalize();
+
+        if (HexGridCamera.ThirdPersonFollowActive)
+            cam.EnterThirdPersonFollowImmediate(rv.transform, flatForward);
+        else
+            cam.FocusOnWorldPosition(rv.transform.position);
     }
 
     private void StartTurnHistoryReplay(int targetPointer)
@@ -2284,6 +2429,9 @@ public class GameSession : MonoBehaviour
                 break;
             }
         }
+
+        if (_spectatorMode && _localBattleTeamId < 0)
+            _localBattleTeamId = 0;
 
         foreach (var snapshot in _initialReplayState.Values)
         {
@@ -2626,6 +2774,11 @@ public class GameSession : MonoBehaviour
     /// <summary>HTTP POST /api/battle/.../escape after the player confirms in <see cref="ActionPointsUI"/>.</summary>
     public IEnumerator CoPostBattleEscapeRequest(System.Action<string> onError)
     {
+        if (_spectatorMode)
+        {
+            onError?.Invoke(Loc.T("escape.request_failed"));
+            yield break;
+        }
         if (_serverConnection == null)
             _serverConnection = FindFirstObjectByType<BattleServerConnection>();
         if (_serverConnection == null || !_serverConnection.IsInBattle)
@@ -2651,6 +2804,18 @@ public class GameSession : MonoBehaviour
         if (_battleFinished) return;
 
         CachedHexGrid?.ClearAllPvpOccupancyHighlights();
+
+        if (_spectatorMode)
+        {
+            _battleFinished = true;
+            _waitingForServerRoundResolve = false;
+            LocalPlayer?.SetTurnTimerPaused(true);
+            _spectatorMode = false;
+            BattleSessionState.ClearSpectatorMode();
+            OnBattleFinished?.Invoke(true);
+            OnNetworkMessage?.Invoke(Loc.T("ui.spectator_battle_ended"));
+            return;
+        }
 
         bool localDead = false;
         bool localFled = false;

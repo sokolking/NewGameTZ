@@ -336,6 +336,8 @@ app.Map("/ws/battle", async (HttpContext ctx, BattleRoomStore store, BattleAuthS
 
     var battleId = ctx.Request.Query["battleId"].FirstOrDefault() ?? "";
     var playerId = ctx.Request.Query["playerId"].FirstOrDefault() ?? "";
+    bool spectatorWs = string.Equals(ctx.Request.Query["spectator"].FirstOrDefault(), "true", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(ctx.Request.Query["spectator"].FirstOrDefault(), "1", StringComparison.OrdinalIgnoreCase);
     if (string.IsNullOrEmpty(battleId))
     {
         Console.WriteLine($"[BattleWS] reject: missing battleId, utc={DateTime.UtcNow:O}");
@@ -354,7 +356,17 @@ app.Map("/ws/battle", async (HttpContext ctx, BattleRoomStore store, BattleAuthS
     }
 
     var roomForWs = store.GetRoom(battleId);
-    if (roomForWs == null || string.IsNullOrEmpty(playerId)
+    if (spectatorWs)
+    {
+        playerId = "__spectator__";
+        if (roomForWs == null || !roomForWs.IsUnfinishedForLoginResume())
+        {
+            Console.WriteLine($"[BattleWS] reject: spectator battle not available, battleId={battleId}, utc={DateTime.UtcNow:O}");
+            ctx.Response.StatusCode = StatusCodes.Status403Forbidden;
+            return;
+        }
+    }
+    else if (roomForWs == null || string.IsNullOrEmpty(playerId)
         || !roomForWs.TryGetBattlePlayerUserId(playerId, out long slotUserId) || slotUserId != wsUserId)
     {
         Console.WriteLine($"[BattleWS] reject: player not allowed for this battle/token, battleId={battleId}, utc={DateTime.UtcNow:O}");
@@ -364,7 +376,7 @@ app.Map("/ws/battle", async (HttpContext ctx, BattleRoomStore store, BattleAuthS
 
     var connId = Guid.NewGuid().ToString("N")[..8];
     var remote = ctx.Connection.RemoteIpAddress?.ToString() ?? "?";
-    Console.WriteLine($"[BattleWS] accept begin: connId={connId}, battleId={battleId}, playerId={playerId}, userId={wsUserId}, remote={remote}, utc={DateTime.UtcNow:O}");
+    Console.WriteLine($"[BattleWS] accept begin: connId={connId}, battleId={battleId}, playerId={playerId}, userId={wsUserId}, spectator={spectatorWs}, remote={remote}, utc={DateTime.UtcNow:O}");
 
     using var ws = await ctx.WebSockets.AcceptWebSocketAsync();
     BattleWebSocketRegistry.Add(battleId, ws, connId);
@@ -399,6 +411,12 @@ app.Map("/ws/battle", async (HttpContext ctx, BattleRoomStore store, BattleAuthS
             var msgType = BattleWsProtocol.ReadMessageType(text);
             if (msgType == BattleWsProtocol.TypeSubmitTurn)
             {
+                if (spectatorWs)
+                {
+                    await BattleWsProtocol.SendJsonAsync(ws, new { type = BattleWsProtocol.TypeSubmitAck, ok = false, error = "spectator_readonly" }, jsonOpt, ctx.RequestAborted);
+                    continue;
+                }
+
                 try
                 {
                     SubmitTurnPayloadDto? payload;
@@ -442,16 +460,20 @@ app.Map("/ws/battle", async (HttpContext ctx, BattleRoomStore store, BattleAuthS
             }
             else if (msgType == BattleWsProtocol.TypeLeave)
             {
-                string? leavePid = playerId;
-                try
+                if (!spectatorWs)
                 {
-                    using var doc = JsonDocument.Parse(text);
-                    if (doc.RootElement.TryGetProperty("playerId", out var pe) && pe.ValueKind == JsonValueKind.String)
-                        leavePid = pe.GetString();
+                    string? leavePid = playerId;
+                    try
+                    {
+                        using var doc = JsonDocument.Parse(text);
+                        if (doc.RootElement.TryGetProperty("playerId", out var pe) && pe.ValueKind == JsonValueKind.String)
+                            leavePid = pe.GetString();
+                    }
+                    catch { /* use query playerId */ }
+                    if (!string.IsNullOrEmpty(leavePid))
+                        store.PlayerLeft(battleId, leavePid);
                 }
-                catch { /* use query playerId */ }
-                if (!string.IsNullOrEmpty(leavePid))
-                    store.PlayerLeft(battleId, leavePid);
+
                 await BattleWsProtocol.SendJsonAsync(ws, new { type = BattleWsProtocol.TypeLeaveAck, ok = true }, jsonOpt, ctx.RequestAborted);
             }
         }
@@ -468,7 +490,8 @@ app.Map("/ws/battle", async (HttpContext ctx, BattleRoomStore store, BattleAuthS
     finally
     {
         UserBattleSocketRegistry.Remove(wsUserId, ws);
-        if (!string.IsNullOrEmpty(playerId)
+        if (!spectatorWs
+            && !string.IsNullOrEmpty(playerId)
             && !BattleSessionRevokeSkip.TryConsumeSkipPlayerLeft(wsUserId, battleId, playerId))
             store.PlayerLeft(battleId, playerId);
         Console.WriteLine($"[BattleWS] disconnect: connId={connId}, battleId={battleId}, playerId={playerId}, recvMsgs={recvCount}, utc={DateTime.UtcNow:O}");
@@ -530,6 +553,23 @@ app.Map("/ws/session", async (HttpContext ctx, BattleAuthSession battleAuth, Bat
                 if (!root.TryGetProperty("type", out var typeEl) || typeEl.ValueKind != JsonValueKind.String)
                     continue;
                 string? msgType = typeEl.GetString();
+                if (msgType == "spectatorListRequest")
+                {
+                    var json = sessionMatchmakingStore.BuildSpectatorListJsonLocked();
+                    await UserSessionSocketRegistry.SendTextToUserAsync(wsUserId, json, ctx.RequestAborted).ConfigureAwait(false);
+                    continue;
+                }
+
+                if (msgType == "spectatorWatchRequest")
+                {
+                    string? watchBid = null;
+                    if (root.TryGetProperty("battleId", out var bidEl) && bidEl.ValueKind == JsonValueKind.String)
+                        watchBid = bidEl.GetString();
+                    var respJson = sessionMatchmakingStore.BuildSpectatorWatchResponseJsonLocked(watchBid, out _, out _);
+                    await UserSessionSocketRegistry.SendTextToUserAsync(wsUserId, respJson, ctx.RequestAborted).ConfigureAwait(false);
+                    continue;
+                }
+
                 if (msgType != "queueJoin" && msgType != "queueLeave" && msgType != "readyCheckConfirm")
                     continue;
                 string? modeWire = null;

@@ -174,22 +174,39 @@ public class GamePhaseViewController : MonoBehaviour
 
     private IEnumerator EnterViewPhaseRoutine()
     {
-        Player local = FindFirstObjectByType<Player>();
-        if (local == null || local.IsDead || local.Grid == null)
-            yield break;
-
         HexGridCamera cam = FindFirstObjectByType<HexGridCamera>();
         if (cam == null)
             yield break;
 
-        Vector3 fh = local.transform.forward;
-        fh.y = 0f;
-        if (fh.sqrMagnitude < 1e-6f)
-            fh = Vector3.forward;
-        else
-            fh.Normalize();
+        GameSession session = GameSession.Active;
+        if (session != null && session.IsSpectatorMode)
+        {
+            if (!session.TryGetSpectatedHumanFollowTransform(out Transform spectateRoot) || spectateRoot == null)
+                yield break;
 
-        cam.EnterThirdPersonFollowImmediate(local.transform, fh);
+            Vector3 fh = spectateRoot.forward;
+            fh.y = 0f;
+            if (fh.sqrMagnitude < 1e-6f)
+                fh = Vector3.forward;
+            else
+                fh.Normalize();
+
+            cam.EnterThirdPersonFollowImmediate(spectateRoot, fh);
+            yield break;
+        }
+
+        Player local = FindFirstObjectByType<Player>();
+        if (local == null || local.IsDead || local.Grid == null)
+            yield break;
+
+        Vector3 fhLocal = local.transform.forward;
+        fhLocal.y = 0f;
+        if (fhLocal.sqrMagnitude < 1e-6f)
+            fhLocal = Vector3.forward;
+        else
+            fhLocal.Normalize();
+
+        cam.EnterThirdPersonFollowImmediate(local.transform, fhLocal);
         yield break;
     }
 }

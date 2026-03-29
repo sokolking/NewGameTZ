@@ -63,6 +63,7 @@ public partial class BattleRoomStore
             var (p2c, p2r) = HexSpawn.FindOpponentSpawn(firstCol, firstRow, HexSpawn.DefaultGridWidth, HexSpawn.DefaultGridLength, HexSpawn.MinSpawnHexDistance);
             existingRoom.AddPlayer("P2", p2c, p2r);
             existingRoom.SetPlayerDisplayInfo("P2", "P2", 1);
+            existingRoom.MatchModeWire = "1v1";
             existingRoom.StartFirstRound();
             var id = _waitingBattleId;
             _waitingBattleId = null;
@@ -82,6 +83,7 @@ public partial class BattleRoomStore
             var (p2c, p2r) = HexSpawn.FindOpponentSpawn(p1c, p1r, HexSpawn.DefaultGridWidth, HexSpawn.DefaultGridLength, HexSpawn.MinSpawnHexDistance);
             room.AddPlayer("P2", p2c, p2r);
             room.SetPlayerDisplayInfo("P2", "P2", 1);
+            room.MatchModeWire = "1v1";
             room.StartFirstRound();
             var started = room.BuildBattleStartedFor("P2");
             _waitingBattleId = null;
@@ -105,7 +107,11 @@ public partial class BattleRoomStore
             if (solo)
             {
                 var soloBattleId = Guid.NewGuid().ToString("N")[..8];
-                var soloRoom = new BattleRoom(soloBattleId, _weaponDb, _obstacleDb, _bodyPartDb, _userDb, _zoneShrinkDb) { IsSolo = true };
+                var soloRoom = new BattleRoom(soloBattleId, _weaponDb, _obstacleDb, _bodyPartDb, _userDb, _zoneShrinkDb)
+                {
+                    IsSolo = true,
+                    MatchModeWire = "solo"
+                };
                 int soloCol = Math.Clamp(startCol, 0, HexSpawn.DefaultGridWidth - 1);
                 int soloRow = Math.Clamp(startRow, 0, HexSpawn.DefaultGridLength - 1);
                 soloRoom.AddPlayer("P1", soloCol, soloRow);
@@ -138,6 +144,7 @@ public partial class BattleRoomStore
                     waitingRoom.RegisterBattlePlayerUserId("P2", battleUserId);
                 waitingRoom.SetPlayerCombatProfile("P2", playerMaxHp, playerMaxAp, weaponCode, weaponDamageMin, weaponDamageMax, weaponRange, weaponAttackApCost, accuracy, weaponTightness, weaponTrajectoryHeight, weaponIsSniper);
                 waitingRoom.SetPlayerCurrentHpOverride("P2", playerCurrentHp);
+                waitingRoom.MatchModeWire = "1v1";
                 waitingRoom.StartFirstRound();
                 Console.WriteLine($"[tzInfo] Matchmaking pair completed: battleId={battleId}, P1=({p1c},{p1r}), P2=({p2c},{p2r})");
                 _waitingBattleId = null;

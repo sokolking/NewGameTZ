@@ -46,6 +46,9 @@ public partial class BattleRoom
     /// <summary>Флаг: бой создан как одиночный (1 игрок + серверный моб), а не матчмейкинг 1v1.</summary>
     public bool IsSolo { get; set; }
 
+    /// <summary>Wire mode from matchmaking (<c>1v1</c>, <c>3v3</c>, …) or <c>solo</c> / <c>1v1</c> for HTTP join.</summary>
+    public string? MatchModeWire { get; set; }
+
     /// <summary>Two-sided PvP: team elimination win condition and team ids (not solo, at least two human slots).</summary>
     public bool IsPvpTeamBattle => !IsSolo && Players.Count >= 2;
 
@@ -219,6 +222,23 @@ public partial class BattleRoom
             return true;
 
         return false;
+    }
+
+    /// <summary>Label for spectator list UI (English wire strings).</summary>
+    public string GetSpectatorModeLabel()
+    {
+        if (!string.IsNullOrWhiteSpace(MatchModeWire))
+            return MatchModeWire!;
+        if (IsSolo)
+            return "solo";
+        int n = Players.Count;
+        return n switch
+        {
+            2 => "1v1",
+            6 => "3v3",
+            10 => "5v5",
+            _ => $"{n}p"
+        };
     }
 
     public void Tick(float deltaSeconds)

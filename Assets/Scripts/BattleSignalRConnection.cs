@@ -216,7 +216,10 @@ public class BattleSignalRConnection : MonoBehaviour
         root = root.Replace("http://", "ws://", StringComparison.OrdinalIgnoreCase)
             .Replace("https://", "wss://", StringComparison.OrdinalIgnoreCase);
         string token = BattleSessionState.AccessToken ?? "";
+        bool spectator = GameSession.Active != null && GameSession.Active.IsSpectatorMode;
         string uri = $"{root}/ws/battle?battleId={Uri.EscapeDataString(_battleId)}&playerId={Uri.EscapeDataString(_playerId)}&access_token={Uri.EscapeDataString(token)}";
+        if (spectator)
+            uri += "&spectator=true";
 
         EnqueueLog("ConnectAsync: " + uri);
         _cts = new CancellationTokenSource();

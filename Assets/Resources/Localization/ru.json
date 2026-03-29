@@ -9,6 +9,8 @@
   "ui.battle_lost": "Бой проигран",
   "ui.battle_won": "Бой выигран",
   "ui.battle_escaped": "Вы сбежали из боя",
+  "ui.spectator_battle_ended": "Бой завершён.",
+  "spectator.no_players": "(нет игроков)",
   "ui.escape_dialog_no_canvas": "Нельзя показать диалог побега (нет Canvas).",
   "ui.escape_request_failed": "Запрос побега не удался: {0}",
   "battle.escape_confirm_question": "Сбежать из боя? После отсчёта вы покинете поле боя.",

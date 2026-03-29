@@ -186,4 +186,13 @@ public partial class BattleRoom
             ActiveMaxRow = _activeMaxRow
         };
     }
+
+    /// <summary>Same spawn snapshot as first participant; <see cref="BattleStartedPayloadDto.PlayerId"/> is a sentinel for clients.</summary>
+    public BattleStartedPayloadDto BuildBattleStartedForSpectator()
+    {
+        string anchorPid = ParticipantIds.Count > 0 ? ParticipantIds[0] : "P1";
+        var dto = BuildBattleStartedFor(anchorPid);
+        dto.PlayerId = "__spectator__";
+        return dto;
+    }
 }

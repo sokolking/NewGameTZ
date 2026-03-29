@@ -294,6 +294,16 @@ public class ActionPointsUI : MonoBehaviour
         TryRunBattleBeginSequence();
 
         if (_player == null) return;
+
+        if (_gameSession != null && _gameSession.IsSpectatorMode)
+        {
+            ApplySpectatorCombatUiLock();
+            UpdateTurnTrackerUi();
+            UpdateMiniMapStats(_player);
+            UpdateMiniMap();
+            return;
+        }
+
         UpdateMiniMapStats(_player);
         UpdateTurnTrackerUi();
         UpdateMiniMap();
@@ -366,6 +376,9 @@ public class ActionPointsUI : MonoBehaviour
 
         if (_gameSession == null)
             _gameSession = FindFirstObjectByType<GameSession>();
+
+        if (_gameSession != null && _gameSession.IsSpectatorMode)
+            return;
 
         if (_player == null)
             _player = _gameSession != null ? _gameSession.LocalPlayer : FindFirstObjectByType<Player>();
@@ -571,6 +584,7 @@ public class ActionPointsUI : MonoBehaviour
     private void TryEndTurn(bool animate)
     {
         if (_player == null) return;
+        if (_gameSession != null && _gameSession.IsSpectatorMode) return;
         if (_endTurnInProgress) return;
         if (_roundWaitVisible) return;
         if (_gameSession != null && _gameSession.IsBattleFinished) return;
@@ -610,6 +624,8 @@ public class ActionPointsUI : MonoBehaviour
     {
         if (_player == null || _roundWaitVisible || IsModalDialogOpen)
             return;
+        if (_gameSession != null && _gameSession.IsSpectatorMode)
+            return;
         if (_gameSession != null && _gameSession.LocalPlayerIsEscaping)
             return;
         if (_gameSession != null && (_gameSession.IsWaitingForServerRoundResolve || _gameSession.IsBattleFinished))
@@ -624,6 +640,8 @@ public class ActionPointsUI : MonoBehaviour
     private void TryQueueUseItem()
     {
         if (_player == null || _roundWaitVisible || IsModalDialogOpen)
+            return;
+        if (_gameSession != null && _gameSession.IsSpectatorMode)
             return;
         if (_gameSession != null && _gameSession.LocalPlayerIsEscaping)
             return;
@@ -786,11 +804,33 @@ public class ActionPointsUI : MonoBehaviour
             RefreshMovementButtons(posture, skipSelected: false);
     }
 
+    private void ApplySpectatorCombatUiLock()
+    {
+        if (_endTurnButton != null)
+            _endTurnButton.interactable = false;
+        if (_walkButton != null)
+            _walkButton.interactable = false;
+        if (_runButton != null)
+            _runButton.interactable = false;
+        if (_sitButton != null)
+            _sitButton.interactable = false;
+        if (_hideButton != null)
+            _hideButton.interactable = false;
+        if (_skipButton != null)
+            _skipButton.interactable = false;
+        if (_stepBackButton != null)
+            _stepBackButton.interactable = false;
+        if (_toggleShowAnimation != null)
+            _toggleShowAnimation.interactable = false;
+    }
+
     private bool CanInteractWithMovementUi()
     {
         if (IsModalDialogOpen)
             return false;
         if (_roundWaitVisible)
+            return false;
+        if (_gameSession != null && _gameSession.IsSpectatorMode)
             return false;
         if (_gameSession != null && (_gameSession.IsWaitingForServerRoundResolve || _gameSession.IsBattleFinished))
             return false;
@@ -1275,9 +1315,16 @@ public class ActionPointsUI : MonoBehaviour
             return;
 
         Player local = _gameSession.LocalPlayer;
+        bool spectator = _gameSession.IsSpectatorMode;
 
         HexGrid grid;
-        if (local != null)
+        if (spectator)
+        {
+            if (_cachedHexGridWhenNoLocalPlayer == null)
+                _cachedHexGridWhenNoLocalPlayer = FindFirstObjectByType<HexGrid>();
+            grid = _cachedHexGridWhenNoLocalPlayer;
+        }
+        else if (local != null)
         {
             grid = local.Grid;
             _cachedHexGridWhenNoLocalPlayer = null;
@@ -1341,11 +1388,16 @@ public class ActionPointsUI : MonoBehaviour
             _miniMapViewportRect.gameObject.SetActive(false);
 
         // Маркеры в координатах всей карты (0–1 по карте → позиция на миникарте)
-        if (_miniMapLocalMarker != null && local != null)
+        if (_miniMapLocalMarker != null)
         {
-            _miniMapLocalMarker.gameObject.SetActive(true);
-            SetMiniMapMarkerPositionFullMap(_miniMapLocalMarker.rectTransform, local.transform.position,
-                mapMinX, mapMaxX, mapMinZ, mapMaxZ, markerUsableWidth, markerUsableHeight);
+            if (spectator || local == null)
+                _miniMapLocalMarker.gameObject.SetActive(false);
+            else
+            {
+                _miniMapLocalMarker.gameObject.SetActive(true);
+                SetMiniMapMarkerPositionFullMap(_miniMapLocalMarker.rectTransform, local.transform.position,
+                    mapMinX, mapMaxX, mapMinZ, mapMaxZ, markerUsableWidth, markerUsableHeight);
+            }
         }
 
         _gameSession.CopyRemoteUnitsTo(_miniMapRemoteUnitsBuffer);
