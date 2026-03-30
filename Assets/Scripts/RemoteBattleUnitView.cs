@@ -479,7 +479,7 @@ public class RemoteBattleUnitView : MonoBehaviour
         OnHealthChanged?.Invoke(_currentHp, _maxHp);
     }
 
-    public IEnumerator PlayPathAnimation(HexPosition[] path)
+    public IEnumerator PlayPathAnimation(HexPosition[] path, bool resetHexWalkPhase = true, bool clearMovementStateWhenDone = true)
     {
         if (_grid == null || path == null || path.Length < 2)
         {
@@ -495,7 +495,8 @@ public class RemoteBattleUnitView : MonoBehaviour
             _characterAnimator = GetComponentInChildren<PlayerCharacterAnimator>();
         ClearHorizontalFacingOverride();
         _characterAnimator?.ClearHorizontalFacingOverride();
-        _characterAnimator?.ResetHexWalkPhaseForNewPath();
+        if (resetHexWalkPhase)
+            _characterAnimator?.ResetHexWalkPhaseForNewPath();
 
         for (int i = 1; i < path.Length; i++)
         {
@@ -515,7 +516,8 @@ public class RemoteBattleUnitView : MonoBehaviour
             transform.position = target;
         }
 
-        _isMoving = false;
+        if (clearMovementStateWhenDone)
+            _isMoving = false;
     }
 
     public void ForceStopMovement()

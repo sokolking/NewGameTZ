@@ -248,6 +248,9 @@ public static class BattleUsersDashboardPage
       <label>Accuracy
         <input id="editAccuracy" type="number" min="0" step="1" required />
       </label>
+      <label>Max AP (OD)
+        <input id="editMaxAp" type="number" min="1" step="1" required />
+      </label>
       <p class="hint" style="margin:0;font-size:12px;">Equipped weapon and bag: use <strong>Inventory</strong> on the user row.</p>
       <div class="edit-actions">
         <button type="button" id="editCancel">Cancel</button>
@@ -286,6 +289,7 @@ public static class BattleUsersDashboardPage
     const editStrengthEl = document.getElementById('editStrength');
     const editEnduranceEl = document.getElementById('editEndurance');
     const editAccuracyEl = document.getElementById('editAccuracy');
+    const editMaxApEl = document.getElementById('editMaxAp');
     const editCancelBtn = document.getElementById('editCancel');
     const itemsDialog = document.getElementById('itemsEditor');
     const itemsRowsEl = document.getElementById('itemsRows');
@@ -396,6 +400,7 @@ public static class BattleUsersDashboardPage
       editStrengthEl.value = user.strength;
       editEnduranceEl.value = user.endurance;
       editAccuracyEl.value = user.accuracy;
+      editMaxApEl.value = Math.max(1, Number(user.maxAp || 1));
       editDialog.showModal();
     }
 
@@ -681,7 +686,7 @@ public static class BattleUsersDashboardPage
         endurance: Number(editEnduranceEl.value),
         accuracy: Number(editAccuracyEl.value),
         maxHp: 1,
-        maxAp: 1
+        maxAp: Math.max(1, Number(editMaxApEl.value))
       };
       const pw = editPasswordEl.value;
       if (pw && pw.trim())

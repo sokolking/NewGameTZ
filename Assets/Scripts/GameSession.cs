@@ -75,6 +75,8 @@ public class GameSession : MonoBehaviour
     [SerializeField] private float _attackActionPauseSeconds = 0.08f;
     [Tooltip("Short pause between action journal ticks.")]
     [SerializeField] private float _tickPauseSeconds = 0.03f;
+    [Tooltip("Scale for server replay pauses (1.0 = normal, lower = faster/smoother).")]
+    [SerializeField] [Range(0.1f, 1f)] private float _serverReplayPauseScale = 0.65f;
 
     [Header("Ranged: bullet")]
     [Tooltip("Base bullet travel time (sec); scaled by hex count.")]
@@ -1157,7 +1159,6 @@ public class GameSession : MonoBehaviour
         if (playback == null || playback.Count == 0)
             yield break;
 
-        int currentTick = -1;
         bool abortTimeline = false;
         var appliedMapTicks = new HashSet<int>();
 
@@ -1172,51 +1173,48 @@ public class GameSession : MonoBehaviour
 
         ApplyLocalReplayInitialPostureFromTurnResult(result);
 
-        for (int pi = 0; pi < playback.Count; pi++)
+        for (int tickStart = 0; tickStart < playback.Count;)
         {
-            ExecutedActionPlaybackEntry entry = playback[pi];
+            ExecutedActionPlaybackEntry firstEntry = playback[tickStart];
+            BattleExecutedAction firstAction = firstEntry != null ? firstEntry.Action : null;
+            if (firstAction == null)
+            {
+                tickStart++;
+                continue;
+            }
+            int currentTick = firstAction.tick;
+
             // После смерти/окончания боя мы не должны останавливать отображение уже сохраненной истории.
             if (_battleFinished && !_isTurnHistoryReplayPlaying)
             {
                 abortTimeline = true;
                 break;
             }
-            BattleExecutedAction action = entry != null ? entry.Action : null;
-            if (action == null)
-                continue;
 
-            if (currentTick >= 0 && action.tick != currentTick)
+            int tickEnd = tickStart;
+            while (tickEnd < playback.Count)
             {
-                ApplyMapUpdatesFromTurnResult(result, currentTick);
-                appliedMapTicks.Add(currentTick);
-                yield return new WaitForSecondsRealtime(Mathf.Max(0f, _tickPauseSeconds));
+                BattleExecutedAction a = playback[tickEnd]?.Action;
+                if (a == null || a.tick != currentTick)
+                    break;
+                tickEnd++;
             }
 
-            currentTick = action.tick;
-            yield return PlayExecutedAction(result, action, playback, pi);
-        }
-
-        if (!abortTimeline && currentTick >= 0)
-        {
+            yield return PlayTickActionsParallel(result, playback, tickStart, tickEnd);
             ApplyMapUpdatesFromTurnResult(result, currentTick);
             appliedMapTicks.Add(currentTick);
+
+            tickStart = tickEnd;
+            if (tickStart < playback.Count)
+            {
+                float pause = GetScaledReplayPauseSeconds(_tickPauseSeconds);
+                if (pause > 0f)
+                    yield return new WaitForSecondsRealtime(pause);
+            }
         }
 
         if (!abortTimeline && result.mapUpdates != null)
-        {
-            var orphanTicks = new List<int>();
-            foreach (var u in result.mapUpdates)
-            {
-                if (u == null) continue;
-                if (appliedMapTicks.Contains(u.tick)) continue;
-                if (orphanTicks.Contains(u.tick)) continue;
-                orphanTicks.Add(u.tick);
-            }
-
-            orphanTicks.Sort();
-            foreach (int t in orphanTicks)
-                ApplyMapUpdatesFromTurnResult(result, t);
-        }
+            ApplyOrphanMapUpdates(result, appliedMapTicks);
 
         {
             Player p = LocalPlayer;
@@ -1285,8 +1283,8 @@ public class GameSession : MonoBehaviour
     private IEnumerator PlayExecutedAction(
         TurnResultPayload result,
         BattleExecutedAction action,
-        List<ExecutedActionPlaybackEntry> playback,
-        int playbackIndex)
+        bool prevMoveSameUnit,
+        bool nextMoveSameUnit)
     {
         if (action == null)
             yield break;
@@ -1296,7 +1294,7 @@ public class GameSession : MonoBehaviour
         if (action.actionType == "MoveStep")
         {
             if (action.succeeded)
-                yield return PlayMoveStepAction(result, action, playback, playbackIndex);
+                yield return PlayMoveStepAction(result, action, prevMoveSameUnit, nextMoveSameUnit);
             yield break;
         }
 
@@ -1311,7 +1309,7 @@ public class GameSession : MonoBehaviour
             if (action.targetDied)
                 yield return HandleUnitDeathAtCurrentAction(result, action.targetUnitId);
 
-            float pause = Mathf.Max(0f, _attackActionPauseSeconds);
+            float pause = GetScaledReplayPauseSeconds(_attackActionPauseSeconds);
             if (pause > 0f)
                 yield return new WaitForSecondsRealtime(pause);
         }
@@ -1936,8 +1934,8 @@ public class GameSession : MonoBehaviour
     private IEnumerator PlayMoveStepAction(
         TurnResultPayload result,
         BattleExecutedAction action,
-        List<ExecutedActionPlaybackEntry> playback,
-        int playbackIndex)
+        bool prevMoveSameUnit,
+        bool nextMoveSameUnit)
     {
         if (action?.toPosition == null)
             yield break;
@@ -1949,32 +1947,92 @@ public class GameSession : MonoBehaviour
         HexPosition to = action.toPosition;
         var path = new[] { new HexPosition(from.col, from.row), new HexPosition(to.col, to.row) };
 
-        bool prevMoveSameUnit = false;
-        if (playbackIndex > 0)
-        {
-            BattleExecutedAction prev = playback[playbackIndex - 1].Action;
-            if (prev != null && prev.succeeded
-                && string.Equals(prev.actionType, "MoveStep", StringComparison.OrdinalIgnoreCase)
-                && string.Equals(prev.unitId, action.unitId, StringComparison.Ordinal))
-                prevMoveSameUnit = true;
-        }
-
-        bool nextMoveSameUnit = false;
-        if (playbackIndex + 1 < playback.Count)
-        {
-            BattleExecutedAction next = playback[playbackIndex + 1].Action;
-            if (next != null && next.succeeded
-                && string.Equals(next.actionType, "MoveStep", StringComparison.OrdinalIgnoreCase)
-                && string.Equals(next.unitId, action.unitId, StringComparison.Ordinal))
-                nextMoveSameUnit = true;
-        }
-
         bool resetHex = !prevMoveSameUnit;
 
         if (isLocal && unit is Player local)
             yield return local.PlayPathAnimation(path, driveCamera: false, resetHexWalkPhase: resetHex, clearMovementStateWhenDone: !nextMoveSameUnit);
         else if (!isLocal && unit is RemoteBattleUnitView remote)
-            yield return remote.PlayPathAnimation(path);
+            yield return remote.PlayPathAnimation(path, resetHexWalkPhase: resetHex, clearMovementStateWhenDone: !nextMoveSameUnit);
+    }
+
+    private IEnumerator PlayTickActionsParallel(TurnResultPayload result, List<ExecutedActionPlaybackEntry> playback, int tickStart, int tickEndExclusive)
+    {
+        var indicesByUnit = new Dictionary<string, List<int>>(StringComparer.Ordinal);
+        var running = new List<Coroutine>();
+        for (int i = tickStart; i < tickEndExclusive; i++)
+        {
+            BattleExecutedAction action = playback[i]?.Action;
+            if (action == null)
+                continue;
+            string unitKey = string.IsNullOrEmpty(action.unitId) ? "__no_unit__" + i.ToString() : action.unitId;
+            if (!indicesByUnit.TryGetValue(unitKey, out var list))
+            {
+                list = new List<int>();
+                indicesByUnit[unitKey] = list;
+            }
+            list.Add(i);
+        }
+
+        foreach (List<int> indices in indicesByUnit.Values)
+            running.Add(StartCoroutine(PlayTickActionsForUnit(result, playback, indices)));
+        foreach (Coroutine c in running)
+            yield return c;
+    }
+
+    private IEnumerator PlayTickActionsForUnit(TurnResultPayload result, List<ExecutedActionPlaybackEntry> playback, List<int> indices)
+    {
+        if (indices == null || indices.Count == 0)
+            yield break;
+        for (int i = 0; i < indices.Count; i++)
+        {
+            int playbackIndex = indices[i];
+            BattleExecutedAction action = playback[playbackIndex]?.Action;
+            if (action == null)
+                continue;
+            bool prevMoveSameUnit = false;
+            if (playbackIndex > 0)
+            {
+                BattleExecutedAction prev = playback[playbackIndex - 1]?.Action;
+                prevMoveSameUnit = IsSucceededMoveStepForSameUnit(prev, action.unitId);
+            }
+
+            bool nextMoveSameUnit = false;
+            if (playbackIndex + 1 < playback.Count)
+            {
+                BattleExecutedAction next = playback[playbackIndex + 1]?.Action;
+                nextMoveSameUnit = IsSucceededMoveStepForSameUnit(next, action.unitId);
+            }
+            yield return PlayExecutedAction(result, action, prevMoveSameUnit, nextMoveSameUnit);
+        }
+    }
+
+    private static bool IsSucceededMoveStepForSameUnit(BattleExecutedAction action, string unitId)
+    {
+        return action != null
+            && action.succeeded
+            && string.Equals(action.actionType, "MoveStep", StringComparison.OrdinalIgnoreCase)
+            && string.Equals(action.unitId, unitId, StringComparison.Ordinal);
+    }
+
+    private void ApplyOrphanMapUpdates(TurnResultPayload result, HashSet<int> appliedMapTicks)
+    {
+        var orphanTicks = new List<int>();
+        foreach (var u in result.mapUpdates)
+        {
+            if (u == null) continue;
+            if (appliedMapTicks.Contains(u.tick)) continue;
+            if (orphanTicks.Contains(u.tick)) continue;
+            orphanTicks.Add(u.tick);
+        }
+
+        orphanTicks.Sort();
+        foreach (int t in orphanTicks)
+            ApplyMapUpdatesFromTurnResult(result, t);
+    }
+
+    private float GetScaledReplayPauseSeconds(float baseSeconds)
+    {
+        return Mathf.Max(0f, baseSeconds) * Mathf.Clamp(_serverReplayPauseScale, 0.1f, 1f);
     }
 
     /// <summary>Запускает анимацию пути для всех юнитов в одном кадре (параллельно по кадрам).</summary>

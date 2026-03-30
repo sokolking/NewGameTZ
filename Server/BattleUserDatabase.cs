@@ -127,7 +127,7 @@ LIMIT @take;
         using var connection = _database.DataSource.OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = """
-SELECT experience, strength, endurance, accuracy, max_hp, current_hp
+SELECT experience, strength, endurance, accuracy, max_hp, current_hp, max_ap
 FROM users
 WHERE username = @username
 LIMIT 1;
@@ -143,11 +143,12 @@ LIMIT 1;
         _ = reader.GetInt32(3);
         int hpFromDb = reader.GetInt32(4);
         int currentHpFromDb = reader.GetInt32(5);
+        int maxApFromDb = reader.GetInt32(6);
         level = ComputeLevel(exp);
         PlayerLevelStatsRow stats = PlayerLevelStatsTable.GetForLevel(level);
         maxHp = Math.Max(1, hpFromDb);
         currentHp = Math.Clamp(currentHpFromDb, 0, maxHp);
-        maxAp = PlayerLevelStatsTable.GetMaxApForLevel(level);
+        maxAp = Math.Max(1, maxApFromDb);
         accuracy = Math.Max(0, stats.Accuracy);
         return true;
     }
@@ -261,7 +262,7 @@ LIMIT 1;
         using var connection = _database.DataSource.OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = """
-SELECT experience, strength, endurance, accuracy, max_hp, current_hp
+SELECT experience, strength, endurance, accuracy, max_hp, current_hp, max_ap
 FROM users
 WHERE id = @id
 LIMIT 1;
@@ -277,11 +278,12 @@ LIMIT 1;
         _ = reader.GetInt32(3);
         int hpFromDb = reader.GetInt32(4);
         int currentHpFromDb = reader.GetInt32(5);
+        int maxApFromDb = reader.GetInt32(6);
         level = ComputeLevel(exp);
         PlayerLevelStatsRow stats = PlayerLevelStatsTable.GetForLevel(level);
         maxHp = Math.Max(1, hpFromDb);
         currentHp = Math.Clamp(currentHpFromDb, 0, maxHp);
-        maxAp = PlayerLevelStatsTable.GetMaxApForLevel(level);
+        maxAp = Math.Max(1, maxApFromDb);
         accuracy = Math.Max(0, stats.Accuracy);
         return true;
     }
@@ -1272,9 +1274,9 @@ ORDER BY LOWER(at.caliber), uap.id;
             return false;
         }
 
-        if (req.Experience < 0 || req.Strength < 0 || req.Endurance < 0 || req.Accuracy < 0)
+        if (req.Experience < 0 || req.Strength < 0 || req.Endurance < 0 || req.Accuracy < 0 || req.MaxAp < 1)
         {
-            error = "experience and stats must be >= 0";
+            error = "experience/stats must be >= 0 and maxAp must be >= 1";
             return false;
         }
 
@@ -1288,7 +1290,7 @@ ORDER BY LOWER(at.caliber), uap.id;
 
         int levelFromExp = ComputeLevel(req.Experience);
         int maxHp = PlayerLevelStatsTable.GetMaxHpForLevel(levelFromExp);
-        int maxAp = PlayerLevelStatsTable.GetMaxApForLevel(levelFromExp);
+        int maxAp = Math.Max(1, req.MaxAp);
         PlayerLevelStatsRow tableRow = PlayerLevelStatsTable.GetForLevel(levelFromExp);
 
         var sb = new StringBuilder();
