@@ -436,6 +436,13 @@ public class BattleStartedPayloadDto
     public int[]? SpawnLevels { get; set; }
     /// <summary>Parallel to <see cref="SpawnPlayerIds"/>; 0/1 for PvP players, -1 for mobs.</summary>
     public int[]? SpawnTeamIds { get; set; }
+    /// <summary>Combat stats for unit inspect UI (parallel to <see cref="SpawnPlayerIds"/>).</summary>
+    public int[]? SpawnStrengths { get; set; }
+    public int[]? SpawnAgilities { get; set; }
+    public int[]? SpawnIntuitions { get; set; }
+    public int[]? SpawnEndurances { get; set; }
+    public int[]? SpawnAccuracies { get; set; }
+    public int[]? SpawnIntellects { get; set; }
     public int[]? ObstacleCols { get; set; }
     public int[]? ObstacleRows { get; set; }
     /// <summary>Теги: wall | tree | rock — параллельно obstacleCols/Rows.</summary>
@@ -541,9 +548,12 @@ public class UserProgressProfileDto
     public int Level { get; set; }
     public int Strength { get; set; }
     public int Agility { get; set; }
+    public int Intuition { get; set; }
     public int Endurance { get; set; }
     public int Accuracy { get; set; }
+    public int Intellect { get; set; }
     public int MaxHp { get; set; }
+    public int CurrentHp { get; set; }
     public int MaxAp { get; set; }
     public int HitBonusPercent { get; set; }
 }

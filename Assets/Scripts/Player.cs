@@ -64,6 +64,8 @@ public class Player : MonoBehaviour
     private MovementPosture _currentPosture = MovementPosture.Walk;
 
     // Накопленный штраф в долях от MaxAp (0–1): 0 = нет штрафа, 0.1 = -10% от MaxAp.
+    /// <summary>Last server-side movement penalty (0…1) for inspect UI.</summary>
+    private float _serverPenaltyFraction;
     // Сколько ОД уже потрачено в текущем ходу (используется для штрафа и подсчёта шагов).
     private int _apSpentThisTurn;
     // Сколько "шагов" уже совершено в этом ходу (независимо от направления).
@@ -90,6 +92,13 @@ public class Player : MonoBehaviour
     private bool _turnTimerPaused;
     private bool _isHidden;
     private int _movementInterruptVersion;
+
+    private int _inspectStrength;
+    private int _inspectAgility;
+    private int _inspectIntuition;
+    private int _inspectEndurance;
+    private int _inspectAccuracy;
+    private int _inspectIntellect;
 
     /// <summary>Код оружия (сервер / локальный каталог).</summary>
     private string _weaponCode = WeaponCatalog.DefaultWeaponCode;
@@ -150,6 +159,9 @@ public class Player : MonoBehaviour
     public MovementPosture PreviewMovementPosture => MovementPostureUtility.GetPreviewMovementPosture(_currentPosture);
     /// <summary>Текущие ОД (0 while <see cref="IsServerEscaping"/>).</summary>
     public int CurrentAp => _serverIsEscaping ? 0 : _currentAp;
+
+    /// <summary>Server fatigue penalty for unit inspect card (0…1).</summary>
+    public float ServerPenaltyFraction => _serverPenaltyFraction;
 
     public bool IsServerEscaping => _serverIsEscaping;
 
@@ -1131,7 +1143,33 @@ public class Player : MonoBehaviour
     /// <summary>Установить штраф с сервера (доля 0–0.9).</summary>
     public void SetPenaltyFraction(float value)
     {
-        value = Mathf.Clamp(value, 0f, MaxPenaltyFraction);
+        _serverPenaltyFraction = Mathf.Clamp(value, 0f, MaxPenaltyFraction);
+    }
+
+    public void SetInspectCombatStats(int strength, int agility, int intuition, int endurance, int accuracy, int intellect)
+    {
+        _inspectStrength = Mathf.Max(0, strength);
+        _inspectAgility = Mathf.Max(0, agility);
+        _inspectIntuition = Mathf.Max(0, intuition);
+        _inspectEndurance = Mathf.Max(0, endurance);
+        _inspectAccuracy = Mathf.Max(0, accuracy);
+        _inspectIntellect = Mathf.Max(0, intellect);
+    }
+
+    public void FillUnitCardPayload(UnitCardPayload dst)
+    {
+        if (dst == null) return;
+        dst.DisplayName = DisplayName;
+        dst.Level = CharacterLevel;
+        dst.Strength = _inspectStrength;
+        dst.Agility = _inspectAgility;
+        dst.Intuition = _inspectIntuition;
+        dst.Endurance = _inspectEndurance;
+        dst.Accuracy = _inspectAccuracy;
+        dst.Intellect = _inspectIntellect;
+        dst.CurrentHp = CurrentHp;
+        dst.MaxHp = Mathf.Max(1, MaxHp);
+        dst.PenaltyFraction = _serverPenaltyFraction;
     }
 
     public void SetMovementPostureFromServer(string postureId)
@@ -1209,6 +1247,8 @@ public class Player : MonoBehaviour
         }
         else if (_grid != null)
             transform.position = _grid.GetCellWorldPosition(_currentCol, _currentRow);
+
+        SetPenaltyFraction(penaltyFraction);
     }
 
     /// <summary>Проиграть анимацию движения по пути с сервера (actualPath). Запускать после ApplyServerTurnResult. Не меняет состояние.</summary>

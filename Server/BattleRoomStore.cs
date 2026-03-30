@@ -124,7 +124,11 @@ public partial class BattleRoomStore
                 soloRoom.AddPlayer("P1", soloCol, soloRow);
                 soloRoom.SetPlayerDisplayInfo("P1", displayName, characterLevel);
                 if (haveBattleUserId)
+                {
                     soloRoom.RegisterBattlePlayerUserId("P1", battleUserId);
+                    if (_userDb.TryGetUserProgressProfileByUserId(battleUserId, out var soloProf))
+                        soloRoom.SetPlayerUnitCardCombatStats("P1", soloProf.Strength, soloProf.Agility, soloProf.Intuition, soloProf.Endurance, soloProf.Accuracy, soloProf.Intellect);
+                }
                 soloRoom.SetPlayerCombatProfile("P1", playerMaxHp, playerMaxAp, weaponCode, weaponDamageMin, weaponDamageMax, weaponRange, weaponAttackApCost, accuracy, weaponTightness, weaponTrajectoryHeight, weaponIsSniper);
                 soloRoom.SetPlayerCurrentHpOverride("P1", playerCurrentHp);
                 _rooms[soloBattleId] = soloRoom;
@@ -150,7 +154,11 @@ public partial class BattleRoomStore
                 waitingRoom.AddPlayer("P2", spPair[1].col, spPair[1].row);
                 waitingRoom.SetPlayerDisplayInfo("P2", displayName, characterLevel);
                 if (haveBattleUserId)
+                {
                     waitingRoom.RegisterBattlePlayerUserId("P2", battleUserId);
+                    if (_userDb.TryGetUserProgressProfileByUserId(battleUserId, out var p2Prof))
+                        waitingRoom.SetPlayerUnitCardCombatStats("P2", p2Prof.Strength, p2Prof.Agility, p2Prof.Intuition, p2Prof.Endurance, p2Prof.Accuracy, p2Prof.Intellect);
+                }
                 waitingRoom.SetPlayerCombatProfile("P2", playerMaxHp, playerMaxAp, weaponCode, weaponDamageMin, weaponDamageMax, weaponRange, weaponAttackApCost, accuracy, weaponTightness, weaponTrajectoryHeight, weaponIsSniper);
                 waitingRoom.SetPlayerCurrentHpOverride("P2", playerCurrentHp);
                 waitingRoom.MatchModeWire = "1v1";
@@ -171,7 +179,11 @@ public partial class BattleRoomStore
             r.AddPlayer("P1", pc, pr);
             r.SetPlayerDisplayInfo("P1", displayName, characterLevel);
             if (haveBattleUserId)
+            {
                 r.RegisterBattlePlayerUserId("P1", battleUserId);
+                if (_userDb.TryGetUserProgressProfileByUserId(battleUserId, out var p1Prof))
+                    r.SetPlayerUnitCardCombatStats("P1", p1Prof.Strength, p1Prof.Agility, p1Prof.Intuition, p1Prof.Endurance, p1Prof.Accuracy, p1Prof.Intellect);
+            }
             r.SetPlayerCombatProfile("P1", playerMaxHp, playerMaxAp, weaponCode, weaponDamageMin, weaponDamageMax, weaponRange, weaponAttackApCost, accuracy, weaponTightness, weaponTrajectoryHeight, weaponIsSniper);
             r.SetPlayerCurrentHpOverride("P1", playerCurrentHp);
             _rooms[bid] = r;

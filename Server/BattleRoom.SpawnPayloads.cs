@@ -6,16 +6,17 @@ namespace BattleServer;
 
 public partial class BattleRoom
 {
-    public void FillSpawnArrays(out string[] ids, out int[] cols, out int[] rows, out int[] currentAps, out int[] maxAps, out int[] maxHps, out int[] currentHps, out string[] currentPostures, out string[] weaponCodes, out int[] weaponDamageMins, out int[] weaponDamages, out int[] weaponRanges, out int[] weaponAttackApCosts, out int[] currentMagazineRounds, out double[] weaponTightnesses, out int[] weaponTrajectoryHeights, out bool[] weaponIsSnipers, out string[] spawnDisplayNames, out int[] spawnLevels, out int[] spawnTeamIds)
+    public void FillSpawnArrays(out string[] ids, out int[] cols, out int[] rows, out int[] currentAps, out int[] maxAps, out int[] maxHps, out int[] currentHps, out string[] currentPostures, out string[] weaponCodes, out int[] weaponDamageMins, out int[] weaponDamages, out int[] weaponRanges, out int[] weaponAttackApCosts, out int[] currentMagazineRounds, out double[] weaponTightnesses, out int[] weaponTrajectoryHeights, out bool[] weaponIsSnipers, out string[] spawnDisplayNames, out int[] spawnLevels, out int[] spawnTeamIds, out int[] spawnStrengths, out int[] spawnAgilities, out int[] spawnIntuitions, out int[] spawnEndurances, out int[] spawnAccuracies, out int[] spawnIntellects)
     {
         EnsureUnitsInitialized();
 
-        var items = new List<(string id, int col, int row, int currentAp, int maxAp, int maxHp, int currentHp, string posture, string wc, int wdm, int wd, int wr, int wac, int wmag, double wtn, int wth, bool wsn, string displayName, int level, int teamId)>();
+        var items = new List<(string id, int col, int row, int currentAp, int maxAp, int maxHp, int currentHp, string posture, string wc, int wdm, int wd, int wr, int wac, int wmag, double wtn, int wth, bool wsn, string displayName, int level, int teamId, int st, int agi, int intu, int endu, int accu, int intl)>();
 
         foreach (var playerId in ParticipantIds.Where(Players.ContainsKey))
         {
             string dn = PlayerDisplayNames.GetValueOrDefault(playerId, playerId);
             int lv = PlayerLevels.GetValueOrDefault(playerId, 1);
+            var cs = CombatStatsForPlayerOrZero(playerId);
             if (PlayerToUnitId.TryGetValue(playerId, out var unitId) && Units.TryGetValue(unitId, out var unit))
             {
                 items.Add((
@@ -38,7 +39,13 @@ public partial class BattleRoom
                     unit.WeaponIsSniper,
                     dn,
                     lv,
-                    unit.TeamId));
+                    unit.TeamId,
+                    cs.s,
+                    cs.ag,
+                    cs.i,
+                    cs.e,
+                    cs.acc,
+                    cs.intl));
             }
             else
             {
@@ -67,7 +74,7 @@ public partial class BattleRoom
                     maxAp = prof.Item2;
                 }
 
-                items.Add((playerId, Players[playerId].col, Players[playerId].row, maxAp, maxAp, maxHp, maxHp, PostureWalk, wc, wdm, wd, wr, wac, wmag, wtn, wth, wsn, dn, lv, ComputePvpTeamIdForPlayer(playerId)));
+                items.Add((playerId, Players[playerId].col, Players[playerId].row, maxAp, maxAp, maxHp, maxHp, PostureWalk, wc, wdm, wd, wr, wac, wmag, wtn, wth, wsn, dn, lv, ComputePvpTeamIdForPlayer(playerId), cs.s, cs.ag, cs.i, cs.e, cs.acc, cs.intl));
             }
         }
 
@@ -93,7 +100,13 @@ public partial class BattleRoom
                 unit.WeaponIsSniper,
                 unit.UnitId,
                 1,
-                -1));
+                -1,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0));
         }
 
         ids = items.Select(x => x.id).ToArray();
@@ -116,6 +129,12 @@ public partial class BattleRoom
         spawnDisplayNames = items.Select(x => x.displayName).ToArray();
         spawnLevels = items.Select(x => x.level).ToArray();
         spawnTeamIds = items.Select(x => x.teamId).ToArray();
+        spawnStrengths = items.Select(x => x.st).ToArray();
+        spawnAgilities = items.Select(x => x.agi).ToArray();
+        spawnIntuitions = items.Select(x => x.intu).ToArray();
+        spawnEndurances = items.Select(x => x.endu).ToArray();
+        spawnAccuracies = items.Select(x => x.accu).ToArray();
+        spawnIntellects = items.Select(x => x.intl).ToArray();
     }
 
     public BattleStartedPayloadDto BuildBattleStartedFor(string playerId)
@@ -127,7 +146,7 @@ public partial class BattleRoom
             Col = p.Value.col,
             Row = p.Value.row
         }).ToArray();
-        FillSpawnArrays(out var sid, out var sc, out var sr, out var sap, out var smap, out var smh, out var sch, out var spos, out var swc, out var swdm, out var swd, out var swr, out var swac, out var swmag, out var swtn, out var swth, out var swsn, out var sdn, out var slv, out var steam);
+        FillSpawnArrays(out var sid, out var sc, out var sr, out var sap, out var smap, out var smh, out var sch, out var spos, out var swc, out var swdm, out var swd, out var swr, out var swac, out var swmag, out var swtn, out var swth, out var swsn, out var sdn, out var slv, out var steam, out var sstr, out var sag, out var sintu, out var sendu, out var sacc, out var sintel);
         var sortedKeys = _obstacleTags.Keys.OrderBy(k => k.col).ThenBy(k => k.row).ToArray();
         var obstacleCols = sortedKeys.Select(k => k.col).ToArray();
         var obstacleRows = sortedKeys.Select(k => k.row).ToArray();
@@ -175,6 +194,12 @@ public partial class BattleRoom
             SpawnDisplayNames = sdn,
             SpawnLevels = slv,
             SpawnTeamIds = steam,
+            SpawnStrengths = sstr,
+            SpawnAgilities = sag,
+            SpawnIntuitions = sintu,
+            SpawnEndurances = sendu,
+            SpawnAccuracies = sacc,
+            SpawnIntellects = sintel,
             ObstacleCols = obstacleCols,
             ObstacleRows = obstacleRows,
             ObstacleTags = obstacleTags,

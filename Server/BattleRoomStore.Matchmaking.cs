@@ -287,6 +287,8 @@ public partial class BattleRoomStore
         room.RegisterBattlePlayerUserId(playerId, battleUserId);
         room.SetPlayerCombatProfile(playerId, playerMaxHp, playerMaxAp, weaponCode, weapon.DamageMin, weapon.DamageMax, weapon.Range, weapon.AttackApCost, accuracy, weapon.Tightness, weapon.TrajectoryHeight, weapon.IsSniper);
         room.SetPlayerCurrentHpOverride(playerId, playerCurrentHp);
+        if (_userDb.TryGetUserProgressProfileByUserId(battleUserId, out var prog))
+            room.SetPlayerUnitCardCombatStats(playerId, prog.Strength, prog.Agility, prog.Intuition, prog.Endurance, prog.Accuracy, prog.Intellect);
     }
 
     private List<(IReadOnlyList<long> targets, string json)>? TryStartReadyCheckLocked(MatchQueueMode mode)

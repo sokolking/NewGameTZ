@@ -39,6 +39,15 @@ public class RemoteBattleUnitView : MonoBehaviour
     private int _localBattleTeamId = -1;
     private int _remoteBattleTeamId = -1;
 
+    private const float MaxPenaltyFraction = 0.95f;
+    private float _serverPenaltyFraction;
+    private int _inspectStrength;
+    private int _inspectAgility;
+    private int _inspectIntuition;
+    private int _inspectEndurance;
+    private int _inspectAccuracy;
+    private int _inspectIntellect;
+
     public string NetworkPlayerId { get; private set; }
     public bool IsMoving => _isMoving;
     public bool IsMob =>
@@ -51,6 +60,9 @@ public class RemoteBattleUnitView : MonoBehaviour
     public int MaxHp => _maxHp;
     public string DisplayName => string.IsNullOrEmpty(_displayName) ? (NetworkPlayerId ?? "?") : _displayName;
     public int CharacterLevel => Mathf.Max(1, _characterLevel);
+
+    /// <summary>Server movement fatigue (0…1) for inspect UI.</summary>
+    public float ServerPenaltyFraction => _serverPenaltyFraction;
 
     /// <summary>Server PvP team (0/1); -1 if unknown or mob.</summary>
     public int BattleTeamId => _remoteBattleTeamId;
@@ -409,8 +421,41 @@ public class RemoteBattleUnitView : MonoBehaviour
             capCollider.isTrigger = true;
     }
 
+    public void SetPenaltyFraction(float value)
+    {
+        _serverPenaltyFraction = Mathf.Clamp(value, 0f, MaxPenaltyFraction);
+    }
+
+    public void SetInspectCombatStats(int strength, int agility, int intuition, int endurance, int accuracy, int intellect)
+    {
+        _inspectStrength = Mathf.Max(0, strength);
+        _inspectAgility = Mathf.Max(0, agility);
+        _inspectIntuition = Mathf.Max(0, intuition);
+        _inspectEndurance = Mathf.Max(0, endurance);
+        _inspectAccuracy = Mathf.Max(0, accuracy);
+        _inspectIntellect = Mathf.Max(0, intellect);
+    }
+
+    public void FillUnitCardPayload(UnitCardPayload dst)
+    {
+        if (dst == null) return;
+        dst.DisplayName = DisplayName;
+        dst.Level = CharacterLevel;
+        dst.Strength = _inspectStrength;
+        dst.Agility = _inspectAgility;
+        dst.Intuition = _inspectIntuition;
+        dst.Endurance = _inspectEndurance;
+        dst.Accuracy = _inspectAccuracy;
+        dst.Intellect = _inspectIntellect;
+        dst.CurrentHp = CurrentHp;
+        dst.MaxHp = Mathf.Max(1, MaxHp);
+        dst.PenaltyFraction = _serverPenaltyFraction;
+    }
+
     public void ApplyServerTurnResult(HexPosition finalPosition, HexPosition[] actualPath, int currentAp, float penaltyFraction, bool prepareForAnimation = true)
     {
+        SetPenaltyFraction(penaltyFraction);
+
         if (_grid == null || actualPath == null || actualPath.Length == 0)
         {
             if (_grid != null && finalPosition != null)

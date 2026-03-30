@@ -161,7 +161,9 @@ LIMIT 1;
         using var connection = _database.DataSource.OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = """
-SELECT username, experience, strength, endurance, accuracy
+SELECT username, experience,
+       strength, agility, intuition, intellect, endurance, accuracy,
+       max_hp, current_hp, max_ap
 FROM users
 WHERE username = @username
 LIMIT 1;
@@ -171,23 +173,7 @@ LIMIT 1;
         if (!reader.Read())
             return false;
 
-        int exp = Math.Max(0, reader.GetInt32(1));
-        int level = ComputeLevel(exp);
-        PlayerLevelStatsRow stats = PlayerLevelStatsTable.GetForLevel(level);
-        profile = new UserProgressProfileDto
-        {
-            Username = reader.GetString(0),
-            Experience = exp,
-            Level = level,
-            Strength = stats.Strength,
-            Agility = stats.Agility,
-            Endurance = stats.Stamina,
-            Accuracy = stats.Accuracy,
-            MaxHp = PlayerLevelStatsTable.GetMaxHpForLevel(level),
-            MaxAp = PlayerLevelStatsTable.GetMaxApForLevel(level),
-            HitBonusPercent = stats.Accuracy * 2
-        };
-        return true;
+        return TryMapUserProgressRow(reader, out profile);
     }
 
     public bool TryGetUserProgressProfileByUsername(string username, out UserProgressProfileDto profile)
@@ -200,7 +186,9 @@ LIMIT 1;
         using var connection = _database.DataSource.OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = """
-SELECT username, experience, strength, endurance, accuracy
+SELECT username, experience,
+       strength, agility, intuition, intellect, endurance, accuracy,
+       max_hp, current_hp, max_ap
 FROM users
 WHERE username = @username
 LIMIT 1;
@@ -210,23 +198,7 @@ LIMIT 1;
         if (!reader.Read())
             return false;
 
-        int exp = Math.Max(0, reader.GetInt32(1));
-        int level = ComputeLevel(exp);
-        PlayerLevelStatsRow stats = PlayerLevelStatsTable.GetForLevel(level);
-        profile = new UserProgressProfileDto
-        {
-            Username = reader.GetString(0),
-            Experience = exp,
-            Level = level,
-            Strength = stats.Strength,
-            Agility = stats.Agility,
-            Endurance = stats.Stamina,
-            Accuracy = stats.Accuracy,
-            MaxHp = PlayerLevelStatsTable.GetMaxHpForLevel(level),
-            MaxAp = PlayerLevelStatsTable.GetMaxApForLevel(level),
-            HitBonusPercent = stats.Accuracy * 2
-        };
-        return true;
+        return TryMapUserProgressRow(reader, out profile);
     }
 
     public bool TryGetInventory(string username, string password, out List<UserInventorySlotDto> slots, out long userId)
@@ -354,7 +326,9 @@ LIMIT 1;
         using var connection = _database.DataSource.OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = """
-SELECT username, experience, strength, endurance, accuracy
+SELECT username, experience,
+       strength, agility, intuition, intellect, endurance, accuracy,
+       max_hp, current_hp, max_ap
 FROM users
 WHERE id = @id
 LIMIT 1;
@@ -364,21 +338,32 @@ LIMIT 1;
         if (!reader.Read())
             return false;
 
+        return TryMapUserProgressRow(reader, out profile);
+    }
+
+    private bool TryMapUserProgressRow(NpgsqlDataReader reader, out UserProgressProfileDto profile)
+    {
         int exp = Math.Max(0, reader.GetInt32(1));
         int level = ComputeLevel(exp);
-        PlayerLevelStatsRow stats = PlayerLevelStatsTable.GetForLevel(level);
+        int maxHp = Math.Max(1, reader.GetInt32(8));
+        int curHp = Math.Clamp(reader.GetInt32(9), 0, maxHp);
+        int maxAp = Math.Max(1, reader.GetInt32(10));
+        int acc = Math.Max(0, reader.GetInt32(7));
         profile = new UserProgressProfileDto
         {
             Username = reader.GetString(0),
             Experience = exp,
             Level = level,
-            Strength = stats.Strength,
-            Agility = stats.Agility,
-            Endurance = stats.Stamina,
-            Accuracy = stats.Accuracy,
-            MaxHp = PlayerLevelStatsTable.GetMaxHpForLevel(level),
-            MaxAp = PlayerLevelStatsTable.GetMaxApForLevel(level),
-            HitBonusPercent = stats.Accuracy * 2
+            Strength = Math.Max(0, reader.GetInt32(2)),
+            Agility = Math.Max(0, reader.GetInt32(3)),
+            Intuition = Math.Max(0, reader.GetInt32(4)),
+            Intellect = Math.Max(0, reader.GetInt32(5)),
+            Endurance = Math.Max(0, reader.GetInt32(6)),
+            Accuracy = acc,
+            MaxHp = maxHp,
+            CurrentHp = curHp,
+            MaxAp = maxAp,
+            HitBonusPercent = acc * 2
         };
         return true;
     }

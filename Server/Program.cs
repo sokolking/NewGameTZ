@@ -500,7 +500,7 @@ app.Map("/ws/battle", async (HttpContext ctx, BattleRoomStore store, BattleAuthS
 });
 
 // /ws/session — long-lived session channel; same JWT as HTTP APIs; new login closes this socket and revokes the old token.
-app.Map("/ws/session", async (HttpContext ctx, BattleAuthSession battleAuth, BattleRoomStore sessionMatchmakingStore) =>
+app.Map("/ws/session", async (HttpContext ctx, BattleAuthSession battleAuth, BattleRoomStore sessionMatchmakingStore, BattleUserDatabase battleUsers) =>
 {
     if (!ctx.WebSockets.IsWebSocketRequest)
     {
@@ -570,6 +570,37 @@ app.Map("/ws/session", async (HttpContext ctx, BattleAuthSession battleAuth, Bat
                     continue;
                 }
 
+                if (msgType == "profileRequest")
+                {
+                    if (!battleUsers.TryGetUserProgressProfileByUserId(wsUserId, out var prof))
+                    {
+                        var errJson = JsonSerializer.Serialize(new { type = "profileError", code = "not_found" }, jsonOpt);
+                        await UserSessionSocketRegistry.SendTextToUserAsync(wsUserId, errJson, ctx.RequestAborted).ConfigureAwait(false);
+                    }
+                    else
+                    {
+                        var resp = new
+                        {
+                            type = "profileResponse",
+                            username = prof.Username,
+                            level = prof.Level,
+                            strength = prof.Strength,
+                            agility = prof.Agility,
+                            intuition = prof.Intuition,
+                            endurance = prof.Endurance,
+                            accuracy = prof.Accuracy,
+                            intellect = prof.Intellect,
+                            maxHp = prof.MaxHp,
+                            currentHp = prof.CurrentHp,
+                            maxAp = prof.MaxAp
+                        };
+                        var okJson = JsonSerializer.Serialize(resp, jsonOpt);
+                        await UserSessionSocketRegistry.SendTextToUserAsync(wsUserId, okJson, ctx.RequestAborted).ConfigureAwait(false);
+                    }
+
+                    continue;
+                }
+
                 if (msgType != "queueJoin" && msgType != "queueLeave" && msgType != "readyCheckConfirm")
                     continue;
                 string? modeWire = null;
@@ -612,7 +643,7 @@ app.MapGet("/api/battle/{battleId}", (HttpContext http, string battleId, BattleR
     if (room == null) return Results.Json(new { error = "Battle not found" }, statusCode: 404);
     var battleRecord = battleHistoryDb.GetBattle(battleId);
 
-    room.FillSpawnArrays(out var spawnIds, out var spawnCols, out var spawnRows, out var spawnCurrentAps, out var spawnMaxAps, out var spawnMaxHps, out var spawnCurrentHps, out var spawnCurrentPostures, out var spawnWeaponCodes, out var spawnWeaponDamageMins, out var spawnWeaponDamages, out var spawnWeaponRanges, out var spawnWeaponAttackApCosts, out var spawnCurrentMagazineRounds, out var spawnWeaponTightnesses, out var spawnWeaponTrajectoryHeights, out var spawnWeaponIsSnipers, out var spawnDisplayNames, out var spawnLevels, out var spawnTeamIds);
+    room.FillSpawnArrays(out var spawnIds, out var spawnCols, out var spawnRows, out var spawnCurrentAps, out var spawnMaxAps, out var spawnMaxHps, out var spawnCurrentHps, out var spawnCurrentPostures, out var spawnWeaponCodes, out var spawnWeaponDamageMins, out var spawnWeaponDamages, out var spawnWeaponRanges, out var spawnWeaponAttackApCosts, out var spawnCurrentMagazineRounds, out var spawnWeaponTightnesses, out var spawnWeaponTrajectoryHeights, out var spawnWeaponIsSnipers, out var spawnDisplayNames, out var spawnLevels, out var spawnTeamIds, out var spawnStrengths, out var spawnAgilities, out var spawnIntuitions, out var spawnEndurances, out var spawnAccuracies, out var spawnIntellects);
     var response = new BattleStateResponse
     {
         RoundIndex = room.RoundIndex,
@@ -643,7 +674,13 @@ app.MapGet("/api/battle/{battleId}", (HttpContext http, string battleId, BattleR
         SpawnWeaponIsSnipers = spawnWeaponIsSnipers,
         SpawnDisplayNames = spawnDisplayNames,
         SpawnLevels = spawnLevels,
-        SpawnTeamIds = spawnTeamIds
+        SpawnTeamIds = spawnTeamIds,
+        SpawnStrengths = spawnStrengths,
+        SpawnAgilities = spawnAgilities,
+        SpawnIntuitions = spawnIntuitions,
+        SpawnEndurances = spawnEndurances,
+        SpawnAccuracies = spawnAccuracies,
+        SpawnIntellects = spawnIntellects
     };
     return Results.Json(response, jsonOpt);
 });
@@ -1155,6 +1192,12 @@ public class BattleStateResponse
     public string[]? SpawnDisplayNames { get; set; }
     public int[]? SpawnLevels { get; set; }
     public int[]? SpawnTeamIds { get; set; }
+    public int[]? SpawnStrengths { get; set; }
+    public int[]? SpawnAgilities { get; set; }
+    public int[]? SpawnIntuitions { get; set; }
+    public int[]? SpawnEndurances { get; set; }
+    public int[]? SpawnAccuracies { get; set; }
+    public int[]? SpawnIntellects { get; set; }
 }
 
 public class PollResponse

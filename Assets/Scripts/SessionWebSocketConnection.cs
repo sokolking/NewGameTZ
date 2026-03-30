@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Collections.Concurrent;
 using System.IO;
 using System.Net.WebSockets;
@@ -22,6 +23,12 @@ public sealed class SessionWebSocketConnection : MonoBehaviour
     private ClientWebSocket _ws;
     private CancellationTokenSource _loopCts;
     private bool _revoked;
+    /// <summary>Access token used for the current open <see cref="_ws"/>; mismatch forces reconnect.</summary>
+    private string _sessionWsTokenSnapshot;
+
+    /// <summary>Coalesce rapid <see cref="EnsureStarted"/> with the same token (login + MainMenu same frame).</summary>
+    private string _sessionLoopCoalesceToken;
+    private double _sessionLoopLastBORTime;
     private readonly ConcurrentQueue<Action> _mainThread = new();
     private readonly SemaphoreSlim _sendLock = new(1, 1);
 
@@ -40,6 +47,11 @@ public sealed class SessionWebSocketConnection : MonoBehaviour
 
     public static event Action<bool, string, BattleStartedPayload> OnSpectatorWatchReceived;
 
+    public static event Action<UserProfileSocketDto> OnUserProfileReceived;
+
+    /// <summary>Fired on the main thread after <c>/ws/session</c> connects (each successful connect / reconnect).</summary>
+    public static event Action OnSessionSocketConnected;
+
     public static bool IsSessionSocketConnected =>
         _instance != null && _instance._ws != null && _instance._ws.State == WebSocketState.Open;
 
@@ -52,7 +64,34 @@ public sealed class SessionWebSocketConnection : MonoBehaviour
             go.AddComponent<SessionWebSocketConnection>();
         }
 
-        _instance.BeginOrRestartConnection();
+        _instance.StartSessionLoopIfNeeded();
+    }
+
+    /// <summary>Starts the receive loop only if we are not already connected with the same session token.</summary>
+    private void StartSessionLoopIfNeeded()
+    {
+        string token = BattleSessionState.AccessToken ?? "";
+        // After logout or session-revoked navigation, StopReconnectLoop() sets _revoked; new login sets a token and must reconnect.
+        if (!string.IsNullOrEmpty(token))
+            _revoked = false;
+
+        if (_revoked)
+            return;
+        bool open = _ws != null && _ws.State == WebSocketState.Open;
+        if (open && !string.IsNullOrEmpty(token) && string.Equals(_sessionWsTokenSnapshot, token, StringComparison.Ordinal))
+            return;
+
+        double now = Time.realtimeSinceStartupAsDouble;
+        if (!string.IsNullOrEmpty(token)
+            && string.Equals(_sessionLoopCoalesceToken, token, StringComparison.Ordinal)
+            && now - _sessionLoopLastBORTime < 0.45)
+        {
+            return;
+        }
+
+        _sessionLoopCoalesceToken = token;
+        _sessionLoopLastBORTime = now;
+        BeginOrRestartConnection();
     }
 
     /// <summary>Stops reconnect loop when session ends (revoked or navigation to login from any source).</summary>
@@ -72,6 +111,9 @@ public sealed class SessionWebSocketConnection : MonoBehaviour
         }
 
         _instance._ws = null;
+        _instance._sessionWsTokenSnapshot = null;
+        _instance._sessionLoopCoalesceToken = null;
+        _instance._sessionLoopLastBORTime = 0;
     }
 
     public static void SendMatchmakingQueueJoin(string mode)
@@ -103,6 +145,8 @@ public sealed class SessionWebSocketConnection : MonoBehaviour
         TrySendJson(new { type = "spectatorWatchRequest", battleId });
     }
 
+    public static void SendUserProfileRequest() => TrySendJson(new { type = "profileRequest" });
+
     private static void TrySendJson(object payload)
     {
         string json;
@@ -131,6 +175,7 @@ public sealed class SessionWebSocketConnection : MonoBehaviour
             var w = _ws;
             if (w == null || w.State != WebSocketState.Open)
                 return;
+
             var bytes = Encoding.UTF8.GetBytes(json);
             await w.SendAsync(new ArraySegment<byte>(bytes), WebSocketMessageType.Text, true, CancellationToken.None)
                 .ConfigureAwait(false);
@@ -303,6 +348,9 @@ public sealed class SessionWebSocketConnection : MonoBehaviour
         }
 
         _ws = ws;
+        _sessionWsTokenSnapshot = token;
+        await TrySendProfileRequestOnSocketAsync(ws, ct).ConfigureAwait(false);
+        _mainThread.Enqueue(() => OnSessionSocketConnected?.Invoke());
         var buf = new byte[16384];
         try
         {
@@ -365,7 +413,28 @@ public sealed class SessionWebSocketConnection : MonoBehaviour
             }
 
             if (ReferenceEquals(_ws, ws))
+            {
                 _ws = null;
+                _sessionWsTokenSnapshot = null;
+            }
+        }
+    }
+
+    private static async Task TrySendProfileRequestOnSocketAsync(ClientWebSocket ws, CancellationToken ct)
+    {
+        try
+        {
+            string json = JsonConvert.SerializeObject(new { type = "profileRequest" });
+            byte[] bytes = Encoding.UTF8.GetBytes(json);
+            await ws.SendAsync(new ArraySegment<byte>(bytes), WebSocketMessageType.Text, true, ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            // loop cancelled / reconnect
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning("[SessionWS] profileRequest right after connect: " + ex.Message);
         }
     }
 
@@ -378,12 +447,17 @@ public sealed class SessionWebSocketConnection : MonoBehaviour
         }
         catch
         {
+            string snippet = text.Length > 220 ? text.Substring(0, 220) + "…" : text;
+            _mainThread.Enqueue(() => Debug.LogWarning("[SessionWS] JSON parse failed, snippet: " + snippet));
             return;
         }
 
         var t = (string)jo["type"];
         if (string.IsNullOrEmpty(t))
+        {
+            _mainThread.Enqueue(() => Debug.LogWarning("[SessionWS] message without type field"));
             return;
+        }
 
         switch (t)
         {
@@ -508,6 +582,70 @@ public sealed class SessionWebSocketConnection : MonoBehaviour
                 _mainThread.Enqueue(() => OnSpectatorWatchReceived?.Invoke(okCap, codeCap, stCap));
                 break;
             }
+            case "profileResponse":
+            {
+                UserProfileSocketDto dto = TryParseUserProfileFromProfileResponse(jo, out string parseErr);
+                UserProfileSocketDto captured = dto;
+                string errCap = parseErr;
+                _mainThread.Enqueue(() =>
+                {
+                    if (captured == null)
+                    {
+                        Debug.LogWarning("[SessionWS] profileResponse parse failed: " + (errCap ?? "unknown"));
+                        return;
+                    }
+
+                    OnUserProfileReceived?.Invoke(captured);
+                });
+                break;
+            }
+            case "profileError":
+            {
+                string code = (string)jo["code"] ?? "unknown";
+                _mainThread.Enqueue(() => Debug.LogWarning("[SessionWS] profileError: " + code));
+                break;
+            }
+        }
+    }
+
+    private static int SessionJsonInt(JToken? t, int defaultValue)
+    {
+        if (t == null || t.Type == JTokenType.Null)
+            return defaultValue;
+        try
+        {
+            return Convert.ToInt32(((JValue)t).Value, CultureInfo.InvariantCulture);
+        }
+        catch
+        {
+            return defaultValue;
+        }
+    }
+
+    private static UserProfileSocketDto TryParseUserProfileFromProfileResponse(JObject jo, out string error)
+    {
+        error = null;
+        try
+        {
+            return new UserProfileSocketDto
+            {
+                username = jo["username"]?.Value<string>() ?? "",
+                level = Math.Max(1, SessionJsonInt(jo["level"], 1)),
+                strength = SessionJsonInt(jo["strength"], 0),
+                agility = SessionJsonInt(jo["agility"], 0),
+                intuition = SessionJsonInt(jo["intuition"], 0),
+                endurance = SessionJsonInt(jo["endurance"], 0),
+                accuracy = SessionJsonInt(jo["accuracy"], 0),
+                intellect = SessionJsonInt(jo["intellect"], 0),
+                maxHp = Math.Max(1, SessionJsonInt(jo["maxHp"], 1)),
+                currentHp = SessionJsonInt(jo["currentHp"], 0),
+                maxAp = SessionJsonInt(jo["maxAp"], 0)
+            };
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+            return null;
         }
     }
 

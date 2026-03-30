@@ -127,6 +127,10 @@ public class HexInputManager : MonoBehaviour
         }
         Mouse mouse = Mouse.current;
         if (mouse == null) return;
+
+        GameSession activeSessionEarly = GameSession.Active;
+        UpdateBattleInspectDismissal(mouse, activeSessionEarly);
+
         if (GameplayMapInputBlock.IsBlocked)
         {
             if (_lastHoveredCell != null)
@@ -156,7 +160,7 @@ public class HexInputManager : MonoBehaviour
             return;
         }
 
-        GameSession activeSession = GameSession.Active;
+        GameSession activeSession = activeSessionEarly;
         if (activeSession != null && activeSession.BlockPlayerInput)
         {
             if (_lastHoveredCell != null)
@@ -177,7 +181,103 @@ public class HexInputManager : MonoBehaviour
         UpdateCtrlHexAttack(mouse, kb);
         UpdateDoubleClick(mouse);
         UpdateLeftHoldIndicator(mouse, kb);
+        UpdateRightClickUnitInspect(mouse, activeSession);
         UpdateCtrlAttackRangeOutline(kb);
+    }
+
+    /// <summary>Left or right click outside the battle inspect <see cref="UnitCardView"/> closes it (runs before open-on-RMB same frame).</summary>
+    private void UpdateBattleInspectDismissal(Mouse mouse, GameSession session)
+    {
+        if (session == null || session.IsBattleFinished || !session.IsBattleInspectUnitCardOpen)
+            return;
+        if (!mouse.leftButton.wasPressedThisFrame && !mouse.rightButton.wasPressedThisFrame)
+            return;
+        if (_camera == null)
+        {
+            _camera = Camera.main;
+            if (_camera == null)
+                return;
+        }
+
+        Vector2 sp = mouse.position.ReadValue();
+        if (session.IsScreenPointOverBattleInspectUnitCard(sp, _camera))
+            return;
+        session.HideBattleInspectUnitCard();
+    }
+
+    /// <summary>Right-click a unit to open the battle inspect <see cref="UnitCardView"/> (socket state).</summary>
+    private void UpdateRightClickUnitInspect(Mouse mouse, GameSession session)
+    {
+        if (mouse == null || !mouse.rightButton.wasPressedThisFrame)
+            return;
+        if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject())
+            return;
+        if (session == null || session.IsBattleFinished)
+            return;
+
+        if (!TryGetInspectPayloadUnderCursor(mouse, session, out string entityId, out UnitCardPayload payload))
+            return;
+        session.TryShowInspectUnitCard(entityId, payload, _camera);
+    }
+
+    /// <summary>Closest raycast hit wins (remote unit or local <see cref="Player"/>) so overlapping colliders show the frontmost unit.</summary>
+    private bool TryGetInspectPayloadUnderCursor(Mouse mouse, GameSession session, out string entityId, out UnitCardPayload payload)
+    {
+        entityId = null;
+        payload = null;
+        if (_camera == null || _player == null)
+            return false;
+
+        Vector2 pos = mouse.position.ReadValue();
+        Ray ray = _camera.ScreenPointToRay(new Vector3(pos.x, pos.y, 0f));
+        int n = Physics.RaycastNonAlloc(ray, _remoteHoldRaycastHits, 1000f, Physics.DefaultRaycastLayers, QueryTriggerInteraction.Collide);
+        if (n > 0)
+        {
+            if (n > MaxRaycastHitsToProcess)
+                n = MaxRaycastHitsToProcess;
+            SortRaycastHitsByDistance(_remoteHoldRaycastHits, n);
+
+            for (int i = 0; i < n; i++)
+            {
+                Collider col = _remoteHoldRaycastHits[i].collider;
+                if (col == null)
+                    continue;
+
+                RemoteBattleUnitView remote = col.GetComponentInParent<RemoteBattleUnitView>();
+                if (remote != null && !string.IsNullOrEmpty(remote.NetworkPlayerId))
+                {
+                    if (session.TryBuildInspectPayloadForEntity(remote.NetworkPlayerId, out payload))
+                    {
+                        entityId = remote.NetworkPlayerId;
+                        return true;
+                    }
+
+                    continue;
+                }
+
+                Player hitPlayer = col.GetComponentInParent<Player>();
+                if (hitPlayer != null && hitPlayer == _player)
+                {
+                    if (session.TryBuildInspectPayloadForEntity(session.PlayerId, out payload))
+                    {
+                        entityId = session.PlayerId;
+                        return true;
+                    }
+
+                    continue;
+                }
+            }
+        }
+
+        // Ray often hits the hex mesh first (camera angle); still allow inspect when the cursor hex is the local player's cell.
+        if (_grid != null && IsLocalPlayerHexUnderCursor(mouse)
+            && session.TryBuildInspectPayloadForEntity(session.PlayerId, out payload))
+        {
+            entityId = session.PlayerId;
+            return true;
+        }
+
+        return false;
     }
 
     /// <summary>

@@ -1,69 +1,70 @@
 using System;
-using System.Collections;
-using Newtonsoft.Json;
 using UnityEngine;
 
 /// <summary>
-/// Загружает профиль игрока с сервера и обновляет <see cref="PlayerProfileCardView"/>.
+/// Loads the logged-in user profile via <c>/ws/session</c> and renders <see cref="UnitCardView"/>.
 /// </summary>
 public sealed class PlayerProfileCardController : MonoBehaviour
 {
-    [SerializeField] private PlayerProfileCardView _view;
+    [SerializeField] private UnitCardView _unitCardView;
+    [Tooltip("If true, request profile when this object becomes enabled (MainMenu open / card shown).")]
     [SerializeField] private bool _loadOnStart = true;
 
-    private void Start()
+    private void OnEnable()
     {
+        SessionWebSocketConnection.OnUserProfileReceived += OnUserProfileReceived;
         if (_loadOnStart)
-            Reload();
+            TryRequestProfileFromSession();
     }
 
-    public void Reload()
+    private void OnDisable()
     {
-        if (_view == null)
-            _view = GetComponent<PlayerProfileCardView>();
-        if (_view == null)
+        SessionWebSocketConnection.OnUserProfileReceived -= OnUserProfileReceived;
+    }
+
+    /// <summary>Re-request profile over <c>/ws/session</c> (also sent automatically right after session socket connects).</summary>
+    public void Reload() => TryRequestProfileFromSession();
+
+    private void TryRequestProfileFromSession()
+    {
+        if (_unitCardView == null)
+            _unitCardView = GetComponent<UnitCardView>();
+        if (_unitCardView == null)
+        {
+            Debug.LogWarning("[PlayerProfileCard] no UnitCardView on this object");
             return;
-        StartCoroutine(CoLoadProfile());
-    }
-
-    private IEnumerator CoLoadProfile()
-    {
-        string token = BattleSessionState.AccessToken;
-        if (string.IsNullOrWhiteSpace(token))
-            yield break;
-
-        string baseUrl = BattleServerRuntime.CurrentBaseUrl.TrimEnd('/');
-        string url = baseUrl + "/api/db/user/profile";
-
-        string body = null;
-        string err = null;
-        yield return HttpSimple.GetStringWithAuth(url, token, b => body = b, e => err = e);
-        if (!string.IsNullOrEmpty(err) || string.IsNullOrEmpty(body))
-            yield break;
-
-        UserProgressProfile profile = null;
-        try
-        {
-            profile = JsonConvert.DeserializeObject<UserProgressProfile>(body);
-        }
-        catch (Exception)
-        {
-            profile = JsonUtility.FromJson<UserProgressProfile>(body);
         }
 
-        if (profile == null)
-            yield break;
+        if (string.IsNullOrWhiteSpace(BattleSessionState.AccessToken))
+        {
+            Debug.LogWarning("[PlayerProfileCard] no access token — profile request skipped");
+            return;
+        }
 
-        _view.SetData(profile.username, profile.level, profile.strength, profile.endurance, profile.accuracy);
+        SessionWebSocketConnection.EnsureStarted();
+        SessionWebSocketConnection.SendUserProfileRequest();
     }
 
-    [Serializable]
-    private class UserProgressProfile
+    private void OnUserProfileReceived(UserProfileSocketDto dto)
     {
-        public string username;
-        public int level;
-        public int strength;
-        public int endurance;
-        public int accuracy;
+        if (_unitCardView == null)
+            _unitCardView = GetComponent<UnitCardView>();
+        if (_unitCardView == null || dto == null)
+            return;
+        var p = new UnitCardPayload
+        {
+            DisplayName = dto.username ?? "",
+            Level = Math.Max(1, dto.level),
+            Strength = dto.strength,
+            Agility = dto.agility,
+            Intuition = dto.intuition,
+            Endurance = dto.endurance,
+            Accuracy = dto.accuracy,
+            Intellect = dto.intellect,
+            CurrentHp = dto.currentHp,
+            MaxHp = Math.Max(1, dto.maxHp),
+            PenaltyFraction = 0f
+        };
+        _unitCardView.Render(p);
     }
 }

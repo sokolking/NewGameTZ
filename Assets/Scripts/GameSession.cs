@@ -2,6 +2,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.Serialization;
 
 /// <summary>
 /// Сессия боя: отправка хода на сервер и применение результата (по плану ServerSyncPlan).
@@ -63,6 +64,11 @@ public class GameSession : MonoBehaviour
     [Header("Local unit")]
     [Tooltip("Local player unit for TurnResult / round sync. If unset, found in scene.")]
     [SerializeField] private Player _localPlayer;
+
+    [Header("Battle unit card (right-click inspect)")]
+    [Tooltip("Drag the UnitCard instance (UnitCardView) from the Canvas hierarchy. If empty, the first UnitCardView in the scene is used.")]
+    [FormerlySerializedAs("_battleInspectUnitCard")]
+    [SerializeField] private UnitCardView battleInspectUnitCard;
 
     [Header("Round playback")]
     [Tooltip("Pause after attack actions so tick rhythm and AP changes read clearly.")]
@@ -127,6 +133,9 @@ public class GameSession : MonoBehaviour
     private LiveTurnDraftSnapshot _liveTurnDraftSnapshot;
     private bool _debugMobSpawned;
     private bool _battleFinished;
+    private bool _battleInspectProfileControllerDisabled;
+    /// <summary>Network entity id for open battle inspect <see cref="UnitCardView"/>; cleared when hidden.</summary>
+    private string _battleInspectEntityId;
     private HexGridCamera _hexGridCamera;
     private HexGrid _hexGrid;
     /// <summary>Watching via MainMenu Watch — no submit, no map actions; camera + history only.</summary>
@@ -155,6 +164,145 @@ public class GameSession : MonoBehaviour
     public bool CanViewPreviousTurn => _selectedTurnHistoryPointer > 0 || (_selectedTurnHistoryPointer < 0 && _currentTurnHistoryPointer >= 0);
     public bool CanViewNextTurn => _selectedTurnHistoryPointer >= 0;
     public bool IsBattleFinished => _battleFinished;
+
+    /// <summary>Build unit inspect card data from cached battle units (spawn arrays + turn updates).</summary>
+    public bool TryBuildInspectPayloadForEntity(string entityId, out UnitCardPayload payload)
+    {
+        payload = new UnitCardPayload();
+        if (string.IsNullOrEmpty(entityId))
+            return false;
+
+        if (entityId == _playerId)
+        {
+            Player local = LocalPlayer;
+            if (local == null || local.IsHidden)
+                return false;
+            local.FillUnitCardPayload(payload);
+            return true;
+        }
+
+        if (_remoteUnits.TryGetValue(entityId, out RemoteBattleUnitView rv) && rv != null)
+        {
+            rv.FillUnitCardPayload(payload);
+            return true;
+        }
+
+        return false;
+    }
+
+    private bool TryResolveBattleInspectUnitCard(out UnitCardView view)
+    {
+        view = battleInspectUnitCard;
+        if (view == null)
+        {
+#if UNITY_2023_1_OR_NEWER
+            view = FindFirstObjectByType<UnitCardView>();
+#else
+            view = FindObjectOfType<UnitCardView>();
+#endif
+        }
+
+        return view != null;
+    }
+
+    /// <summary>Battle inspect popup is active (shown after right-click on a unit).</summary>
+    public bool IsBattleInspectUnitCardOpen =>
+        TryResolveBattleInspectUnitCard(out var v) && v.gameObject.activeInHierarchy;
+
+    /// <summary>Hit-test in screen space for closing the inspect card on outside click.</summary>
+    public bool IsScreenPointOverBattleInspectUnitCard(Vector2 screenPoint, Camera worldOrUiCameraFallback)
+    {
+        if (!TryResolveBattleInspectUnitCard(out UnitCardView view) || !view.gameObject.activeInHierarchy)
+            return false;
+        var rt = view.transform as RectTransform;
+        if (rt == null)
+            return false;
+        Canvas canvas = view.GetComponentInParent<Canvas>();
+        if (canvas == null)
+            return false;
+        Camera eventCam = null;
+        if (canvas.renderMode == RenderMode.ScreenSpaceCamera || canvas.renderMode == RenderMode.WorldSpace)
+            eventCam = canvas.worldCamera != null ? canvas.worldCamera : worldOrUiCameraFallback;
+        return RectTransformUtility.RectangleContainsScreenPoint(rt, screenPoint, eventCam);
+    }
+
+    /// <summary>Battle <see cref="UnitCardView"/> shares the UnitCard prefab with MainMenu profile; disable session profile load so inspect data is not overwritten.</summary>
+    private void EnsureBattleInspectCardIgnoresSessionProfile()
+    {
+        if (_battleInspectProfileControllerDisabled)
+            return;
+        if (!TryResolveBattleInspectUnitCard(out UnitCardView view))
+            return;
+        var profile = view.GetComponent<PlayerProfileCardController>();
+        if (profile != null)
+            profile.enabled = false;
+        _battleInspectProfileControllerDisabled = true;
+    }
+
+    /// <summary>Show battle <see cref="UnitCardView"/> centered on the screen. <paramref name="inspectEntityId"/> is used to refresh stats after each round while the card stays open.</summary>
+    public void TryShowInspectUnitCard(string inspectEntityId, UnitCardPayload payload, Camera worldOrUiCamera)
+    {
+        if (_battleFinished || payload == null)
+            return;
+
+        EnsureBattleInspectCardIgnoresSessionProfile();
+
+        if (!TryResolveBattleInspectUnitCard(out UnitCardView view))
+            return;
+
+        _battleInspectEntityId = string.IsNullOrEmpty(inspectEntityId) ? null : inspectEntityId;
+
+        view.gameObject.SetActive(true);
+        view.Render(payload);
+
+        RectTransform rt = view.transform as RectTransform;
+        if (rt == null)
+            return;
+
+        Canvas canvas = view.GetComponentInParent<Canvas>();
+        if (canvas == null)
+            return;
+
+        Camera eventCam = null;
+        if (canvas.renderMode == RenderMode.ScreenSpaceCamera || canvas.renderMode == RenderMode.WorldSpace)
+            eventCam = canvas.worldCamera != null ? canvas.worldCamera : worldOrUiCamera;
+
+        RectTransform rootRt = canvas.transform as RectTransform;
+        if (rootRt == null)
+            return;
+
+        var screenCenter = new Vector2(Screen.width * 0.5f, Screen.height * 0.5f);
+        if (!RectTransformUtility.ScreenPointToLocalPointInRectangle(rootRt, screenCenter, eventCam, out Vector2 localCenter))
+            return;
+
+        rt.anchorMin = rt.anchorMax = new Vector2(0.5f, 0.5f);
+        rt.pivot = new Vector2(0.5f, 0.5f);
+        rt.anchoredPosition = localCenter;
+    }
+
+    public void HideBattleInspectUnitCard()
+    {
+        _battleInspectEntityId = null;
+        if (!TryResolveBattleInspectUnitCard(out UnitCardView view))
+            return;
+        view.SetVisible(false);
+    }
+
+    /// <summary>Re-render open inspect card from current battle cache (e.g. after round resolve / skip turn).</summary>
+    private void RefreshBattleInspectUnitCardIfVisible()
+    {
+        if (string.IsNullOrEmpty(_battleInspectEntityId) || !IsBattleInspectUnitCardOpen)
+            return;
+        if (!TryBuildInspectPayloadForEntity(_battleInspectEntityId, out UnitCardPayload payload))
+        {
+            HideBattleInspectUnitCard();
+            return;
+        }
+
+        if (!TryResolveBattleInspectUnitCard(out UnitCardView view))
+            return;
+        view.Render(payload);
+    }
 
     public bool IsInBattleWithServer() => _serverConnection != null && _serverConnection.IsInBattle;
     public bool IsObstacleCell(int col, int row) => _obstacleCells.Contains((col, row));
@@ -500,6 +648,8 @@ public class GameSession : MonoBehaviour
 
     private void Start()
     {
+        EnsureBattleInspectCardIgnoresSessionProfile();
+
         if (_serverConnection == null)
             _serverConnection = FindFirstObjectByType<BattleServerConnection>();
         if (_localPlayer == null)
@@ -923,6 +1073,8 @@ public class GameSession : MonoBehaviour
             var p = LocalPlayer;
             p?.SetTurnTimerPaused(false);
             _waitingForServerRoundResolve = false;
+
+            RefreshBattleInspectUnitCardIfVisible();
 
             if (p != null && !BlockPlayerInput)
                 p.TryAutoMoveTowardFlag();
@@ -1853,6 +2005,7 @@ public class GameSession : MonoBehaviour
         _battleFinished = false;
         LastBattleEndWasEscape = false;
         _localBattleTeamId = -1;
+        HideBattleInspectUnitCard();
 
         long deadlineUtcMs = payload.roundDeadlineUtcMs;
         if (deadlineUtcMs <= 0)
@@ -1933,6 +2086,13 @@ public class GameSession : MonoBehaviour
                     if (string.IsNullOrEmpty(dispName))
                         dispName = !string.IsNullOrEmpty(BattleSessionState.LastUsername) ? BattleSessionState.LastUsername : pid;
                     local.SetDisplayProfile(dispName, dispLevel);
+                    local.SetInspectCombatStats(
+                        GetSpawnInt(payload.spawnStrengths, spawnIndex, 0),
+                        GetSpawnInt(payload.spawnAgilities, spawnIndex, 0),
+                        GetSpawnInt(payload.spawnIntuitions, spawnIndex, 0),
+                        GetSpawnInt(payload.spawnEndurances, spawnIndex, 0),
+                        GetSpawnInt(payload.spawnAccuracies, spawnIndex, 0),
+                        GetSpawnInt(payload.spawnIntellects, spawnIndex, 0));
                 }
                 int localTeamSnap = GetSpawnInt(payload.spawnTeamIds, spawnIndex, -1);
                 _initialReplayState[pid] = new ReplayUnitSnapshot
@@ -1960,6 +2120,13 @@ public class GameSession : MonoBehaviour
             if (string.IsNullOrEmpty(dispNameR))
                 dispNameR = pid;
             rv.SetDisplayProfile(dispNameR, dispLevelR);
+            rv.SetInspectCombatStats(
+                GetSpawnInt(payload.spawnStrengths, spawnIndex, 0),
+                GetSpawnInt(payload.spawnAgilities, spawnIndex, 0),
+                GetSpawnInt(payload.spawnIntuitions, spawnIndex, 0),
+                GetSpawnInt(payload.spawnEndurances, spawnIndex, 0),
+                GetSpawnInt(payload.spawnAccuracies, spawnIndex, 0),
+                GetSpawnInt(payload.spawnIntellects, spawnIndex, 0));
             _remoteUnits[pid] = rv;
             _initialReplayState[pid] = new ReplayUnitSnapshot
             {
@@ -2700,6 +2867,7 @@ public class GameSession : MonoBehaviour
         if (_battleFinished) yield break;
         CachedHexGrid?.ClearAllPvpOccupancyHighlights();
         _battleFinished = true;
+        HideBattleInspectUnitCard();
         OnNetworkMessage?.Invoke(Loc.T("ui.battle_lost"));
         OnBattleFinished?.Invoke(false);
         _waitingForServerRoundResolve = false;
@@ -2808,6 +2976,7 @@ public class GameSession : MonoBehaviour
         if (_spectatorMode)
         {
             _battleFinished = true;
+            HideBattleInspectUnitCard();
             _waitingForServerRoundResolve = false;
             LocalPlayer?.SetTurnTimerPaused(true);
             _spectatorMode = false;
@@ -2836,6 +3005,7 @@ public class GameSession : MonoBehaviour
         if (localFled || !localDead)
         {
             _battleFinished = true;
+            HideBattleInspectUnitCard();
             _waitingForServerRoundResolve = false;
             var p = LocalPlayer;
             p?.SetTurnTimerPaused(true);

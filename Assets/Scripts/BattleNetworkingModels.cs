@@ -306,6 +306,13 @@ public class BattleStartedPayload
     public int[] spawnLevels;
     /// <summary>PvP team id parallel to spawnPlayerIds (0/1 players, -1 mobs).</summary>
     public int[] spawnTeamIds;
+    /// <summary>Combat stats for unit inspect UI (parallel to spawnPlayerIds).</summary>
+    public int[] spawnStrengths;
+    public int[] spawnAgilities;
+    public int[] spawnIntuitions;
+    public int[] spawnEndurances;
+    public int[] spawnAccuracies;
+    public int[] spawnIntellects;
     public int[] obstacleCols;
     public int[] obstacleRows;
     /// <summary>wall | tree | rock — параллельно obstacleCols/Rows.</summary>
