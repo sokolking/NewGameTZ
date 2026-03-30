@@ -102,6 +102,8 @@ public class Player : MonoBehaviour
 
     /// <summary>Код оружия (сервер / локальный каталог).</summary>
     private string _weaponCode = WeaponCatalog.DefaultWeaponCode;
+    /// <summary>DB <c>weapons.category</c> с сервера; пусто — только эвристика по <see cref="WeaponCode"/>.</summary>
+    private string _weaponCategory = "";
     private int _weaponDamage = 1;
     private int _weaponDamageMin = 1;
     /// <summary>Макс. дистанция атаки в шагах гекса (как на сервере <see cref="UnitStateDto.WeaponRange"/>).</summary>
@@ -188,6 +190,8 @@ public class Player : MonoBehaviour
     public float MoveDurationPerHex => _moveDurationPerHex;
 
     public string WeaponCode => _weaponCode;
+    /// <summary>Категория из TurnResult (например <c>light</c> для пистолетных клипов локомоции).</summary>
+    public string WeaponCategory => _weaponCategory;
     public int WeaponDamage => _weaponDamage;
     /// <summary>Минимальный урон за попадание (сервер); для UI диапазона.</summary>
     public int WeaponDamageMin => _weaponDamageMin;
@@ -240,7 +244,8 @@ public class Player : MonoBehaviour
     /// <summary>Синхронизация с сервером или локальная смена (кулак / камень и т.д.).</summary>
     /// <param name="attackApCost">Стоимость атаки из БД / сервера; по умолчанию 1.</param>
     /// <param name="weaponDamageMin">Если &lt; 0 — считается равным <paramref name="damage"/>.</param>
-    public void SetEquippedWeapon(string code, int damage, int rangeHexes, int attackApCost = 1, int weaponDamageMin = -1)
+    /// <param name="weaponCategory">Если не <c>null</c>, перезаписать <see cref="WeaponCategory"/> (пустая строка сбрасывает; <c>null</c> — не трогать категорию).</param>
+    public void SetEquippedWeapon(string code, int damage, int rangeHexes, int attackApCost = 1, int weaponDamageMin = -1, string weaponCategory = null)
     {
         _weaponCode = WeaponCatalog.NormalizeWeaponCode(code);
         _weaponDamage = Mathf.Max(0, damage);
@@ -248,6 +253,8 @@ public class Player : MonoBehaviour
         _weaponDamageMin = Mathf.Clamp(rawMin, 0, _weaponDamage);
         _weaponRangeHexes = Mathf.Max(0, rangeHexes);
         _weaponAttackApCost = Mathf.Max(1, attackApCost);
+        if (weaponCategory != null)
+            _weaponCategory = weaponCategory.Trim().ToLowerInvariant();
         OnEquippedWeaponChanged?.Invoke();
     }
 
@@ -681,6 +688,8 @@ public class Player : MonoBehaviour
                 previousWeaponDamage = src.previousWeaponDamage,
                 previousWeaponRange = src.previousWeaponRange,
                 weaponAttackApCost = src.weaponAttackApCost,
+                weaponCategory = src.weaponCategory,
+                previousWeaponCategory = src.previousWeaponCategory,
                 previousMagazineRounds = src.previousMagazineRounds,
                 cost = src.cost
             };
@@ -854,7 +863,8 @@ public class Player : MonoBehaviour
     /// <param name="weaponAttackApCost">Стоимость атаки новым оружием из БД (weapons.attack_ap_cost).</param>
     /// <param name="weaponDamageFromDb">Урон из БД/инвентаря; если &lt; 0 — подставляется 1 (офлайн без данных).</param>
     /// <param name="weaponRangeFromDb">Дальность из БД/инвентаря; если &lt; 0 — подставляется 1.</param>
-    public bool QueueEquipWeaponAction(string weaponCode, int? costOverride = null, int weaponAttackApCost = 1, int weaponDamageFromDb = -1, int weaponRangeFromDb = -1)
+    /// <param name="weaponCategory">DB <c>weapons.category</c> for planning locomotion; empty if unknown.</param>
+    public bool QueueEquipWeaponAction(string weaponCode, int? costOverride = null, int weaponAttackApCost = 1, int weaponDamageFromDb = -1, int weaponRangeFromDb = -1, string weaponCategory = null)
     {
         string norm = WeaponCatalog.NormalizeWeaponCode(weaponCode);
         int dmg = weaponDamageFromDb >= 0 ? weaponDamageFromDb : 1;
@@ -865,6 +875,8 @@ public class Player : MonoBehaviour
         string prevCode = _weaponCode;
         int prevAtk = _weaponAttackApCost;
         int newAtk = Mathf.Max(1, weaponAttackApCost);
+        string previousWeaponCategory = _weaponCategory;
+        string newCategory = weaponCategory ?? "";
 
         if (_turnActions == null)
             _turnActions = new List<BattleQueuedAction>();
@@ -878,12 +890,14 @@ public class Player : MonoBehaviour
             previousWeaponDamage = _weaponDamage,
             previousWeaponRange = _weaponRangeHexes,
             weaponAttackApCost = newAtk,
+            weaponCategory = newCategory,
+            previousWeaponCategory = previousWeaponCategory,
             posture = MovementPostureUtility.ToId(_currentPosture),
             cost = safeCost
         });
         _apSpentThisTurn += safeCost;
         _currentAp -= safeCost;
-        SetEquippedWeapon(norm, dmg, range, newAtk);
+        SetEquippedWeapon(norm, dmg, range, newAtk, weaponDamageMin: -1, weaponCategory: newCategory);
         return true;
     }
 
@@ -962,7 +976,7 @@ public class Player : MonoBehaviour
             string prev = string.IsNullOrEmpty(last.previousWeaponCode) ? WeaponCatalog.DefaultWeaponCode : last.previousWeaponCode;
             string c = WeaponCatalog.NormalizeWeaponCode(prev);
             int prevAtk = last.previousWeaponAttackApCost > 0 ? last.previousWeaponAttackApCost : 1;
-            SetEquippedWeapon(c, last.previousWeaponDamage, last.previousWeaponRange, prevAtk);
+            SetEquippedWeapon(c, last.previousWeaponDamage, last.previousWeaponRange, prevAtk, weaponDamageMin: -1, weaponCategory: last.previousWeaponCategory ?? "");
             return true;
         }
 

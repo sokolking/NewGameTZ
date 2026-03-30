@@ -643,7 +643,7 @@ app.MapGet("/api/battle/{battleId}", (HttpContext http, string battleId, BattleR
     if (room == null) return Results.Json(new { error = "Battle not found" }, statusCode: 404);
     var battleRecord = battleHistoryDb.GetBattle(battleId);
 
-    room.FillSpawnArrays(out var spawnIds, out var spawnCols, out var spawnRows, out var spawnCurrentAps, out var spawnMaxAps, out var spawnMaxHps, out var spawnCurrentHps, out var spawnCurrentPostures, out var spawnWeaponCodes, out var spawnWeaponDamageMins, out var spawnWeaponDamages, out var spawnWeaponRanges, out var spawnWeaponAttackApCosts, out var spawnCurrentMagazineRounds, out var spawnWeaponTightnesses, out var spawnWeaponTrajectoryHeights, out var spawnWeaponIsSnipers, out var spawnDisplayNames, out var spawnLevels, out var spawnTeamIds, out var spawnStrengths, out var spawnAgilities, out var spawnIntuitions, out var spawnEndurances, out var spawnAccuracies, out var spawnIntellects);
+    room.FillSpawnArrays(out var spawnIds, out var spawnCols, out var spawnRows, out var spawnCurrentAps, out var spawnMaxAps, out var spawnMaxHps, out var spawnCurrentHps, out var spawnCurrentPostures, out var spawnWeaponCodes, out var spawnWeaponCategories, out var spawnWeaponDamageMins, out var spawnWeaponDamages, out var spawnWeaponRanges, out var spawnWeaponAttackApCosts, out var spawnCurrentMagazineRounds, out var spawnWeaponTightnesses, out var spawnWeaponTrajectoryHeights, out var spawnWeaponIsSnipers, out var spawnDisplayNames, out var spawnLevels, out var spawnTeamIds, out var spawnStrengths, out var spawnAgilities, out var spawnIntuitions, out var spawnEndurances, out var spawnAccuracies, out var spawnIntellects);
     var response = new BattleStateResponse
     {
         RoundIndex = room.RoundIndex,
@@ -664,6 +664,7 @@ app.MapGet("/api/battle/{battleId}", (HttpContext http, string battleId, BattleR
         SpawnCurrentHps = spawnCurrentHps,
         SpawnCurrentPostures = spawnCurrentPostures,
         SpawnWeaponCodes = spawnWeaponCodes,
+        SpawnWeaponCategories = spawnWeaponCategories,
         SpawnWeaponDamageMins = spawnWeaponDamageMins,
         SpawnWeaponDamages = spawnWeaponDamages,
         SpawnWeaponRanges = spawnWeaponRanges,
@@ -1181,6 +1182,7 @@ public class BattleStateResponse
     public int[]? SpawnCurrentHps { get; set; }
     public string[]? SpawnCurrentPostures { get; set; }
     public string[]? SpawnWeaponCodes { get; set; }
+    public string[]? SpawnWeaponCategories { get; set; }
     public int[]? SpawnWeaponDamageMins { get; set; }
     public int[]? SpawnWeaponDamages { get; set; }
     public int[]? SpawnWeaponRanges { get; set; }

@@ -328,6 +328,8 @@ public class PlayerTurnResultDto
     public string PostureAtRoundStart { get; set; } = "walk";
     public string CurrentPosture { get; set; } = "walk";
     public string WeaponCode { get; set; } = "fist";
+    /// <summary>DB <c>weapons.category</c>; client uses <c>light</c> for pistol locomotion.</summary>
+    public string WeaponCategory { get; set; } = "cold";
     public int WeaponDamageMin { get; set; } = 1;
     public int WeaponDamage { get; set; } = 1;
     public int WeaponRange { get; set; } = 1;
@@ -423,6 +425,8 @@ public class BattleStartedPayloadDto
     public int[]? SpawnCurrentHps { get; set; }
     public string[]? SpawnCurrentPostures { get; set; }
     public string[]? SpawnWeaponCodes { get; set; }
+    /// <summary>Parallel to <see cref="SpawnWeaponCodes"/>; DB <c>weapons.category</c> (e.g. cold, light, medium).</summary>
+    public string[]? SpawnWeaponCategories { get; set; }
     public int[]? SpawnWeaponDamages { get; set; }
     /// <summary>Параллельно <see cref="SpawnWeaponDamages"/> (макс.); мин. урон для отображения/логики клиента.</summary>
     public int[]? SpawnWeaponDamageMins { get; set; }

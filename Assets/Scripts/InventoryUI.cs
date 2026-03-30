@@ -936,7 +936,11 @@ public sealed class InventoryUI : MonoBehaviour
             ? GameSession.Active
             : FindFirstObjectByType<GameSession>();
         int atk = s.attackApCost > 0 ? s.attackApCost : 1;
-        session?.RequestEquipWeapon(s.weaponCode, atk, s.damage, s.range);
+        string normCode = WeaponCatalog.NormalizeWeaponCode(s.weaponCode);
+        string categoryFromDb = null;
+        if (_weaponRowsByCode.TryGetValue(normCode, out var wRow) && wRow != null && !string.IsNullOrWhiteSpace(wRow.category))
+            categoryFromDb = wRow.category.Trim();
+        session?.RequestEquipWeapon(s.weaponCode, atk, s.damage, s.range, categoryFromDb);
     }
 }
 

@@ -30,14 +30,42 @@ public static class WeaponCatalog
         "knife"
     };
 
-    /// <summary>Пистолет и револьвер — отдельный набор анимаций (idle/walk/run/sit с оружием в руках).</summary>
+    /// <summary>Pistol/revolver codes — same locomotion clips as <c>light</c> category from DB.</summary>
     public static bool IsPistolStyleWeapon(string code)
     {
         string n = NormalizeWeaponCode(code);
         return n == "gun" || n == "revolver";
     }
 
-    /// <summary>Cold/melee stance idle and melee attack clips (standing). Mutually exclusive with <see cref="IsPistolStyleWeapon"/>.</summary>
+    /// <summary>
+    /// Idle/walk/run/sit rifle clips on <see cref="PlayerCharacterAnimator"/> when server reports <c>weapons.category = medium</c>.
+    /// Takes precedence over <see cref="UsesPistolLocomotionClips"/> (e.g. same code must not mix sets).
+    /// </summary>
+    public static bool UsesRifleLocomotionClips(string weaponCode, string weaponCategoryOrEmpty)
+    {
+        if (!string.IsNullOrWhiteSpace(weaponCategoryOrEmpty)
+            && string.Equals(weaponCategoryOrEmpty.Trim(), "medium", StringComparison.OrdinalIgnoreCase))
+            return true;
+        return false;
+    }
+
+    /// <summary>
+    /// Idle/walk/run/sit pistol clips on <see cref="PlayerCharacterAnimator"/> (user_T_model slots).
+    /// True for legacy pistol codes or when server reports <c>weapons.category = light</c>.
+    /// </summary>
+    public static bool UsesPistolLocomotionClips(string weaponCode, string weaponCategoryOrEmpty)
+    {
+        if (UsesRifleLocomotionClips(weaponCode, weaponCategoryOrEmpty))
+            return false;
+        if (IsPistolStyleWeapon(weaponCode))
+            return true;
+        if (!string.IsNullOrWhiteSpace(weaponCategoryOrEmpty)
+            && string.Equals(weaponCategoryOrEmpty.Trim(), "light", StringComparison.OrdinalIgnoreCase))
+            return true;
+        return false;
+    }
+
+    /// <summary>Cold/melee stance idle and melee attack clips (standing). Mutually exclusive with pistol locomotion.</summary>
     public static bool IsColdWeapon(string code)
     {
         if (IsPistolStyleWeapon(code))

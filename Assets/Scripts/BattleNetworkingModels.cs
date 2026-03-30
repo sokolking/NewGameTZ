@@ -58,6 +58,10 @@ public class BattleQueuedAction
     public string previousPosture;
     /// <summary>Для EquipWeapon: код оружия.</summary>
     public string weaponCode;
+    /// <summary>DB category of the weapon being equipped (client planning UI / locomotion); not required by server.</summary>
+    public string weaponCategory;
+    /// <summary>Category before EquipWeapon (client undo / draft replay).</summary>
+    public string previousWeaponCategory;
     /// <summary>Для отмены EquipWeapon на клиенте.</summary>
     public string previousWeaponCode;
     public int previousWeaponAttackApCost;
@@ -157,6 +161,8 @@ public class PlayerTurnResult
     public string currentPosture;
     /// <summary>Состояние оружия после раунда (сервер).</summary>
     public string weaponCode;
+    /// <summary>DB <c>weapons.category</c> (e.g. cold, light); drives pistol vs generic locomotion clips.</summary>
+    public string weaponCategory;
     public int weaponDamageMin;
     public int weaponDamage;
     public int weaponRange;
@@ -295,6 +301,8 @@ public class BattleStartedPayload
     public int[] spawnCurrentHps;
     public string[] spawnCurrentPostures;
     public string[] spawnWeaponCodes;
+    /// <summary>DB <c>weapons.category</c> parallel to <see cref="spawnWeaponCodes"/> (e.g. cold, light, medium).</summary>
+    public string[] spawnWeaponCategories;
     public int[] spawnWeaponDamageMins;
     public int[] spawnWeaponDamages;
     public int[] spawnWeaponRanges;

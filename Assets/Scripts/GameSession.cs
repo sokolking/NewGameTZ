@@ -590,7 +590,8 @@ public class GameSession : MonoBehaviour
     /// <param name="weaponAttackApCost">Стоимость атаки из БД (weapons.attack_ap_cost); если 0 — используется 1.</param>
     /// <param name="weaponDamageFromDb">Урон из слота инвентаря (БД). Если &lt; 0 — для офлайна подставляется 1.</param>
     /// <param name="weaponRangeFromDb">Дальность из слота. Если &lt; 0 — подставляется 1.</param>
-    public void RequestEquipWeapon(string weaponCode, int weaponAttackApCost = 1, int weaponDamageFromDb = -1, int weaponRangeFromDb = -1)
+    /// <param name="weaponCategory">Категория из БД (например <c>light</c>) — для анимации в режиме планирования до ответа сервера.</param>
+    public void RequestEquipWeapon(string weaponCode, int weaponAttackApCost = 1, int weaponDamageFromDb = -1, int weaponRangeFromDb = -1, string weaponCategory = null)
     {
         if (_spectatorMode)
             return;
@@ -603,19 +604,19 @@ public class GameSession : MonoBehaviour
         int atk = Mathf.Max(1, weaponAttackApCost);
         if (IsInBattleWithServer())
         {
-            if (!pl.QueueEquipWeaponAction(weaponCode, null, atk, weaponDamageFromDb, weaponRangeFromDb))
+            if (!pl.QueueEquipWeaponAction(weaponCode, null, atk, weaponDamageFromDb, weaponRangeFromDb, weaponCategory))
                 OnNetworkMessage?.Invoke(Loc.T("ui.not_enough_ap"));
         }
         else
-            ApplyLocalWeaponOnly(weaponCode, atk, weaponDamageFromDb, weaponRangeFromDb);
+            ApplyLocalWeaponOnly(weaponCode, atk, weaponDamageFromDb, weaponRangeFromDb, weaponCategory);
     }
 
-    private void ApplyLocalWeaponOnly(string weaponCode, int weaponAttackApCost, int weaponDamageFromDb = -1, int weaponRangeFromDb = -1)
+    private void ApplyLocalWeaponOnly(string weaponCode, int weaponAttackApCost, int weaponDamageFromDb = -1, int weaponRangeFromDb = -1, string weaponCategory = null)
     {
         string code = WeaponCatalog.NormalizeWeaponCode(weaponCode);
         int dmg = weaponDamageFromDb >= 0 ? weaponDamageFromDb : 1;
         int range = weaponRangeFromDb >= 0 ? weaponRangeFromDb : 1;
-        LocalPlayer?.SetEquippedWeapon(code, dmg, range, weaponAttackApCost);
+        LocalPlayer?.SetEquippedWeapon(code, dmg, range, weaponAttackApCost, weaponDamageMin: -1, weaponCategory: weaponCategory ?? "");
     }
 
     /// <summary>Включён ли онлайн-режим (отправка хода при завершении). True также при загрузке через Find Game (сессия в бою).</summary>
@@ -997,7 +998,7 @@ public class GameSession : MonoBehaviour
                 {
                     int wAtk = r.weaponAttackApCost > 0 ? r.weaponAttackApCost : 1;
                     int wMin = r.weaponDamageMin > 0 ? r.weaponDamageMin : r.weaponDamage;
-                    local.SetEquippedWeapon(r.weaponCode, r.weaponDamage, r.weaponRange, wAtk, wMin);
+                    local.SetEquippedWeapon(r.weaponCode, r.weaponDamage, r.weaponRange, wAtk, wMin, r.weaponCategory ?? "");
                 }
                 if (prepareForAnimation)
                     animJobs.Add((local, true, r.actualPath));
@@ -2090,7 +2091,8 @@ public class GameSession : MonoBehaviour
                         : wDmg;
                     int wRng = GetSpawnInt(payload.spawnWeaponRanges, spawnIndex, 1);
                     int wAtk = GetSpawnInt(payload.spawnWeaponAttackApCosts, spawnIndex, 1);
-                    local.SetEquippedWeapon(wCode, wDmg, wRng, wAtk, wDmgMin);
+                    string wCat = GetSpawnString(payload.spawnWeaponCategories, spawnIndex, "");
+                    local.SetEquippedWeapon(wCode, wDmg, wRng, wAtk, wDmgMin, weaponCategory: wCat ?? "");
                     local.SetServerEscapeState(false);
                     int dispLevel = GetSpawnInt(payload.spawnLevels, spawnIndex, 1);
                     string dispName = GetSpawnString(payload.spawnDisplayNames, spawnIndex, "");
@@ -2550,7 +2552,7 @@ public class GameSession : MonoBehaviour
                 {
                     int atk = action.weaponAttackApCost > 0 ? action.weaponAttackApCost : 1;
                     int? swapCost = action.cost > 0 ? action.cost : (int?)null;
-                    local.QueueEquipWeaponAction(action.weaponCode, swapCost, atk, -1, -1);
+                    local.QueueEquipWeaponAction(action.weaponCode, swapCost, atk, -1, -1, action.weaponCategory);
                 }
             }
         }

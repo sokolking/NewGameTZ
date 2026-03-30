@@ -968,6 +968,11 @@ public partial class BattleRoom
                     }
                 }
             }
+            string weaponCategory = "cold";
+            if (_weaponDb != null && _weaponDb.TryGetWeaponByCode(us.WeaponCode ?? DefaultWeaponCode, out var weaponRowForCat)
+                && !string.IsNullOrWhiteSpace(weaponRowForCat.Category))
+                weaponCategory = weaponRowForCat.Category.Trim();
+
             results.Add(new PlayerTurnResultDto
             {
                 UnitId = uid,
@@ -988,6 +993,7 @@ public partial class BattleRoom
                 PostureAtRoundStart = roundStartPostureByUnit.TryGetValue(uid, out var prs) ? prs : PostureWalk,
                 CurrentPosture = us.Posture,
                 WeaponCode = us.WeaponCode ?? DefaultWeaponCode,
+                WeaponCategory = weaponCategory,
                 WeaponDamageMin = us.WeaponDamageMin,
                 WeaponDamage = us.WeaponDamage,
                 WeaponRange = us.WeaponRange,

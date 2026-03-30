@@ -49,6 +49,11 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
     [SerializeField] private UnityEngine.Object _walkPistol;
     [SerializeField] private UnityEngine.Object _runPistol;
     [SerializeField] private UnityEngine.Object _sitPistol;
+    [Header("Medium weapons (rifle locomotion; separate FBX clips — assign sub-assets)")]
+    [SerializeField] private UnityEngine.Object _idleRifle;
+    [SerializeField] private UnityEngine.Object _walkRifle;
+    [SerializeField] private UnityEngine.Object _runRifle;
+    [SerializeField] private UnityEngine.Object _sitRifle;
     [SerializeField] private UnityEngine.Object _dead;
     [Header("Cold weapons (standing idle + melee swings; server category cold)")]
     [Tooltip("Standing still with fist/knife etc. Walk/run keep generic locomotion clips.")]
@@ -67,11 +72,6 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
     [SerializeField] private bool _preventMeshSinkingDuringMedicineUse = true;
     [Tooltip("Playback speed for cold melee attack clips (>1 = faster).")]
     [SerializeField] [Range(0.5f, 4f)] private float _coldMeleeAttackPlaybackSpeed = 2f;
-    [Header("Posture transitions (Walk/Run ↔ Sit/Hide)")]
-    [Tooltip("Once when switching from walk or run to sit or hide.")]
-    [SerializeField] private UnityEngine.Object _standToSit;
-    [Tooltip("Once when switching from sit or hide to walk or run.")]
-    [SerializeField] private UnityEngine.Object _sitToStand;
 
     private PlayableGraph _graph;
     private AnimationClipPlayable _clipPlayable;
@@ -94,14 +94,16 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
     private AnimationClip _cachedClipWalkPistol;
     private AnimationClip _cachedClipRunPistol;
     private AnimationClip _cachedClipSitPistol;
+    private AnimationClip _cachedClipIdleRifle;
+    private AnimationClip _cachedClipWalkRifle;
+    private AnimationClip _cachedClipRunRifle;
+    private AnimationClip _cachedClipSitRifle;
     private AnimationClip _cachedClipDead;
     private AnimationClip _cachedClipIdleCold;
     private AnimationClip _cachedClipAttackColdHead;
     private AnimationClip _cachedClipAttackColdBody;
     private AnimationClip _cachedClipAttackColdLegs;
     private AnimationClip _cachedClipUseItemMedicine;
-    private AnimationClip _cachedClipStandToSit;
-    private AnimationClip _cachedClipSitToStand;
     private bool _clipsCached;
 
     /// <summary>Blocks locomotion graph swaps while a one-shot melee clip plays.</summary>
@@ -110,13 +112,12 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
     private bool _itemUseActive;
 
     private MovementPosture _previousPostureTracked;
-    private Coroutine _postureTransitionCoroutine;
-    private bool _postureTransitionActive;
 
     // Кэш состояния для ResolveLocomotionClip — пересчитываем только при изменении.
     private AnimationClip _resolvedClipCache;
     private bool _resolvedClipDirty = true;
-    private bool _lastArmed;
+    private bool _lastPistolLoco;
+    private bool _lastRifleLoco;
     private bool _lastColdIdle;
     private MovementPosture _lastPosture;
     private bool _lastMoving;
@@ -131,9 +132,11 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
     private AnimationClip ClipWalkPistol { get { if (!_clipsCached) CacheClipReferences(); return _cachedClipWalkPistol; } }
     private AnimationClip ClipRunPistol { get { if (!_clipsCached) CacheClipReferences(); return _cachedClipRunPistol; } }
     private AnimationClip ClipSitPistol { get { if (!_clipsCached) CacheClipReferences(); return _cachedClipSitPistol; } }
+    private AnimationClip ClipIdleRifle { get { if (!_clipsCached) CacheClipReferences(); return _cachedClipIdleRifle; } }
+    private AnimationClip ClipWalkRifle { get { if (!_clipsCached) CacheClipReferences(); return _cachedClipWalkRifle; } }
+    private AnimationClip ClipRunRifle { get { if (!_clipsCached) CacheClipReferences(); return _cachedClipRunRifle; } }
+    private AnimationClip ClipSitRifle { get { if (!_clipsCached) CacheClipReferences(); return _cachedClipSitRifle; } }
     private AnimationClip ClipDead { get { if (!_clipsCached) CacheClipReferences(); return _cachedClipDead; } }
-    private AnimationClip ClipStandToSit { get { if (!_clipsCached) CacheClipReferences(); return _cachedClipStandToSit; } }
-    private AnimationClip ClipSitToStand { get { if (!_clipsCached) CacheClipReferences(); return _cachedClipSitToStand; } }
     private AnimationClip ClipIdleCold { get { if (!_clipsCached) CacheClipReferences(); return _cachedClipIdleCold; } }
     private AnimationClip ClipAttackColdHead { get { if (!_clipsCached) CacheClipReferences(); return _cachedClipAttackColdHead; } }
     private AnimationClip ClipAttackColdBody { get { if (!_clipsCached) CacheClipReferences(); return _cachedClipAttackColdBody; } }
@@ -152,14 +155,16 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
         _cachedClipWalkPistol = _walkPistol as AnimationClip;
         _cachedClipRunPistol = _runPistol as AnimationClip;
         _cachedClipSitPistol = _sitPistol as AnimationClip;
+        _cachedClipIdleRifle = _idleRifle as AnimationClip;
+        _cachedClipWalkRifle = _walkRifle as AnimationClip;
+        _cachedClipRunRifle = _runRifle as AnimationClip;
+        _cachedClipSitRifle = _sitRifle as AnimationClip;
         _cachedClipDead = _dead as AnimationClip;
         _cachedClipIdleCold = _idleCold as AnimationClip;
         _cachedClipAttackColdHead = _attackColdHead as AnimationClip;
         _cachedClipAttackColdBody = _attackColdBody as AnimationClip;
         _cachedClipAttackColdLegs = _attackColdLegs as AnimationClip;
         _cachedClipUseItemMedicine = _useItemMedicine as AnimationClip;
-        _cachedClipStandToSit = _standToSit as AnimationClip;
-        _cachedClipSitToStand = _sitToStand as AnimationClip;
         _clipsCached = true;
     }
 
@@ -193,26 +198,22 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
         _walkPistol = source._walkPistol;
         _runPistol = source._runPistol;
         _sitPistol = source._sitPistol;
+        _idleRifle = source._idleRifle;
+        _walkRifle = source._walkRifle;
+        _runRifle = source._runRifle;
+        _sitRifle = source._sitRifle;
         _dead = source._dead;
         _idleCold = source._idleCold;
         _attackColdHead = source._attackColdHead;
         _attackColdBody = source._attackColdBody;
         _attackColdLegs = source._attackColdLegs;
         _useItemMedicine = source._useItemMedicine;
-        _standToSit = source._standToSit;
-        _sitToStand = source._sitToStand;
 
         _player = null;
         _remoteBattleUnit = null;
         _animator = null;
         _clipsCached = false;
     }
-
-    private static bool IsStandingPosture(MovementPosture p) =>
-        p == MovementPosture.Walk || p == MovementPosture.Run;
-
-    private static bool IsCrouchPosture(MovementPosture p) =>
-        p == MovementPosture.Sit || p == MovementPosture.Hide;
 
     /// <summary>Тот же pivot, что и в <see cref="LateUpdate"/> (корень Player / RemoteBattleUnitView или этот объект).</summary>
     public Transform FacingPivot =>
@@ -252,8 +253,6 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
     {
         if (_player == null)
             return;
-        StopPostureTransitionCoroutine();
-        _postureTransitionActive = false;
         _previousPostureTracked = _player.CurrentMovementPosture;
         _resolvedClipDirty = true;
         if (_player.IsMoving || _meleeAttackActive || _itemUseActive)
@@ -263,8 +262,8 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
             PlayClip(clip);
     }
 
-    /// <summary>Идёт one-shot клип Sit↔Stand — <see cref="NotifyHexStepStarted"/> его пропускает; корутина движения должна подождать.</summary>
-    public bool IsPostureTransitionActive => _postureTransitionActive;
+    /// <summary>Переходные stand/sit one-shot клипы удалены; always false for compatibility.</summary>
+    public bool IsPostureTransitionActive => false;
 
     /// <summary>
     /// Вызывается из <see cref="Player"/> в начале каждого шага по гексу: один цикл walk/run с фазой 0 или 0.5 и скоростью под длительность шага.
@@ -274,8 +273,6 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
         if (_meleeAttackActive)
             return;
         if (_itemUseActive)
-            return;
-        if (_postureTransitionActive)
             return;
         if (_animator == null)
             return;
@@ -307,6 +304,7 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
         if (clip == null)
             return false;
         return clip == ClipWalk || clip == ClipRun || clip == ClipWalkPistol || clip == ClipRunPistol
+            || clip == ClipWalkRifle || clip == ClipRunRifle
             || clip == ClipSitWalk || clip == ClipSitWalkPistol;
     }
 
@@ -350,10 +348,12 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
         _walkPistol = CoerceClipReference(_walkPistol, new[] { "walk", "pistol" });
         _runPistol = CoerceClipReference(_runPistol, new[] { "run", "pistol" });
         _sitPistol = CoerceClipReference(_sitPistol, new[] { "sit", "pistol" });
+        _idleRifle = CoerceClipReference(_idleRifle, new[] { "idle", "riffle", "rifle" });
+        _walkRifle = CoerceClipReference(_walkRifle, new[] { "walk", "riffle", "rifle" });
+        _runRifle = CoerceClipReference(_runRifle, new[] { "run", "riffle", "rifle" });
+        _sitRifle = CoerceClipReference(_sitRifle, new[] { "sit", "riffle", "rifle" });
         _dead = CoerceClipReference(_dead, new[] { "dead", "death", "die" });
         // Order matters: both filenames contain "sit" and "stand" as substrings.
-        _standToSit = CoerceClipReference(_standToSit, new[] { "stand_to_sit", "standtosit", "stand", "sit" });
-        _sitToStand = CoerceClipReference(_sitToStand, new[] { "sit_to_stand", "sittostand", "sit", "stand" });
         _idleCold = CoerceClipReference(_idleCold, new[] { "idle", "cold" });
         _attackColdHead = CoerceClipReference(_attackColdHead, new[] { "head", "atack", "attack", "cold" });
         _attackColdBody = CoerceClipReference(_attackColdBody, new[] { "body", "atack", "attack", "cold" });
@@ -432,9 +432,11 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
         ValidateClipSlot(nameof(_walkPistol), _walkPistol);
         ValidateClipSlot(nameof(_runPistol), _runPistol);
         ValidateClipSlot(nameof(_sitPistol), _sitPistol);
+        ValidateClipSlot(nameof(_idleRifle), _idleRifle);
+        ValidateClipSlot(nameof(_walkRifle), _walkRifle);
+        ValidateClipSlot(nameof(_runRifle), _runRifle);
+        ValidateClipSlot(nameof(_sitRifle), _sitRifle);
         ValidateClipSlot(nameof(_dead), _dead);
-        ValidateClipSlot(nameof(_standToSit), _standToSit);
-        ValidateClipSlot(nameof(_sitToStand), _sitToStand);
         ValidateClipSlot(nameof(_idleCold), _idleCold);
         ValidateClipSlot(nameof(_attackColdHead), _attackColdHead);
         ValidateClipSlot(nameof(_attackColdBody), _attackColdBody);
@@ -532,8 +534,9 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
         _resolvedClipDirty = true;
         CacheClipReferences();
 
-        if (ClipIdle != null)
-            PlayClip(ClipIdle);
+        AnimationClip initial = ResolveLocomotionClip();
+        if (initial != null)
+            PlayClip(initial);
     }
 
     private void OnDisable()
@@ -545,7 +548,6 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
             _player.OnMovementPostureChanged -= HandlePostureChanged;
         }
 
-        StopPostureTransitionCoroutine();
         DestroyGraph();
     }
 
@@ -556,63 +558,8 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
         if (_player == null)
             return;
 
-        MovementPosture oldPosture = _previousPostureTracked;
-        bool started = TryBeginStandCrouchTransition(oldPosture, newPosture);
         _previousPostureTracked = newPosture;
-        if (!started)
-            _resolvedClipDirty = true;
-    }
-
-    private bool TryBeginStandCrouchTransition(MovementPosture oldPosture, MovementPosture newPosture)
-    {
-        if (_postureTransitionActive)
-            StopPostureTransitionCoroutine();
-
-        if (IsStandingPosture(oldPosture) && IsCrouchPosture(newPosture))
-        {
-            AnimationClip clip = ClipStandToSit;
-            if (clip == null || clip.length <= 1e-5f)
-                return false;
-            _postureTransitionCoroutine = StartCoroutine(PostureTransitionRoutine(clip));
-            return true;
-        }
-
-        if (IsCrouchPosture(oldPosture) && IsStandingPosture(newPosture))
-        {
-            AnimationClip clip = ClipSitToStand;
-            if (clip == null || clip.length <= 1e-5f)
-                return false;
-            _postureTransitionCoroutine = StartCoroutine(PostureTransitionRoutine(clip));
-            return true;
-        }
-
-        return false;
-    }
-
-    private IEnumerator PostureTransitionRoutine(AnimationClip transition)
-    {
-        _postureTransitionActive = true;
-        // Foot IK helps keep feet on the ground during retargeted root-in-pose transitions (same as locomotion clips).
-        PlayClipInternal(transition, 1f, 0.0, applyFootIk: true);
-
-        // Do not use playable time for completion: looped clips never satisfy GetTime() < length.
-        float duration = Mathf.Clamp((float)transition.length, 0.05f, 60f);
-        yield return new WaitForSeconds(duration);
-
-        _postureTransitionActive = false;
-        _postureTransitionCoroutine = null;
         _resolvedClipDirty = true;
-    }
-
-    private void StopPostureTransitionCoroutine()
-    {
-        if (_postureTransitionCoroutine != null)
-        {
-            StopCoroutine(_postureTransitionCoroutine);
-            _postureTransitionCoroutine = null;
-        }
-
-        _postureTransitionActive = false;
     }
 
     private void HandleHealthChanged(int hp, int maxHp)
@@ -640,14 +587,12 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
 
             if (_player.IsDead && ClipDead != null)
             {
-                StopPostureTransitionCoroutine();
                 PlayDeathClipIfNeeded();
                 return;
             }
         }
         else if (_remoteBattleUnit != null && _remoteBattleUnit.CurrentHp <= 0 && ClipDead != null)
         {
-            StopPostureTransitionCoroutine();
             PlayDeathClipIfNeeded();
             return;
         }
@@ -728,17 +673,19 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
 
     private AnimationClip ResolveLocomotionClip()
     {
-        bool armed = _player != null && WeaponCatalog.IsPistolStyleWeapon(_player.WeaponCode);
+        bool rifleLoco = _player != null && WeaponCatalog.UsesRifleLocomotionClips(_player.WeaponCode, _player.WeaponCategory);
+        bool pistolLoco = _player != null && WeaponCatalog.UsesPistolLocomotionClips(_player.WeaponCode, _player.WeaponCategory);
         bool coldIdle = _player != null && WeaponCatalog.IsColdWeapon(_player.WeaponCode) && ClipIdleCold != null;
         MovementPosture posture = _player != null ? _player.CurrentMovementPosture : MovementPosture.Walk;
         bool moving = _player != null ? _player.IsMoving : _remoteBattleUnit != null && _remoteBattleUnit.IsMoving;
 
         // Кэш: если ничего не изменилось с прошлого кадра, возвращаем тот же клип.
-        if (!_resolvedClipDirty && armed == _lastArmed && coldIdle == _lastColdIdle && posture == _lastPosture && moving == _lastMoving
+        if (!_resolvedClipDirty && rifleLoco == _lastRifleLoco && pistolLoco == _lastPistolLoco && coldIdle == _lastColdIdle && posture == _lastPosture && moving == _lastMoving
             && _resolvedClipCache != null)
             return _resolvedClipCache;
 
-        _lastArmed = armed;
+        _lastRifleLoco = rifleLoco;
+        _lastPistolLoco = pistolLoco;
         _lastColdIdle = coldIdle;
         _lastPosture = posture;
         _lastMoving = moving;
@@ -753,7 +700,9 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
         {
             if (moving)
             {
-                if (armed && ClipSitWalkPistol != null)
+                if (rifleLoco && ClipSitWalk != null)
+                    result = ClipSitWalk;
+                else if (pistolLoco && ClipSitWalkPistol != null)
                     result = ClipSitWalkPistol;
                 else if (ClipSitWalk != null)
                     result = ClipSitWalk;
@@ -761,7 +710,9 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
 
             if (result == null)
             {
-                if (armed && ClipSitPistol != null)
+                if (rifleLoco && ClipSitRifle != null)
+                    result = ClipSitRifle;
+                else if (pistolLoco && ClipSitPistol != null)
                     result = ClipSitPistol;
                 else if (ClipSit != null)
                     result = ClipSit;
@@ -772,14 +723,18 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
         {
             if (run)
             {
-                if (armed && ClipRunPistol != null)
+                if (rifleLoco && ClipRunRifle != null)
+                    result = ClipRunRifle;
+                else if (pistolLoco && ClipRunPistol != null)
                     result = ClipRunPistol;
                 else if (ClipRun != null)
                     result = ClipRun;
             }
             else
             {
-                if (armed && ClipWalkPistol != null)
+                if (rifleLoco && ClipWalkRifle != null)
+                    result = ClipWalkRifle;
+                else if (pistolLoco && ClipWalkPistol != null)
                     result = ClipWalkPistol;
                 else if (ClipWalk != null)
                     result = ClipWalk;
@@ -791,7 +746,14 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
             if (!crouch && !moving && coldIdle)
                 result = ClipIdleCold;
             if (result == null)
-                result = (armed && ClipIdlePistol != null) ? ClipIdlePistol : ClipIdle;
+            {
+                if (rifleLoco && ClipIdleRifle != null)
+                    result = ClipIdleRifle;
+                else if (pistolLoco && ClipIdlePistol != null)
+                    result = ClipIdlePistol;
+                else
+                    result = ClipIdle;
+            }
         }
 
         _resolvedClipCache = result;
@@ -810,9 +772,6 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
             return;
         if (_itemUseActive)
             return;
-        if (_postureTransitionActive)
-            return;
-
         AnimationClip resolved = ResolveLocomotionClip();
         if (resolved == null)
             return;
