@@ -26,6 +26,7 @@ UserSettings/
 *.pidb
 *.booproj
 *.svd
+*.idea/
 
 # Packages cache
 Packages/com.unity.collab-proxy/

@@ -1599,6 +1599,37 @@ public class GameSession : MonoBehaviour
         SubmitTurnLocal(actions, roundIndex);
     }
 
+    /// <summary>Hex endpoints for an executed Attack (journal); used when final <see cref="PlayerTurnResult.weaponRange"/> reflects post-turn equip (e.g. medkit) but the action was ranged.</summary>
+    private static bool TryGetAttackHexEndpointsForPlayback(TurnResultPayload result, BattleExecutedAction action, out int fc, out int fr, out int tc, out int tr)
+    {
+        fc = fr = tc = tr = 0;
+        if (action == null)
+            return false;
+
+        if (action.fromPosition != null)
+        {
+            fc = action.fromPosition.col;
+            fr = action.fromPosition.row;
+        }
+        else if (!TryGetUnitFinalHexFromTurnResult(result, action.unitId, out fc, out fr))
+            return false;
+
+        if (action.toPosition != null)
+        {
+            tc = action.toPosition.col;
+            tr = action.toPosition.row;
+        }
+        else if (!string.IsNullOrEmpty(action.targetUnitId))
+        {
+            if (!TryGetUnitFinalHexFromTurnResult(result, action.targetUnitId, out tc, out tr))
+                return false;
+        }
+        else
+            return false;
+
+        return true;
+    }
+
     /// <summary>Пуля от атакующего к цели по линии гексов; дальность оружия влияет только на урон на сервере, не на длину визуала.</summary>
     private IEnumerator PlayRangedBulletAnimation(TurnResultPayload result, BattleExecutedAction action)
     {
@@ -1606,33 +1637,21 @@ public class GameSession : MonoBehaviour
             || !string.Equals(action.actionType, "Attack", System.StringComparison.OrdinalIgnoreCase))
             yield break;
 
-        if (!TryGetWeaponRangeForUnit(result, action.unitId, out int weaponRange) || weaponRange <= 1)
+        if (!TryGetAttackHexEndpointsForPlayback(result, action, out int fc, out int fr, out int tc, out int tr))
             yield break;
 
         HexGrid grid = CachedHexGrid;
-        if (grid == null)
+        if (grid == null || !grid.IsInBounds(fc, fr) || !grid.IsInBounds(tc, tr))
             yield break;
 
-        int fc, fr;
-        if (action.fromPosition != null)
-        {
-            fc = action.fromPosition.col;
-            fr = action.fromPosition.row;
-        }
-        else if (!TryGetUnitFinalHexFromTurnResult(result, action.unitId, out fc, out fr))
+        int geomDist = HexGrid.GetDistance(fc, fr, tc, tr);
+        if (!TryGetWeaponRangeForUnit(result, action.unitId, out int weaponRange))
+            weaponRange = 0;
+        // Final snapshot may list medkit (range ≤ 1) after attack + UseItem in the same turn; geometry still says ranged.
+        if (weaponRange <= 1 && geomDist <= 1)
             yield break;
-
-        int tc, tr;
-        if (action.toPosition != null)
-        {
-            tc = action.toPosition.col;
-            tr = action.toPosition.row;
-        }
-        else if (!TryGetUnitFinalHexFromTurnResult(result, action.targetUnitId, out tc, out tr))
-            yield break;
-
-        if (!grid.IsInBounds(fc, fr) || !grid.IsInBounds(tc, tr))
-            yield break;
+        if (weaponRange <= 1 && geomDist > 1)
+            weaponRange = Mathf.Max(weaponRange, 2);
 
         Vector3 HexEndWorld(int col, int row) =>
             grid.GetCellWorldPosition(col, row) + Vector3.up * _bulletHexEndYOffset;
@@ -1839,18 +1858,10 @@ public class GameSession : MonoBehaviour
         if (grid == null)
             yield break;
 
-        int fc, fr;
-        if (action.fromPosition != null)
-        {
-            fc = action.fromPosition.col;
-            fr = action.fromPosition.row;
-        }
-        else if (!TryGetUnitFinalHexFromTurnResult(result, action.unitId, out fc, out fr))
-        {
+        if (!TryGetAttackHexEndpointsForPlayback(result, action, out int fc, out int fr, out int tc, out int tr))
             yield break;
-        }
 
-        if (!TryGetUnitFinalHexFromTurnResult(result, action.targetUnitId, out int tc, out int tr))
+        if (HexGrid.GetDistance(fc, fr, tc, tr) > 1)
             yield break;
 
         Vector3 atkPos = grid.GetCellWorldPosition(fc, fr);
