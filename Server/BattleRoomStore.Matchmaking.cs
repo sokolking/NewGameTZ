@@ -143,6 +143,13 @@ public partial class BattleRoomStore
 
         batch.AddRange(SingleUser(userId, QueueJoinedJson(mode)));
         batch.AddRange(BroadcastQueueState(mode));
+        if (mode == MatchQueueMode.PvpRandom && _readyCheckByMode.TryGetValue(mode, out var activeReady))
+        {
+            batch.AddRange(CancelReadyCheckLocked(mode, activeReady, "player_joined"));
+            if (TryStartReadyCheckLocked(mode) is { Count: > 0 } restartedBatch)
+                batch.AddRange(restartedBatch);
+            return batch;
+        }
         if (TryStartReadyCheckLocked(mode) is { Count: > 0 } readyBatch)
             batch.AddRange(readyBatch);
         return batch;
@@ -162,7 +169,7 @@ public partial class BattleRoomStore
             batch.AddRange(CancelReadyCheckLocked(st.Mode, ready, "player_left"));
 
         var touched = new HashSet<MatchQueueMode>();
-        foreach (var m in new[] { MatchQueueMode.Pvp1v1, MatchQueueMode.Pvp3v3, MatchQueueMode.Pvp5v5 })
+        foreach (var m in new[] { MatchQueueMode.Pvp1v1, MatchQueueMode.Pvp3v3, MatchQueueMode.Pvp5v5, MatchQueueMode.PvpRandom })
         {
             if (QueueFor(m).Remove(userId))
                 touched.Add(m);
@@ -219,8 +226,28 @@ public partial class BattleRoomStore
 
     private List<(IReadOnlyList<long> targets, string json)> CompleteReadyCheckAndStartBattleLocked(MatchQueueMode mode, ReadyCheckState ready)
     {
-        int perTeam = mode.PlayersPerTeam();
-        var spawns = HexSpawn.FindTwoTeamSpawnsOnOppositeHorizontalSides(perTeam, HexSpawn.DefaultGridWidth, HexSpawn.DefaultGridLength);
+        int team0Count = mode == MatchQueueMode.PvpRandom
+            ? Math.Max(1, (ready.UserIds.Count + 1) / 2)
+            : mode.PlayersPerTeam();
+        int team1Count = mode == MatchQueueMode.PvpRandom
+            ? Math.Max(0, ready.UserIds.Count - team0Count)
+            : mode.PlayersPerTeam();
+        List<(int col, int row)> spawns;
+        if (mode == MatchQueueMode.PvpRandom)
+        {
+            // Random mode: keep teams on different spawn lines (left vs right areas).
+            var splitSpawns = HexSpawn.FindTwoTeamSpawns(team0Count, HexSpawn.DefaultGridWidth, HexSpawn.DefaultGridLength, HexSpawn.MinSpawnHexDistance);
+            spawns = new List<(int col, int row)>(ready.UserIds.Count);
+            for (int i = 0; i < team0Count; i++)
+                spawns.Add(splitSpawns[i]);
+            for (int i = 0; i < team1Count; i++)
+                spawns.Add(splitSpawns[team0Count + i]);
+        }
+        else
+        {
+            int perTeam = mode.PlayersPerTeam();
+            spawns = HexSpawn.FindTwoTeamSpawnsOnOppositeHorizontalSides(perTeam, HexSpawn.DefaultGridWidth, HexSpawn.DefaultGridLength);
+        }
         if (spawns.Count < ready.UserIds.Count)
         {
             Console.WriteLine($"[Matchmaking] spawn count {spawns.Count} < players {ready.UserIds.Count}");
@@ -236,12 +263,15 @@ public partial class BattleRoomStore
         {
             MatchModeWire = mode.ToWireString()
         };
-        for (int i = 0; i < ready.UserIds.Count; i++)
+        List<long> usersForBattle = mode == MatchQueueMode.PvpRandom
+            ? ShuffleUsers(ready.UserIds)
+            : ready.UserIds;
+        for (int i = 0; i < usersForBattle.Count; i++)
         {
             string pid = "P" + (i + 1);
             var (c, r) = spawns[i];
             room.AddPlayer(pid, c, r);
-            TryConfigureHumanPlayer(room, pid, ready.UserIds[i]);
+            TryConfigureHumanPlayer(room, pid, usersForBattle[i]);
         }
 
         _rooms[bid] = room;
@@ -250,9 +280,9 @@ public partial class BattleRoomStore
         Console.WriteLine($"[Matchmaking] battle started from ready-check: battleId={bid}, mode={mode}, players={ready.UserIds.Count}");
 
         var batch = new List<(IReadOnlyList<long> targets, string json)>();
-        for (int i = 0; i < ready.UserIds.Count; i++)
+        for (int i = 0; i < usersForBattle.Count; i++)
         {
-            long uid = ready.UserIds[i];
+            long uid = usersForBattle[i];
             string pid = "P" + (i + 1);
             var started = room.BuildBattleStartedFor(pid);
             var json = JsonSerializer.Serialize(new
@@ -298,8 +328,10 @@ public partial class BattleRoomStore
         if (q.Count < need)
             return null;
 
-        var picked = q.Take(need).ToList();
-        q.RemoveRange(0, need);
+        var picked = mode == MatchQueueMode.PvpRandom
+            ? q.ToList()
+            : q.Take(need).ToList();
+        q.RemoveRange(0, picked.Count);
         foreach (var uid in picked)
         {
             _matchmakingByUser[uid] = new UserMatchmakingState { Mode = mode, InReadyCheck = true };
@@ -352,12 +384,26 @@ public partial class BattleRoomStore
     private List<(IReadOnlyList<long> targets, string json)> BroadcastQueueState(MatchQueueMode mode)
     {
         var q = QueueFor(mode);
-        int req = mode.RequiredHumans();
+        int req = mode == MatchQueueMode.PvpRandom
+            ? (q.Count >= 2 ? q.Count : 2)
+            : mode.RequiredHumans();
         if (q.Count == 0)
             return new List<(IReadOnlyList<long> targets, string json)>();
         var targets = q.Distinct().ToArray();
         string json = QueueStateJson(mode, q.Count, req);
         return new List<(IReadOnlyList<long> targets, string json)> { (targets, json) };
+    }
+
+    private static List<long> ShuffleUsers(List<long> users)
+    {
+        var copy = new List<long>(users);
+        for (int i = copy.Count - 1; i > 0; i--)
+        {
+            int j = Random.Shared.Next(i + 1);
+            (copy[i], copy[j]) = (copy[j], copy[i]);
+        }
+
+        return copy;
     }
 
     private static List<(IReadOnlyList<long> targets, string json)> SingleUser(long userId, string json) =>

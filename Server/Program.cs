@@ -475,6 +475,9 @@ app.Map("/ws/battle", async (HttpContext ctx, BattleRoomStore store, BattleAuthS
                 }
 
                 await BattleWsProtocol.SendJsonAsync(ws, new { type = BattleWsProtocol.TypeLeaveAck, ok = true }, jsonOpt, ctx.RequestAborted);
+                // Keep session spectator list in sync after explicit leave.
+                var spectatorListJson = store.BuildSpectatorListJsonLocked();
+                await UserSessionSocketRegistry.SendTextToUserAsync(wsUserId, spectatorListJson, ctx.RequestAborted).ConfigureAwait(false);
             }
         }
     disconnect:;
@@ -490,10 +493,16 @@ app.Map("/ws/battle", async (HttpContext ctx, BattleRoomStore store, BattleAuthS
     finally
     {
         UserBattleSocketRegistry.Remove(wsUserId, ws);
+        // Disconnect/scene close must not end battle room; explicit leave handles surrender semantics.
         if (!spectatorWs
             && !string.IsNullOrEmpty(playerId)
-            && !BattleSessionRevokeSkip.TryConsumeSkipPlayerLeft(wsUserId, battleId, playerId))
-            store.PlayerLeft(battleId, playerId);
+            && BattleSessionRevokeSkip.TryConsumeSkipPlayerLeft(wsUserId, battleId, playerId))
+        {
+            // consumed intentionally (login revoke path)
+        }
+        // Push refreshed spectator list to session sockets for this user after battle socket closes.
+        var spectatorListJson = store.BuildSpectatorListJsonLocked();
+        await UserSessionSocketRegistry.SendTextToUserAsync(wsUserId, spectatorListJson, CancellationToken.None).ConfigureAwait(false);
         Console.WriteLine($"[BattleWS] disconnect: connId={connId}, battleId={battleId}, playerId={playerId}, recvMsgs={recvCount}, utc={DateTime.UtcNow:O}");
         BattleWebSocketRegistry.Remove(battleId, ws, connId);
     }

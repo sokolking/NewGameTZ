@@ -4,7 +4,8 @@ public enum MatchQueueMode
 {
     Pvp1v1,
     Pvp3v3,
-    Pvp5v5
+    Pvp5v5,
+    PvpRandom
 }
 
 public static class MatchQueueModeExtensions
@@ -14,10 +15,15 @@ public static class MatchQueueModeExtensions
         MatchQueueMode.Pvp1v1 => 1,
         MatchQueueMode.Pvp3v3 => 3,
         MatchQueueMode.Pvp5v5 => 5,
+        MatchQueueMode.PvpRandom => 1,
         _ => 1
     };
 
-    public static int RequiredHumans(this MatchQueueMode mode) => mode.PlayersPerTeam() * 2;
+    public static int RequiredHumans(this MatchQueueMode mode) => mode switch
+    {
+        MatchQueueMode.PvpRandom => 2,
+        _ => mode.PlayersPerTeam() * 2
+    };
 
     public static bool TryParse(string? s, out MatchQueueMode mode)
     {
@@ -35,6 +41,9 @@ public static class MatchQueueModeExtensions
             case "5v5":
                 mode = MatchQueueMode.Pvp5v5;
                 return true;
+            case "random":
+                mode = MatchQueueMode.PvpRandom;
+                return true;
             default:
                 return false;
         }
@@ -45,6 +54,7 @@ public static class MatchQueueModeExtensions
         MatchQueueMode.Pvp1v1 => "1v1",
         MatchQueueMode.Pvp3v3 => "3v3",
         MatchQueueMode.Pvp5v5 => "5v5",
+        MatchQueueMode.PvpRandom => "random",
         _ => "1v1"
     };
 }

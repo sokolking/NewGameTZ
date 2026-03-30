@@ -254,6 +254,8 @@ public partial class BattleRoomStore
             if (!_rooms.TryGetValue(battleId, out var room)) return false;
             if (!room.Players.ContainsKey(playerId)) return false;
 
+            // Only queue-waiting single-player rooms are removed on leave.
+            // Active battles must be finalized exclusively by CloseRound battle logic.
             if (room.Players.Count == 1 && _waitingBattleId == battleId)
             {
                 _rooms.Remove(battleId);
@@ -261,9 +263,7 @@ public partial class BattleRoomStore
                 return true;
             }
 
-            _rooms.Remove(battleId);
-            if (_waitingBattleId == battleId)
-                _waitingBattleId = null;
+            // Non-destructive ack for active battle rooms.
             return true;
         }
     }

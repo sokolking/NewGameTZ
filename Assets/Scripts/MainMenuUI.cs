@@ -22,10 +22,11 @@ public class MainMenuUI : MonoBehaviour
     [SerializeField] private MainMenuMatchmaking _matchmaking;
     [Tooltip("Optional legacy: dropdown when MatchTypes toggles are not used.")]
     [SerializeField] private Dropdown _pvpMatchmakingModeDropdown;
-    [Tooltip("Exclusive PvP modes under MatchTypes (Toggle_1v1, Toggle_3v3, Toggle_5v5). On = join socket queue; off others; off all = leave queue.")]
+    [Tooltip("Exclusive PvP modes under MatchTypes (Toggle_1v1, Toggle_3v3, Toggle_5v5, Toggle_Random). On = join socket queue; off others; off all = leave queue.")]
     [SerializeField] private Toggle _matchTypeToggle1v1;
     [SerializeField] private Toggle _matchTypeToggle3v3;
     [SerializeField] private Toggle _matchTypeToggle5v5;
+    [SerializeField] private Toggle _matchTypeToggleRandom;
 
     [Header("Auth")]
     [Tooltip("Assign in scene (AuthPanel/LoginInputField). Created via Tools → Hex Grid → Setup Main Menu UI / Add Main Menu Auth Panel.")]
@@ -140,16 +141,19 @@ public class MainMenuUI : MonoBehaviour
                 _matchTypeToggle3v3 = FindDeepChild(matchTypes, "Toggle_3v3")?.GetComponent<Toggle>();
             if (_matchTypeToggle5v5 == null)
                 _matchTypeToggle5v5 = FindDeepChild(matchTypes, "Toggle_5v5")?.GetComponent<Toggle>();
+            if (_matchTypeToggleRandom == null)
+                _matchTypeToggleRandom = FindDeepChild(matchTypes, "Toggle_Random")?.GetComponent<Toggle>();
         }
     }
 
     private bool HasMatchTypeToggles() =>
-        _matchTypeToggle1v1 != null && _matchTypeToggle3v3 != null && _matchTypeToggle5v5 != null;
+        _matchTypeToggle1v1 != null && _matchTypeToggle3v3 != null && _matchTypeToggle5v5 != null && _matchTypeToggleRandom != null;
 
     private bool AnyMatchTypeToggleOn() =>
         (_matchTypeToggle1v1 != null && _matchTypeToggle1v1.isOn)
         || (_matchTypeToggle3v3 != null && _matchTypeToggle3v3.isOn)
-        || (_matchTypeToggle5v5 != null && _matchTypeToggle5v5.isOn);
+        || (_matchTypeToggle5v5 != null && _matchTypeToggle5v5.isOn)
+        || (_matchTypeToggleRandom != null && _matchTypeToggleRandom.isOn);
 
     private void UncheckAllMatchTypeTogglesNoCallbacks()
     {
@@ -157,6 +161,7 @@ public class MainMenuUI : MonoBehaviour
         _matchTypeToggle1v1?.SetIsOnWithoutNotify(false);
         _matchTypeToggle3v3?.SetIsOnWithoutNotify(false);
         _matchTypeToggle5v5?.SetIsOnWithoutNotify(false);
+        _matchTypeToggleRandom?.SetIsOnWithoutNotify(false);
         _suppressMatchTypeToggleEvents = false;
     }
 
@@ -169,6 +174,8 @@ public class MainMenuUI : MonoBehaviour
             _matchTypeToggle3v3.SetIsOnWithoutNotify(mode == PvpMatchmakingMode.Pvp3v3);
         if (_matchTypeToggle5v5 != null)
             _matchTypeToggle5v5.SetIsOnWithoutNotify(mode == PvpMatchmakingMode.Pvp5v5);
+        if (_matchTypeToggleRandom != null)
+            _matchTypeToggleRandom.SetIsOnWithoutNotify(mode == PvpMatchmakingMode.PvpRandom);
         _suppressMatchTypeToggleEvents = false;
     }
 
@@ -177,6 +184,7 @@ public class MainMenuUI : MonoBehaviour
         PvpMatchmakingMode.Pvp1v1 => _matchTypeToggle1v1,
         PvpMatchmakingMode.Pvp3v3 => _matchTypeToggle3v3,
         PvpMatchmakingMode.Pvp5v5 => _matchTypeToggle5v5,
+        PvpMatchmakingMode.PvpRandom => _matchTypeToggleRandom,
         _ => _matchTypeToggle1v1
     };
 
@@ -198,6 +206,7 @@ public class MainMenuUI : MonoBehaviour
         WireOne(_matchTypeToggle1v1, PvpMatchmakingMode.Pvp1v1);
         WireOne(_matchTypeToggle3v3, PvpMatchmakingMode.Pvp3v3);
         WireOne(_matchTypeToggle5v5, PvpMatchmakingMode.Pvp5v5);
+        WireOne(_matchTypeToggleRandom, PvpMatchmakingMode.PvpRandom);
     }
 
     private void OnMatchTypeToggleChanged(PvpMatchmakingMode mode, bool isOn)
@@ -268,7 +277,7 @@ public class MainMenuUI : MonoBehaviour
     {
         if (_matchmaking == null || _pvpMatchmakingModeDropdown == null)
             return;
-        _matchmaking.SetPvpMatchmakingMode((PvpMatchmakingMode)Mathf.Clamp(_pvpMatchmakingModeDropdown.value, 0, 2));
+        _matchmaking.SetPvpMatchmakingMode((PvpMatchmakingMode)Mathf.Clamp(_pvpMatchmakingModeDropdown.value, 0, 3));
     }
 
     private void WirePvpMatchmakingDropdown()
@@ -284,13 +293,14 @@ public class MainMenuUI : MonoBehaviour
         {
             new(Loc.T("menu.matchmaking_mode_option_1v1")),
             new(Loc.T("menu.matchmaking_mode_option_3v3")),
-            new(Loc.T("menu.matchmaking_mode_option_5v5"))
+            new(Loc.T("menu.matchmaking_mode_option_5v5")),
+            new(Loc.T("menu.matchmaking_mode_option_random"))
         });
 
         dd.onValueChanged.RemoveListener(OnPvpMatchmakingDropdownChanged);
         dd.onValueChanged.AddListener(OnPvpMatchmakingDropdownChanged);
 
-        int current = Mathf.Clamp((int)_matchmaking.GetPvpMatchmakingMode(), 0, 2);
+        int current = Mathf.Clamp((int)_matchmaking.GetPvpMatchmakingMode(), 0, 3);
         dd.SetValueWithoutNotify(current);
         _matchmaking.SetPvpMatchmakingMode((PvpMatchmakingMode)current);
     }
@@ -299,7 +309,7 @@ public class MainMenuUI : MonoBehaviour
     {
         if (_matchmaking == null)
             return;
-        _matchmaking.SetPvpMatchmakingMode((PvpMatchmakingMode)Mathf.Clamp(index, 0, 2));
+        _matchmaking.SetPvpMatchmakingMode((PvpMatchmakingMode)Mathf.Clamp(index, 0, 3));
     }
 
     /// <summary>Sync mode + optional MatchTypes / dropdown (does not start socket search).</summary>
@@ -307,7 +317,7 @@ public class MainMenuUI : MonoBehaviour
     {
         if (_matchmaking == null)
             return;
-        index = Mathf.Clamp(index, 0, 2);
+        index = Mathf.Clamp(index, 0, 3);
         _matchmaking.SetPvpMatchmakingMode((PvpMatchmakingMode)index);
         if (HasMatchTypeToggles())
             SetExclusiveMatchTypeOn((PvpMatchmakingMode)index);
@@ -323,6 +333,9 @@ public class MainMenuUI : MonoBehaviour
 
     /// <summary>Wire to UI Button for 5v5 queue.</summary>
     public void UiSelectPvpMode5v5() => ApplyPvpModeIndexFromUi(2);
+
+    /// <summary>Wire to UI Button for random queue.</summary>
+    public void UiSelectPvpModeRandom() => ApplyPvpModeIndexFromUi(3);
 
     private void WireButtonEvents()
     {

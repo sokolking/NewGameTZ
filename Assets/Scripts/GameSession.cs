@@ -133,6 +133,8 @@ public class GameSession : MonoBehaviour
     private LiveTurnDraftSnapshot _liveTurnDraftSnapshot;
     private bool _debugMobSpawned;
     private bool _battleFinished;
+    private bool _localEliminationPending;
+    private bool _localEliminationEscape;
     private bool _battleInspectProfileControllerDisabled;
     /// <summary>Network entity id for open battle inspect <see cref="UnitCardView"/>; cleared when hidden.</summary>
     private string _battleInspectEntityId;
@@ -1000,14 +1002,20 @@ public class GameSession : MonoBehaviour
                     int wMin = r.weaponDamageMin > 0 ? r.weaponDamageMin : r.weaponDamage;
                     local.SetEquippedWeapon(r.weaponCode, r.weaponDamage, r.weaponRange, wAtk, wMin, r.weaponCategory ?? "");
                 }
+                if (r.isDead || r.hasFled)
+                {
+                    _localEliminationPending = true;
+                    _localEliminationEscape = r.hasFled;
+                }
                 if (prepareForAnimation)
                     animJobs.Add((local, true, r.actualPath));
-                else if (r.isDead)
+                else if (r.isDead || r.hasFled)
                 {
+                    bool escaped = r.hasFled;
                     if (_isTurnHistoryReplayPlaying)
-                        ApplyLocalHiddenDeadState(silent: true);
+                        ApplyLocalEliminatedState(escaped, showMessage: false);
                     else
-                        StartCoroutine(HandleLocalDeathAfterMessage());
+                        StartCoroutine(HandleLocalEliminationAfterMessage(escaped));
                 }
                 continue;
             }
@@ -1066,6 +1074,17 @@ public class GameSession : MonoBehaviour
         SnapBattleUnitsToAuthoritativeHexPositions();
         if (result != null)
             ApplyZoneShrinkFromTurnResult(result);
+        if (_localEliminationPending)
+        {
+            bool escaped = _localEliminationEscape;
+            _localEliminationPending = false;
+            _localEliminationEscape = false;
+            if (_isTurnHistoryReplayPlaying)
+                ApplyLocalEliminatedState(escaped, showMessage: false);
+            else
+                yield return HandleLocalEliminationAfterMessage(escaped);
+            yield break;
+        }
 
         // Planning unlocks here (clear wait + ApplyRoundState). Round-wait overlay is hidden on push — see BattleSignalRConnection.
         if (result == null || !result.battleFinished)
@@ -2015,6 +2034,8 @@ public class GameSession : MonoBehaviour
         _initialReplayState.Clear();
         CancelWaitingForServerRoundResolve();
         _battleFinished = false;
+        _localEliminationPending = false;
+        _localEliminationEscape = false;
         LastBattleEndWasEscape = false;
         _localBattleTeamId = -1;
         HideBattleInspectUnitCard();
@@ -2875,7 +2896,7 @@ public class GameSession : MonoBehaviour
         return values[index];
     }
 
-    private IEnumerator HandleLocalDeathAfterMessage()
+    private IEnumerator HandleLocalEliminationAfterMessage(bool escaped)
     {
         if (_battleFinished) yield break;
         CachedHexGrid?.ClearAllPvpOccupancyHighlights();
@@ -2887,11 +2908,11 @@ public class GameSession : MonoBehaviour
         var p = LocalPlayer;
         p?.SetTurnTimerPaused(true);
         // Stop timeline immediately to prevent further animations/moves after fatal tick.
-        ApplyLocalHiddenDeadState(silent: true);
+        ApplyLocalEliminatedState(escaped, showMessage: false);
         yield break;
     }
 
-    private void ApplyLocalHiddenDeadState(bool silent)
+    private void ApplyLocalEliminatedState(bool escaped, bool showMessage)
     {
         var local = LocalPlayer;
         if (local == null)
@@ -2899,8 +2920,9 @@ public class GameSession : MonoBehaviour
 
         local.ForceStopMovement();
         local.SetHidden(true);
-        if (!silent)
-            _battleFinished = true;
+        if (showMessage)
+            OnNetworkMessage?.Invoke(Loc.T("ui.battle_lost"));
+        _battleFinished = true;
     }
 
     private IEnumerator HandleUnitDeathAtCurrentAction(TurnResultPayload result, string deadUnitId)
@@ -2915,7 +2937,7 @@ public class GameSession : MonoBehaviour
         {
             if (unit is Player local)
                 local.ForceStopMovement();
-            yield return HandleLocalDeathAfterMessage();
+            yield return HandleLocalEliminationAfterMessage(escaped: false);
             yield break;
         }
 
@@ -3013,6 +3035,12 @@ public class GameSession : MonoBehaviour
                     break;
                 }
             }
+        }
+
+        if (localDead)
+        {
+            // Local elimination was already handled from TurnResult; avoid duplicate conflicting final message.
+            return;
         }
 
         if (localFled || !localDead)

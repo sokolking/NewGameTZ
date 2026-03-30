@@ -5,12 +5,13 @@ using UnityEngine;
 using UnityEngine.SceneManagement;
 using UnityEngine.UI;
 
-/// <summary>PvP queue mode for socket matchmaking (1v1 / 3v3 / 5v5).</summary>
+/// <summary>PvP queue mode for socket matchmaking (1v1 / 3v3 / 5v5 / random).</summary>
 public enum PvpMatchmakingMode
 {
     Pvp1v1 = 0,
     Pvp3v3 = 1,
-    Pvp5v5 = 2
+    Pvp5v5 = 2,
+    PvpRandom = 3
 }
 
 /// <summary>
@@ -126,6 +127,7 @@ public class MainMenuMatchmaking : MonoBehaviour
         PvpMatchmakingMode.Pvp1v1 => 2,
         PvpMatchmakingMode.Pvp3v3 => 6,
         PvpMatchmakingMode.Pvp5v5 => 10,
+        PvpMatchmakingMode.PvpRandom => 2,
         _ => 2
     };
 
@@ -262,6 +264,7 @@ public class MainMenuMatchmaking : MonoBehaviour
         PvpMatchmakingMode.Pvp1v1 => "1v1",
         PvpMatchmakingMode.Pvp3v3 => "3v3",
         PvpMatchmakingMode.Pvp5v5 => "5v5",
+        PvpMatchmakingMode.PvpRandom => "random",
         _ => "1v1"
     };
 
@@ -270,6 +273,7 @@ public class MainMenuMatchmaking : MonoBehaviour
         PvpMatchmakingMode.Pvp1v1 => "1v1",
         PvpMatchmakingMode.Pvp3v3 => "3v3",
         PvpMatchmakingMode.Pvp5v5 => "5v5",
+        PvpMatchmakingMode.PvpRandom => Loc.T("menu.matchmaking_mode_option_random"),
         _ => "1v1"
     };
 
@@ -383,6 +387,8 @@ public class MainMenuMatchmaking : MonoBehaviour
         SetStatus(line);
         if (_queueProgressText != null)
             _queueProgressText.text = line;
+        if (_readyButton != null && _pvpMode == PvpMatchmakingMode.PvpRandom && string.IsNullOrEmpty(_pendingReadyCheckId))
+            _readyButton.gameObject.SetActive(current >= 2);
     }
 
     private void OnQueueJoined()
@@ -428,7 +434,12 @@ public class MainMenuMatchmaking : MonoBehaviour
         _pendingReadyCheckId = null;
         if (_readyButton != null)
             _readyButton.gameObject.SetActive(false);
-        SetStatus(Loc.Tf("menu.matchmaking_ready_cancelled", reason ?? ""));
+        string reasonText = reason switch
+        {
+            "player_joined" => Loc.T("menu.matchmaking_ready_cancel_reason_player_joined"),
+            _ => reason ?? ""
+        };
+        SetStatus(Loc.Tf("menu.matchmaking_ready_cancelled", reasonText));
     }
 
     private void OnMatchStarted(MatchmakingMatchStartedMessage msg)
