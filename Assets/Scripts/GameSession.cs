@@ -953,11 +953,20 @@ public class GameSession : MonoBehaviour
         AppendServerTurnLogs(result);
         LogHitRollsFromTurnResult(result);
         var playback = animateResolvedRound ? BuildExecutedActionPlayback(result) : null;
-        var animJobs = BuildTurnResultAnimationJobs(result, animateResolvedRound, deferLocomotionPosture: playback != null && playback.Count > 0);
+        bool deferHpForReplay = animateResolvedRound && playback != null && playback.Count > 0;
+        var animJobs = BuildTurnResultAnimationJobs(
+            result,
+            prepareForAnimation: animateResolvedRound,
+            deferLocomotionPosture: playback != null && playback.Count > 0,
+            deferHpForReplay: deferHpForReplay);
         StartCoroutine(DeferredRoundAfterAnimations(animJobs, playback, nextRoundIndex, roundDeadlineUtcMs, result));
     }
 
-    private List<(object unit, bool isLocal, HexPosition[] path)> BuildTurnResultAnimationJobs(TurnResultPayload result, bool prepareForAnimation, bool deferLocomotionPosture = false)
+    private List<(object unit, bool isLocal, HexPosition[] path)> BuildTurnResultAnimationJobs(
+        TurnResultPayload result,
+        bool prepareForAnimation,
+        bool deferLocomotionPosture = false,
+        bool deferHpForReplay = false)
     {
         var animJobs = new List<(object unit, bool isLocal, HexPosition[] path)>();
         Player local = LocalPlayer;
@@ -997,7 +1006,8 @@ public class GameSession : MonoBehaviour
 
                 local.ApplyServerTurnResult(r.finalPosition, r.actualPath, r.currentAp, r.penaltyFraction, r.currentPosture, prepareForAnimation, applyLocomotionPosture: !deferLocomotionPosture);
                 local.SetServerEscapeState(r.isEscaping);
-                local.SetHealth(r.currentHp, r.maxHp > 0 ? r.maxHp : local.MaxHp);
+                if (!deferHpForReplay)
+                    local.SetHealth(r.currentHp, r.maxHp > 0 ? r.maxHp : local.MaxHp);
                 if (!string.IsNullOrEmpty(r.weaponCode))
                 {
                     int wAtk = r.weaponAttackApCost > 0 ? r.weaponAttackApCost : 1;
@@ -1022,6 +1032,7 @@ public class GameSession : MonoBehaviour
                 continue;
             }
 
+            bool remoteJustCreated = false;
             if (!_remoteUnits.TryGetValue(id, out var remote) || remote == null)
             {
                 // Юнит ещё не создан (например, серверный моб) — создаём RemoteBattleUnitView по первой точке пути.
@@ -1034,6 +1045,7 @@ public class GameSession : MonoBehaviour
                     int rTeam = isMob ? -1 : r.teamId;
                     remote.Initialize(id, grid, first.col, first.row, local != null ? local.MoveDurationPerHex : 0.2f, _localBattleTeamId, rTeam);
                     _remoteUnits[id] = remote;
+                    remoteJustCreated = true;
                 }
             }
 
@@ -1042,7 +1054,16 @@ public class GameSession : MonoBehaviour
                 if (!isMob && r.teamId >= 0)
                     remote.SetBattleTeamIds(_localBattleTeamId, r.teamId);
                 remote.ApplyServerTurnResult(r.finalPosition, r.actualPath, r.currentAp, r.penaltyFraction, prepareForAnimation);
-                remote.SetHealth(r.currentHp, r.maxHp > 0 ? r.maxHp : 10);
+                if (deferHpForReplay)
+                {
+                    if (remoteJustCreated)
+                    {
+                        int maxHp = r.maxHp > 0 ? r.maxHp : 10;
+                        remote.SetHealth(ComputeReplayStartHp(r), maxHp);
+                    }
+                }
+                else
+                    remote.SetHealth(r.currentHp, r.maxHp > 0 ? r.maxHp : 10);
                 if (prepareForAnimation)
                     animJobs.Add((remote, false, r.actualPath));
                 if (r.isDead && !prepareForAnimation)
@@ -1054,6 +1075,102 @@ public class GameSession : MonoBehaviour
         }
 
         return animJobs;
+    }
+
+    /// <summary>
+    /// Оценка HP до журнала раунда для юнита без предыдущего клиентского состояния (например только что созданный моб).
+    /// Для существующих юнитов используем фактический HP до применения TurnResult (без раннего SetHealth).
+    /// </summary>
+    private static int ComputeReplayStartHp(PlayerTurnResult r)
+    {
+        if (r == null)
+            return 0;
+        int maxHp = r.maxHp > 0 ? r.maxHp : 1;
+        int damageIn = 0;
+        int healIn = 0;
+        if (r.executedActions != null)
+        {
+            foreach (BattleExecutedAction a in r.executedActions)
+            {
+                if (a == null || !a.succeeded)
+                    continue;
+                if (string.Equals(a.actionType, "Attack", StringComparison.OrdinalIgnoreCase)
+                    && a.damage > 0
+                    && !string.IsNullOrEmpty(a.targetUnitId)
+                    && string.Equals(a.targetUnitId, r.unitId, StringComparison.Ordinal))
+                    damageIn += a.damage;
+                if (string.Equals(a.actionType, "UseItem", StringComparison.OrdinalIgnoreCase)
+                    && a.healed > 0
+                    && string.Equals(a.unitId, r.unitId, StringComparison.Ordinal))
+                    healIn += a.healed;
+            }
+        }
+
+        int start = r.currentHp + damageIn - healIn;
+        return Mathf.Clamp(start, 0, maxHp);
+    }
+
+    private void ApplyReplayHpDamageToTarget(TurnResultPayload result, string targetUnitId, int damage)
+    {
+        if (damage <= 0 || string.IsNullOrEmpty(targetUnitId))
+            return;
+        if (!TryResolveAnimatedUnit(result, targetUnitId, out object unit, out bool isLocal))
+            return;
+        if (isLocal && unit is Player pl)
+        {
+            int maxHp = pl.MaxHp;
+            int newHp = Mathf.Max(0, pl.CurrentHp - damage);
+            pl.SetHealth(newHp, maxHp);
+        }
+        else if (unit is RemoteBattleUnitView rv)
+        {
+            int maxHp = rv.MaxHp;
+            int newHp = Mathf.Max(0, rv.CurrentHp - damage);
+            rv.SetHealth(newHp, maxHp);
+        }
+    }
+
+    private void ApplyReplayHpHealToUnit(TurnResultPayload result, string unitId, int healed)
+    {
+        if (healed <= 0 || string.IsNullOrEmpty(unitId))
+            return;
+        if (!TryResolveAnimatedUnit(result, unitId, out object unit, out bool isLocal))
+            return;
+        if (isLocal && unit is Player pl)
+        {
+            int maxHp = pl.MaxHp;
+            int newHp = Mathf.Min(maxHp, pl.CurrentHp + healed);
+            pl.SetHealth(newHp, maxHp);
+        }
+        else if (unit is RemoteBattleUnitView rv)
+        {
+            int maxHp = rv.MaxHp;
+            int newHp = Mathf.Min(maxHp, rv.CurrentHp + healed);
+            rv.SetHealth(newHp, maxHp);
+        }
+    }
+
+    private void ApplyAuthoritativeHpFromTurnResult(TurnResultPayload result)
+    {
+        if (result?.results == null)
+            return;
+        foreach (PlayerTurnResult r in result.results)
+        {
+            if (r == null)
+                continue;
+            bool isMob = r.unitType == 1;
+            string id = isMob && !string.IsNullOrEmpty(r.unitId) ? r.unitId : r.playerId;
+            if (!isMob && r.playerId == _playerId)
+            {
+                Player local = LocalPlayer;
+                if (local != null)
+                    local.SetHealth(r.currentHp, r.maxHp > 0 ? r.maxHp : local.MaxHp);
+                continue;
+            }
+
+            if (_remoteUnits.TryGetValue(id, out RemoteBattleUnitView remote) && remote != null)
+                remote.SetHealth(r.currentHp, r.maxHp > 0 ? r.maxHp : 10);
+        }
     }
 
     private IEnumerator DeferredRoundAfterAnimations(
@@ -1200,7 +1317,8 @@ public class GameSession : MonoBehaviour
                 tickEnd++;
             }
 
-            yield return PlayTickActionsParallel(result, playback, tickStart, tickEnd);
+            yield return PlayMoveTickParallel(result, playback, tickStart, tickEnd);
+            yield return PlayCombatActionsSequential(result, playback, tickStart, tickEnd);
             ApplyMapUpdatesFromTurnResult(result, currentTick);
             appliedMapTicks.Add(currentTick);
 
@@ -1215,6 +1333,8 @@ public class GameSession : MonoBehaviour
 
         if (!abortTimeline && result.mapUpdates != null)
             ApplyOrphanMapUpdates(result, appliedMapTicks);
+
+        ApplyAuthoritativeHpFromTurnResult(result);
 
         {
             Player p = LocalPlayer;
@@ -1280,44 +1400,116 @@ public class GameSession : MonoBehaviour
         }
     }
 
-    private IEnumerator PlayExecutedAction(
-        TurnResultPayload result,
-        BattleExecutedAction action,
-        bool prevMoveSameUnit,
-        bool nextMoveSameUnit)
+    /// <summary>Hybrid replay (B): all <c>MoveStep</c> in this tick run in parallel per unit (chains per unit stay sequential).</summary>
+    private IEnumerator PlayMoveTickParallel(TurnResultPayload result, List<ExecutedActionPlaybackEntry> playback, int tickStart, int tickEndExclusive)
     {
-        if (action == null)
+        var indicesByUnit = new Dictionary<string, List<int>>(StringComparer.Ordinal);
+        for (int i = tickStart; i < tickEndExclusive; i++)
+        {
+            BattleExecutedAction action = playback[i]?.Action;
+            if (action == null)
+                continue;
+            if (!string.Equals(action.actionType, "MoveStep", StringComparison.OrdinalIgnoreCase))
+                continue;
+            string unitKey = string.IsNullOrEmpty(action.unitId) ? "__no_unit__" + i.ToString() : action.unitId;
+            if (!indicesByUnit.TryGetValue(unitKey, out var list))
+            {
+                list = new List<int>();
+                indicesByUnit[unitKey] = list;
+            }
+            list.Add(i);
+        }
+
+        if (indicesByUnit.Count == 0)
             yield break;
 
-        ApplyLocomotionPostureForExecutedActionIfLocal(result, action);
+        var running = new List<Coroutine>();
+        foreach (List<int> indices in indicesByUnit.Values)
+            running.Add(StartCoroutine(PlayTickMovesForUnit(result, playback, indices)));
+        foreach (Coroutine c in running)
+            yield return c;
+    }
 
-        if (action.actionType == "MoveStep")
+    private IEnumerator PlayTickMovesForUnit(TurnResultPayload result, List<ExecutedActionPlaybackEntry> playback, List<int> indices)
+    {
+        if (indices == null || indices.Count == 0)
+            yield break;
+        for (int i = 0; i < indices.Count; i++)
         {
+            int playbackIndex = indices[i];
+            BattleExecutedAction action = playback[playbackIndex]?.Action;
+            if (action == null)
+                continue;
+            bool prevMoveSameUnit = false;
+            if (playbackIndex > 0)
+            {
+                BattleExecutedAction prev = playback[playbackIndex - 1]?.Action;
+                prevMoveSameUnit = IsSucceededMoveStepForSameUnit(prev, action.unitId);
+            }
+
+            bool nextMoveSameUnit = false;
+            if (playbackIndex + 1 < playback.Count)
+            {
+                BattleExecutedAction next = playback[playbackIndex + 1]?.Action;
+                nextMoveSameUnit = IsSucceededMoveStepForSameUnit(next, action.unitId);
+            }
+
+            ApplyLocomotionPostureForExecutedActionIfLocal(result, action);
             if (action.succeeded)
                 yield return PlayMoveStepAction(result, action, prevMoveSameUnit, nextMoveSameUnit);
-            yield break;
         }
+    }
 
-        if (action.actionType == "Attack")
+    /// <summary>After moves: Attack / UseItem in strict journal order with immediate damage/heal/death.</summary>
+    private IEnumerator PlayCombatActionsSequential(TurnResultPayload result, List<ExecutedActionPlaybackEntry> playback, int tickStart, int tickEndExclusive)
+    {
+        for (int i = tickStart; i < tickEndExclusive; i++)
         {
-            yield return PlayColdMeleeAttackIfApplicable(result, action);
-            yield return PlayRangedBulletAnimation(result, action);
+            BattleExecutedAction action = playback[i]?.Action;
+            if (action == null)
+                continue;
 
-            if (action.succeeded && action.damage > 0)
-                ShowDamagePopupForAction(result, action);
+            if (string.Equals(action.actionType, "MoveStep", StringComparison.OrdinalIgnoreCase))
+                continue;
 
-            if (action.targetDied)
-                yield return HandleUnitDeathAtCurrentAction(result, action.targetUnitId);
+            if (string.Equals(action.actionType, "Attack", StringComparison.OrdinalIgnoreCase))
+            {
+                ApplyLocomotionPostureForExecutedActionIfLocal(result, action);
+                yield return PlayColdMeleeAttackIfApplicable(result, action);
+                yield return PlayRangedBulletAnimation(result, action);
 
-            float pause = GetScaledReplayPauseSeconds(_attackActionPauseSeconds);
-            if (pause > 0f)
-                yield return new WaitForSecondsRealtime(pause);
-        }
-        else if (action.actionType == "UseItem")
-        {
-            yield return PlayUseItemMedicineAnimation(result, action);
-            if (action.succeeded && action.healed > 0)
-                ShowHealPopupForAction(result, action);
+                if (action.succeeded && action.damage > 0 && !string.IsNullOrEmpty(action.targetUnitId))
+                    ApplyReplayHpDamageToTarget(result, action.targetUnitId, action.damage);
+
+                if (action.succeeded && action.damage > 0)
+                    ShowDamagePopupForAction(result, action);
+
+                bool targetDeadAfterHp = false;
+                if (action.succeeded && action.damage > 0 && !string.IsNullOrEmpty(action.targetUnitId)
+                    && TryResolveAnimatedUnit(result, action.targetUnitId, out object targetUnit, out bool targetIsLocal))
+                {
+                    if (targetIsLocal && targetUnit is Player tpl)
+                        targetDeadAfterHp = tpl.IsDead;
+                    else if (targetUnit is RemoteBattleUnitView trv)
+                        targetDeadAfterHp = trv.CurrentHp <= 0;
+                }
+
+                if (targetDeadAfterHp || action.targetDied)
+                    yield return HandleUnitDeathAtCurrentAction(result, action.targetUnitId);
+
+                float pause = GetScaledReplayPauseSeconds(_attackActionPauseSeconds);
+                if (pause > 0f)
+                    yield return new WaitForSecondsRealtime(pause);
+            }
+            else if (string.Equals(action.actionType, "UseItem", StringComparison.OrdinalIgnoreCase))
+            {
+                ApplyLocomotionPostureForExecutedActionIfLocal(result, action);
+                yield return PlayUseItemMedicineAnimation(result, action);
+                if (action.succeeded && action.healed > 0 && !string.IsNullOrEmpty(action.unitId))
+                    ApplyReplayHpHealToUnit(result, action.unitId, action.healed);
+                if (action.succeeded && action.healed > 0)
+                    ShowHealPopupForAction(result, action);
+            }
         }
     }
 
@@ -1955,57 +2147,6 @@ public class GameSession : MonoBehaviour
             yield return remote.PlayPathAnimation(path, resetHexWalkPhase: resetHex, clearMovementStateWhenDone: !nextMoveSameUnit);
     }
 
-    private IEnumerator PlayTickActionsParallel(TurnResultPayload result, List<ExecutedActionPlaybackEntry> playback, int tickStart, int tickEndExclusive)
-    {
-        var indicesByUnit = new Dictionary<string, List<int>>(StringComparer.Ordinal);
-        var running = new List<Coroutine>();
-        for (int i = tickStart; i < tickEndExclusive; i++)
-        {
-            BattleExecutedAction action = playback[i]?.Action;
-            if (action == null)
-                continue;
-            string unitKey = string.IsNullOrEmpty(action.unitId) ? "__no_unit__" + i.ToString() : action.unitId;
-            if (!indicesByUnit.TryGetValue(unitKey, out var list))
-            {
-                list = new List<int>();
-                indicesByUnit[unitKey] = list;
-            }
-            list.Add(i);
-        }
-
-        foreach (List<int> indices in indicesByUnit.Values)
-            running.Add(StartCoroutine(PlayTickActionsForUnit(result, playback, indices)));
-        foreach (Coroutine c in running)
-            yield return c;
-    }
-
-    private IEnumerator PlayTickActionsForUnit(TurnResultPayload result, List<ExecutedActionPlaybackEntry> playback, List<int> indices)
-    {
-        if (indices == null || indices.Count == 0)
-            yield break;
-        for (int i = 0; i < indices.Count; i++)
-        {
-            int playbackIndex = indices[i];
-            BattleExecutedAction action = playback[playbackIndex]?.Action;
-            if (action == null)
-                continue;
-            bool prevMoveSameUnit = false;
-            if (playbackIndex > 0)
-            {
-                BattleExecutedAction prev = playback[playbackIndex - 1]?.Action;
-                prevMoveSameUnit = IsSucceededMoveStepForSameUnit(prev, action.unitId);
-            }
-
-            bool nextMoveSameUnit = false;
-            if (playbackIndex + 1 < playback.Count)
-            {
-                BattleExecutedAction next = playback[playbackIndex + 1]?.Action;
-                nextMoveSameUnit = IsSucceededMoveStepForSameUnit(next, action.unitId);
-            }
-            yield return PlayExecutedAction(result, action, prevMoveSameUnit, nextMoveSameUnit);
-        }
-    }
-
     private static bool IsSucceededMoveStepForSameUnit(BattleExecutedAction action, string unitId)
     {
         return action != null
@@ -2478,7 +2619,12 @@ public class GameSession : MonoBehaviour
 
         LogHitRollsFromTurnResult(targetTurn);
         var playback = BuildExecutedActionPlayback(targetTurn);
-        var jobs = BuildTurnResultAnimationJobs(targetTurn, prepareForAnimation: true, deferLocomotionPosture: playback.Count > 0);
+        bool deferHpForReplayHistory = playback.Count > 0;
+        var jobs = BuildTurnResultAnimationJobs(
+            targetTurn,
+            prepareForAnimation: true,
+            deferLocomotionPosture: playback.Count > 0,
+            deferHpForReplay: deferHpForReplayHistory);
         if (playback.Count > 0)
             yield return PlayReplayAnimationsParallel(playback, targetTurn);
         else if (jobs.Count > 0)
@@ -2976,7 +3122,8 @@ public class GameSession : MonoBehaviour
         if (local == null)
             return;
 
-        local.ForceStopMovement();
+        // Do not exit third-person / planning camera here — only the user toggles view (GamePhaseViewController).
+        local.ForceStopMovement(exitThirdPersonCamera: false);
         local.SetHidden(true);
         if (showMessage)
             OnNetworkMessage?.Invoke(Loc.T("ui.battle_lost"));
@@ -2994,7 +3141,7 @@ public class GameSession : MonoBehaviour
         if (isLocal)
         {
             if (unit is Player local)
-                local.ForceStopMovement();
+                local.ForceStopMovement(exitThirdPersonCamera: false);
             yield return HandleLocalEliminationAfterMessage(escaped: false);
             yield break;
         }
@@ -3002,6 +3149,16 @@ public class GameSession : MonoBehaviour
         if (unit is RemoteBattleUnitView remote)
         {
             string key = ResolveRemoteUnitKey(result, deadUnitId);
+            remote.SnapToGridCell();
+            // Let Animator/PlayerCharacterAnimator run one frame so death clip starts before despawn.
+            yield return null;
+            PlayerCharacterAnimator deathAnim = remote.GetComponentInChildren<PlayerCharacterAnimator>();
+            float deathSec = deathAnim != null ? deathAnim.GetDeathClipDurationSeconds() : 0f;
+            if (deathSec > 0.05f)
+                yield return new WaitForSecondsRealtime(deathSec);
+            else
+                yield return new WaitForSecondsRealtime(0.35f);
+
             if (!string.IsNullOrEmpty(key))
                 _remoteUnits.Remove(key);
             if (remote != null)

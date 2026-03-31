@@ -86,12 +86,6 @@ public static class LoginSceneSetupTool
         InputField passField = MainMenuSetupTool.CreateAuthInputRow(
             formRt, "Password", "PasswordInputField", "Password", "test", new Vector2(0f, 30f), true);
 
-        Toggle solo = MainMenuSetupTool.CreateMenuToggle(canvasGo.transform, "Toggle_SoloVsMonster", "Monster battle (solo)", 20f);
-        RectTransform soloRt = solo.GetComponent<RectTransform>();
-        soloRt.anchorMin = new Vector2(0.5f, 0.5f);
-        soloRt.anchorMax = new Vector2(0.5f, 0.5f);
-        soloRt.anchoredPosition = new Vector2(0f, -40f);
-
         Toggle dbg = MainMenuSetupTool.CreateMenuToggle(canvasGo.transform, "Toggle_Debug", "Debug (localhost)", -10f);
         RectTransform dbgRt = dbg.GetComponent<RectTransform>();
         dbgRt.anchorMin = new Vector2(0.5f, 0.5f);
@@ -140,7 +134,6 @@ public static class LoginSceneSetupTool
         SerializedObject so = new SerializedObject(loginSceneController);
         so.FindProperty("_loginInputField").objectReferenceValue = loginField;
         so.FindProperty("_passwordInputField").objectReferenceValue = passField;
-        so.FindProperty("_soloVsMonsterToggle").objectReferenceValue = solo;
         so.FindProperty("_debugLocalhostToggle").objectReferenceValue = dbg;
         so.FindProperty("_enterButton").objectReferenceValue = enterBtn;
         so.FindProperty("_errorTextLegacy").objectReferenceValue = errTx;

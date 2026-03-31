@@ -22,6 +22,7 @@ public class MainMenuSpectatorBattlesController : MonoBehaviour
 
     private void OnEnable()
     {
+        Loc.LanguageChanged += OnLocLanguageChanged;
         SessionWebSocketConnection.OnSpectatorListReceived += OnSpectatorListReceived;
         SessionWebSocketConnection.OnSpectatorWatchReceived += OnSpectatorWatchReceived;
         SessionWebSocketConnection.EnsureStarted();
@@ -38,6 +39,19 @@ public class MainMenuSpectatorBattlesController : MonoBehaviour
         {
             StopCoroutine(_refreshCo);
             _refreshCo = null;
+        }
+    }
+
+    void OnLocLanguageChanged(GameLanguage _)
+    {
+        foreach (var row in _spawnedRows)
+        {
+            if (row == null)
+                continue;
+            Transform watchTr = row.transform.Find("Watch_Battle_Button");
+            Text txt = watchTr != null ? watchTr.GetComponentInChildren<Text>(true) : null;
+            if (txt != null)
+                txt.text = Loc.T("menu.spectator_watch");
         }
     }
 
@@ -98,6 +112,9 @@ public class MainMenuSpectatorBattlesController : MonoBehaviour
                 string bid = b.battleId;
                 btn.onClick.RemoveAllListeners();
                 btn.onClick.AddListener(() => SessionWebSocketConnection.SendSpectatorWatchRequest(bid));
+                var watchTxt = btnTr.GetComponentInChildren<Text>(true);
+                if (watchTxt != null)
+                    watchTxt.text = Loc.T("menu.spectator_watch");
             }
         }
     }

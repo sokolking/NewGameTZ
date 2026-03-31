@@ -19,6 +19,9 @@ public static class Loc
     /// <summary>Active UI language; persisted via <see cref="SetLanguage"/> / PlayerPrefs.</summary>
     public static GameLanguage Current { get; set; } = GameLanguage.English;
 
+    /// <summary>Fired after <see cref="SetLanguage"/> (after <see cref="LocalizedText.RefreshAll"/>).</summary>
+    public static event Action<GameLanguage> LanguageChanged;
+
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
     static void ApplySavedLanguageEarly()
     {
@@ -43,6 +46,7 @@ public static class Loc
         PlayerPrefs.SetInt(LanguagePrefsKey, (int)lang);
         PlayerPrefs.Save();
         LocalizedText.RefreshAll();
+        LanguageChanged?.Invoke(lang);
     }
 
     static void EnsureLoaded()

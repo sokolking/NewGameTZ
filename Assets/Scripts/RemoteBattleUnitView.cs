@@ -56,6 +56,8 @@ public class RemoteBattleUnitView : MonoBehaviour
             || NetworkPlayerId.StartsWith("MOB_", StringComparison.OrdinalIgnoreCase));
     public int CurrentCol { get; private set; }
     public int CurrentRow { get; private set; }
+    /// <summary>Battle grid (for snapping / grounding).</summary>
+    public HexGrid Grid => _grid;
     public int CurrentHp => _currentHp;
     public int MaxHp => _maxHp;
     public string DisplayName => string.IsNullOrEmpty(_displayName) ? (NetworkPlayerId ?? "?") : _displayName;
@@ -134,6 +136,9 @@ public class RemoteBattleUnitView : MonoBehaviour
             CurrentRow = startRow;
         }
         EnsureVisual();
+        // Spawn path calls SetDisplayProfile after Initialize; history replay / TurnResult recreation only calls Initialize,
+        // so create the overhead nameplate here (DisplayName falls back to NetworkPlayerId until SetDisplayProfile).
+        EnsureNameplate();
     }
 
     /// <summary>Updates ally/enemy tint when team info arrives (e.g. first turn result).</summary>
@@ -523,5 +528,13 @@ public class RemoteBattleUnitView : MonoBehaviour
     public void ForceStopMovement()
     {
         _isMoving = false;
+    }
+
+    /// <summary>Align root to the logical hex cell (e.g. before death VFX) so pose is not played mid-lerp between cells.</summary>
+    public void SnapToGridCell()
+    {
+        if (_grid == null)
+            return;
+        transform.position = _grid.GetCellWorldPosition(CurrentCol, CurrentRow);
     }
 }

@@ -83,19 +83,13 @@ public static class MainMenuSetupTool
         Undo.RegisterFullObjectHierarchyUndo(mm.gameObject, "Add Main Menu Toggles");
         Transform root = mm.transform;
 
-        Toggle solo = root.Find("Toggle_SoloVsMonster")?.GetComponent<Toggle>();
-        if (solo == null)
-            solo = CreateMenuToggle(root, "Toggle_SoloVsMonster", "Бой с монстром (соло)", 110f);
-
         Toggle dbg = root.Find("Toggle_Debug")?.GetComponent<Toggle>();
         if (dbg == null)
             dbg = CreateMenuToggle(root, "Toggle_Debug", "Debug (localhost)", 75f);
 
-        solo.isOn = false;
         dbg.isOn = BattleServerRuntime.UseDebugLocalhost;
 
         SerializedObject so = new SerializedObject(mm);
-        so.FindProperty("_soloVsMonsterToggle").objectReferenceValue = solo;
         so.FindProperty("_debugLocalhostToggle").objectReferenceValue = dbg;
         so.ApplyModifiedProperties();
 
@@ -104,7 +98,7 @@ public static class MainMenuSetupTool
             EditorSceneManager.MarkSceneDirty(mm.gameObject.scene);
 
         Selection.activeGameObject = mm.gameObject;
-        Debug.Log("Hex Grid: галки «Бой с монстром» и «Debug (localhost)» добавлены/обновлены и привязаны к MainMenuUI.");
+        Debug.Log("Hex Grid: галка «Debug (localhost)» добавлена/обновлена и привязана к MainMenuUI.");
     }
 
     private static void SetupMainMenuUiCore()
@@ -207,8 +201,6 @@ public static class MainMenuSetupTool
         Button settingsBtn = CreateButton("Button_Settings", "Settings", 0f);
         Button quitBtn = CreateButton("Button_Quit", "Quit", -40f);
 
-        Toggle soloToggle = CreateMenuToggle(menuRoot.transform, "Toggle_SoloVsMonster", "Бой с монстром (соло)", 110f);
-        soloToggle.isOn = false;
         Toggle debugToggle = CreateMenuToggle(menuRoot.transform, "Toggle_Debug", "Debug (localhost)", 75f);
         debugToggle.isOn = BattleServerRuntime.UseDebugLocalhost;
 
@@ -456,7 +448,6 @@ public static class MainMenuSetupTool
         so.FindProperty("_settingsPanel").objectReferenceValue = settingsPanel;
         so.FindProperty("_resolutionText").objectReferenceValue = resText;
         so.FindProperty("_matchmaking").objectReferenceValue = matchmaking;
-        so.FindProperty("_soloVsMonsterToggle").objectReferenceValue = soloToggle;
         so.FindProperty("_debugLocalhostToggle").objectReferenceValue = debugToggle;
         so.FindProperty("_pvpMatchmakingModeDropdown").objectReferenceValue = null;
         so.FindProperty("_matchTypeToggle1v1").objectReferenceValue = matchT1;
@@ -479,7 +470,7 @@ public static class MainMenuSetupTool
         settingsPanel.SetActive(false);
 
         Selection.activeGameObject = menuRoot;
-        Debug.Log("Hex Grid: Main Menu UI пересоздан (фон, AuthPanel, галки соло/дебаг, Find Game / Settings / Quit, панель настроек).");
+        Debug.Log("Hex Grid: Main Menu UI пересоздан (фон, AuthPanel, галка дебага, Find Game / Settings / Quit, панель настроек).");
     }
 
     /// <summary>Панель логина/пароля: AuthPanel/LoginInputField, AuthPanel/PasswordInputField (как ожидает MainMenuUI).</summary>

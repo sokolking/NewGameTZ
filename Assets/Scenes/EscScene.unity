@@ -1102,8 +1102,9 @@ GameObject:
   - component: {fileID: 326528304}
   - component: {fileID: 326528306}
   - component: {fileID: 326528305}
+  - component: {fileID: 326528307}
   m_Layer: 0
-  m_Name: Button_Surrend_Battle
+  m_Name: Text
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -1161,7 +1162,7 @@ MonoBehaviour:
     m_HorizontalOverflow: 0
     m_VerticalOverflow: 0
     m_LineSpacing: 1
-  m_Text: Surrend Battle
+  m_Text: Back to main
 --- !u!222 &326528306
 CanvasRenderer:
   m_ObjectHideFlags: 0
@@ -1170,6 +1171,19 @@ CanvasRenderer:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 326528303}
   m_CullTransparentMesh: 1
+--- !u!114 &326528307
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 326528303}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: a7f3e2d1c0b94a8e9f1d2c3b4a596877, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::LocalizedText
+  _localizationKey: esc.menu.back_to_main
 --- !u!1 &367518515
 GameObject:
   m_ObjectHideFlags: 0
@@ -2496,7 +2510,7 @@ GameObject:
   - component: {fileID: 796086724}
   - component: {fileID: 796086727}
   m_Layer: 0
-  m_Name: Button_Surrend_Battle
+  m_Name: Button_Back_To_Main
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -3575,7 +3589,6 @@ MonoBehaviour:
   _matchmaking: {fileID: 1306177019}
   _loginInputField: {fileID: 0}
   _passwordInputField: {fileID: 0}
-  _soloVsMonsterToggle: {fileID: 0}
   _debugLocalhostToggle: {fileID: 0}
 --- !u!114 &1306177021
 MonoBehaviour:

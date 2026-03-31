@@ -7,7 +7,7 @@ using UnityEngine.UI;
 
 /// <summary>
 /// LoginScene: кнопка входа, проверка логина/пароля на сервере, переход в MainMenu.
-/// Сохраняет состояние Toggle_SoloVsMonster и Toggle_Debug после успешного входа.
+/// Сохраняет состояние Toggle_Debug после успешного входа.
 /// </summary>
 public class LoginSceneController : MonoBehaviour
 {
@@ -20,7 +20,6 @@ public class LoginSceneController : MonoBehaviour
     [Header("References (empty = find by name under Canvas)")]
     [SerializeField] private InputField _loginInputField;
     [SerializeField] private InputField _passwordInputField;
-    [SerializeField] private Toggle _soloVsMonsterToggle;
     [SerializeField] private Toggle _debugLocalhostToggle;
     [SerializeField] private Button _enterButton;
     [SerializeField] private TMP_Text _errorText;
@@ -59,8 +58,6 @@ public class LoginSceneController : MonoBehaviour
             _loginInputField = FindComponent<InputField>(root, "LoginInputField");
         if (_passwordInputField == null)
             _passwordInputField = FindComponent<InputField>(root, "PasswordInputField");
-        if (_soloVsMonsterToggle == null)
-            _soloVsMonsterToggle = FindComponent<Toggle>(root, "Toggle_SoloVsMonster");
         if (_debugLocalhostToggle == null)
             _debugLocalhostToggle = FindComponent<Toggle>(root, "Toggle_Debug");
         if (_enterButton == null)
@@ -88,7 +85,6 @@ public class LoginSceneController : MonoBehaviour
 
     private void EnsureToggleLabels()
     {
-        ApplyToggleLabel(_soloVsMonsterToggle, Loc.T("login.solo_battle_label"));
         ApplyToggleLabel(_debugLocalhostToggle, Loc.T("login.debug_localhost_label"));
     }
 
@@ -117,14 +113,13 @@ public class LoginSceneController : MonoBehaviour
             return;
         }
 
-        bool solo = _soloVsMonsterToggle != null && _soloVsMonsterToggle.isOn;
         bool debug = _debugLocalhostToggle != null && _debugLocalhostToggle.isOn;
         string baseUrl = (debug ? BattleServerRuntime.DebugLocalBaseUrl : BattleServerRuntime.ProductionBaseUrl).TrimEnd('/');
 
-        StartCoroutine(CoTryLogin(username, password, solo, debug, baseUrl));
+        StartCoroutine(CoTryLogin(username, password, debug, baseUrl));
     }
 
-    private IEnumerator CoTryLogin(string username, string password, bool solo, bool debug, string baseUrl)
+    private IEnumerator CoTryLogin(string username, string password, bool debug, string baseUrl)
     {
         _busy = true;
         string url = baseUrl + "/api/auth/login";
@@ -177,7 +172,7 @@ public class LoginSceneController : MonoBehaviour
         string displayName = !string.IsNullOrEmpty(parsed.username) ? parsed.username : username;
 
         BattleServerRuntime.UseDebugLocalhost = debug;
-        GameModeState.SetSinglePlayer(solo);
+        GameModeState.SetSinglePlayer(false);
         BattleSessionState.SetSessionToken(token, displayName, baseUrl);
         SessionWebSocketConnection.EnsureStarted();
 

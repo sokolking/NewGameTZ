@@ -359,7 +359,7 @@ app.Map("/ws/battle", async (HttpContext ctx, BattleRoomStore store, BattleAuthS
     if (spectatorWs)
     {
         playerId = "__spectator__";
-        if (roomForWs == null || !roomForWs.IsUnfinishedForLoginResume())
+        if (roomForWs == null || !roomForWs.IsUnfinishedForLoginResume() || roomForWs.IsSolo)
         {
             Console.WriteLine($"[BattleWS] reject: spectator battle not available, battleId={battleId}, utc={DateTime.UtcNow:O}");
             ctx.Response.StatusCode = StatusCodes.Status403Forbidden;

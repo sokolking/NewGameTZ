@@ -20,6 +20,9 @@ public partial class BattleRoomStore
             {
                 if (!kv.Value.IsUnfinishedForLoginResume())
                     continue;
+                // Solo/training battles are private to the participant — not listed for spectators.
+                if (kv.Value.IsSolo)
+                    continue;
                 list.Add((kv.Key, kv.Value.GetSpectatorModeLabel()));
             }
 
@@ -53,6 +56,12 @@ public partial class BattleRoomStore
             if (!_rooms.TryGetValue(battleId.Trim(), out var room) || !room.IsUnfinishedForLoginResume())
             {
                 errorCode = "battle_not_found_or_finished";
+                return JsonSerializer.Serialize(new { type = "spectatorWatchResponse", ok = false, code = errorCode }, SpectatorJsonOptions);
+            }
+
+            if (room.IsSolo)
+            {
+                errorCode = "spectator_solo_not_allowed";
                 return JsonSerializer.Serialize(new { type = "spectatorWatchResponse", ok = false, code = errorCode }, SpectatorJsonOptions);
             }
 

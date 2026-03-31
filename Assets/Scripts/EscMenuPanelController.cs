@@ -4,7 +4,8 @@ using UnityEngine.UI;
 
 /// <summary>
 /// Кнопки EscMenuPanel в EscScene: Resume = закрыть Esc; Settings = как у <see cref="MainMenuUI"/>;
-/// Surrend — только если Esc открыт с MainScene; Exit — выход из боя и закрытие игры.
+/// Back to main — только в режиме наблюдателя (spectator), возврат в главное меню;
+/// Exit — выход из боя и закрытие игры.
 /// При открытии Settings — EscMenuPanel скрывается; при закрытии Settings — возвращается.
 /// </summary>
 [DefaultExecutionOrder(50)]
@@ -13,7 +14,7 @@ public sealed class EscMenuPanelController : MonoBehaviour
     const string ResumeButtonName        = "Button_Resume";
     const string SettingsButtonName      = "Button_Settings";
     const string CloseSettingsButtonName = "Button_CloseSettings";
-    const string SurrenderButtonName     = "Button_Surrend_Battle";
+    const string BackToMainButtonName    = "Button_Back_To_Main";
     const string ExitGameButtonName      = "Button_Exit_Game";
 
     // SettingsPanel — sibling-объект в иерархии EscScene
@@ -24,8 +25,13 @@ public sealed class EscMenuPanelController : MonoBehaviour
         ResolveSettingsPanel();
         WireResume();
         WireSettings();
-        WireSurrenderAndExit();
-        RefreshSurrenderVisibility();
+        WireBackToMainAndExit();
+        RefreshBackToMainVisibility();
+    }
+
+    void OnEnable()
+    {
+        RefreshBackToMainVisibility();
     }
 
     // ── Settings panel ────────────────────────────────────────────────────────
@@ -97,13 +103,13 @@ public sealed class EscMenuPanelController : MonoBehaviour
         EscOpensEscScene.RequestClose();
     }
 
-    void WireSurrenderAndExit()
+    void WireBackToMainAndExit()
     {
-        Button surrender = FindButtonDeep(SurrenderButtonName);
-        if (surrender != null)
+        Button backToMain = FindButtonDeep(BackToMainButtonName);
+        if (backToMain != null)
         {
-            surrender.onClick.RemoveListener(OnSurrenderBattleClicked);
-            surrender.onClick.AddListener(OnSurrenderBattleClicked);
+            backToMain.onClick.RemoveListener(OnBackToMainClicked);
+            backToMain.onClick.AddListener(OnBackToMainClicked);
         }
 
         Button exit = FindButtonDeep(ExitGameButtonName);
@@ -114,16 +120,21 @@ public sealed class EscMenuPanelController : MonoBehaviour
         }
     }
 
-    void RefreshSurrenderVisibility()
+    void RefreshBackToMainVisibility()
     {
-        Transform t = FindChildDeep(transform, SurrenderButtonName);
+        Transform t = FindChildDeep(transform, BackToMainButtonName);
         if (t != null)
-            t.gameObject.SetActive(EscOpensEscScene.WasOpenedFromMainScene);
+            t.gameObject.SetActive(BattleSessionState.IsSpectatorMode);
     }
 
-    void OnSurrenderBattleClicked()
+    void OnBackToMainClicked()
     {
-        BattleEscActions.NotifyLeaveCurrentBattleIfAny();
+        if (!BattleSessionState.IsSpectatorMode)
+            return;
+
+        BattleSessionState.ClearSpectatorMode();
+        BattleSessionState.ClearPending();
+
         string menu = string.IsNullOrEmpty(EscOpensEscScene.FallbackSceneWhenNoReturn)
             ? "MainMenu"
             : EscOpensEscScene.FallbackSceneWhenNoReturn;

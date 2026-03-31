@@ -16,6 +16,7 @@ using UnityEditor;
 /// </summary>
 [RequireComponent(typeof(Animator))]
 [DisallowMultipleComponent]
+[DefaultExecutionOrder(50)]
 public sealed class PlayerCharacterAnimator : MonoBehaviour
 {
     private const string DefaultStubResourcePath = "Animator/PlayablesStub";
@@ -70,6 +71,12 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
     [SerializeField] private bool _lockLocalRigYDuringMedicineUse = true;
     [Tooltip("If mesh bounds still go below baseline during medicine clip, lift model up to keep feet above ground.")]
     [SerializeField] private bool _preventMeshSinkingDuringMedicineUse = true;
+    [Tooltip("Lock Animator rig local Y during death (optional). If Clamp Death Mesh Bottom is on, rig lock is skipped to avoid fighting the floor solver.")]
+    [SerializeField] private bool _lockLocalRigYDuringDeath = false;
+    [Tooltip("Each LateUpdate while dead: shift unit root so body mesh bottom matches hex floor. Uses SkinnedMesh only (excludes nameplate). Prefer fixing death clip authoring if pose stays wrong.")]
+    [SerializeField] private bool _clampDeathMeshBottomToHexFloor = true;
+    [Tooltip("Skip micro-adjustments below this |meshMinY - floorY| to reduce jitter.")]
+    [SerializeField] private float _deathFloorClampEpsilon = 0.02f;
     [Tooltip("Playback speed for cold melee attack clips (>1 = faster).")]
     [SerializeField] [Range(0.5f, 4f)] private float _coldMeleeAttackPlaybackSpeed = 2f;
 
@@ -77,6 +84,8 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
     private AnimationClipPlayable _clipPlayable;
     private AnimationClip _currentClip;
     private bool _deathPlayed;
+    private bool _deathRigLockCaptured;
+    private float _deathRigLockLocalY;
     private Vector3 _lastWorldPos;
     /// <summary>Если задано — <see cref="LateUpdate"/> крутит модель в эту сторону (выстрел), игнорируя лицо к движению.</summary>
     private Vector3? _horizontalFacingOverride;
@@ -166,6 +175,13 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
         _cachedClipAttackColdLegs = _attackColdLegs as AnimationClip;
         _cachedClipUseItemMedicine = _useItemMedicine as AnimationClip;
         _clipsCached = true;
+    }
+
+    /// <summary>Duration of the resolved death clip (seconds), or 0 if none — for delaying despawn until the death pose plays.</summary>
+    public float GetDeathClipDurationSeconds()
+    {
+        AnimationClip clip = ClipDead;
+        return clip != null ? clip.length : 0f;
     }
 
     /// <summary>
@@ -531,6 +547,7 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
 
         _lastWorldPos = GetMovementWorldPosition();
         _deathPlayed = false;
+        _deathRigLockCaptured = false;
         _resolvedClipDirty = true;
         CacheClipReferences();
 
@@ -567,6 +584,7 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
         if (hp > 0)
         {
             _deathPlayed = false;
+            _deathRigLockCaptured = false;
             AnimationClip clip = ResolveLocomotionClip();
             if (clip != null)
                 PlayClip(clip);
@@ -602,6 +620,7 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
     {
         if (!_deathPlayed)
         {
+            CaptureDeathRigLockYBeforeClip();
             PlayClip(ClipDead);
             _deathPlayed = true;
         }
@@ -614,17 +633,87 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
         }
     }
 
+    private void CaptureDeathRigLockYBeforeClip()
+    {
+        if (!_lockLocalRigYDuringDeath || _animator == null)
+            return;
+        if (_deathRigLockCaptured)
+            return;
+        _deathRigLockLocalY = _animator.transform.localPosition.y;
+        _deathRigLockCaptured = true;
+    }
+
+    private void ApplyDeathRigLocalYLock()
+    {
+        if (!_lockLocalRigYDuringDeath || !_deathRigLockCaptured || _animator == null)
+            return;
+        Vector3 lp = _animator.transform.localPosition;
+        if (Mathf.Approximately(lp.y, _deathRigLockLocalY))
+            return;
+        lp.y = _deathRigLockLocalY;
+        _animator.transform.localPosition = lp;
+    }
+
+    /// <summary>
+    /// Align unit root Y so renderer bounds bottom matches hex floor — death clips often move hips/feet in muscle space
+    /// while <see cref="Animator.applyRootMotion"/> is off, which looks like hovering.
+    /// </summary>
+    private void ApplyDeathMeshBottomToHexFloor()
+    {
+        if (!_clampDeathMeshBottomToHexFloor)
+            return;
+        Transform unitRoot = _player != null
+            ? _player.transform
+            : _remoteBattleUnit != null
+                ? _remoteBattleUnit.transform
+                : null;
+        HexGrid grid = _player != null ? _player.Grid : _remoteBattleUnit != null ? _remoteBattleUnit.Grid : null;
+        if (unitRoot == null || grid == null)
+            return;
+
+        int col = _player != null ? _player.CurrentCol : _remoteBattleUnit.CurrentCol;
+        int row = _player != null ? _player.CurrentRow : _remoteBattleUnit.CurrentRow;
+        float floorY = grid.GetCellWorldPosition(col, row).y;
+        float minY = GetDeathGroundReferenceMinWorldY(unitRoot, out bool hasMin);
+        if (!hasMin)
+            return;
+
+        float diff = minY - floorY;
+        if (Mathf.Abs(diff) <= _deathFloorClampEpsilon)
+            return;
+
+        Vector3 p = unitRoot.position;
+        p.y -= diff;
+        unitRoot.position = p;
+    }
+
     private void LateUpdate()
     {
         if (_player != null)
         {
             if (_player.IsDead || _player.IsHidden)
+            {
+                if (_player.IsDead && ClipDead != null && _deathPlayed)
+                {
+                    ApplyDeathMeshBottomToHexFloor();
+                    if (_lockLocalRigYDuringDeath && !_clampDeathMeshBottomToHexFloor)
+                        ApplyDeathRigLocalYLock();
+                }
                 return;
+            }
         }
         else if (_remoteBattleUnit != null)
         {
             if (_remoteBattleUnit.CurrentHp <= 0)
+            {
+                if (ClipDead != null && _deathPlayed)
+                {
+                    ApplyDeathMeshBottomToHexFloor();
+                    if (_lockLocalRigYDuringDeath && !_clampDeathMeshBottomToHexFloor)
+                        ApplyDeathRigLocalYLock();
+                }
                 return;
+            }
         }
         else
         {
@@ -918,9 +1007,69 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
 
     private float GetVisualMinWorldY(out bool ok)
     {
+        return GetVisualMinWorldYFrom(transform, out ok);
+    }
+
+    /// <summary>
+    /// Lowest Y for aligning the unit to hex floor during death: body <see cref="SkinnedMeshRenderer"/> only,
+    /// excludes <see cref="CharacterNameplateView"/> subtrees (TMP/Canvas bounds can skew min Y). Falls back to other renderers with the same exclusions.
+    /// </summary>
+    private static float GetDeathGroundReferenceMinWorldY(Transform unitRoot, out bool ok)
+    {
         ok = false;
         float minY = 0f;
-        var renderers = GetComponentsInChildren<Renderer>(true);
+        if (unitRoot == null)
+            return minY;
+
+        var skins = unitRoot.GetComponentsInChildren<SkinnedMeshRenderer>(true);
+        for (int i = 0; i < skins.Length; i++)
+        {
+            SkinnedMeshRenderer smr = skins[i];
+            if (smr == null || !smr.enabled)
+                continue;
+            if (smr.GetComponentInParent<CharacterNameplateView>(true) != null)
+                continue;
+            Bounds b = smr.bounds;
+            if (!ok)
+            {
+                minY = b.min.y;
+                ok = true;
+            }
+            else if (b.min.y < minY)
+                minY = b.min.y;
+        }
+
+        if (ok)
+            return minY;
+
+        var renderers = unitRoot.GetComponentsInChildren<Renderer>(true);
+        for (int i = 0; i < renderers.Length; i++)
+        {
+            Renderer r = renderers[i];
+            if (r == null || !r.enabled)
+                continue;
+            if (r.GetComponentInParent<CharacterNameplateView>(true) != null)
+                continue;
+            Bounds b = r.bounds;
+            if (!ok)
+            {
+                minY = b.min.y;
+                ok = true;
+            }
+            else if (b.min.y < minY)
+                minY = b.min.y;
+        }
+
+        return minY;
+    }
+
+    private static float GetVisualMinWorldYFrom(Transform root, out bool ok)
+    {
+        ok = false;
+        float minY = 0f;
+        if (root == null)
+            return minY;
+        var renderers = root.GetComponentsInChildren<Renderer>(true);
         for (int i = 0; i < renderers.Length; i++)
         {
             Renderer r = renderers[i];

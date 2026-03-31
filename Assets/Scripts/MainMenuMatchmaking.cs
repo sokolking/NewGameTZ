@@ -47,12 +47,30 @@ public class MainMenuMatchmaking : MonoBehaviour
     private string _queueBattleId;
     private string _queuePlayerId;
     private string _pendingReadyCheckId;
+    /// <summary>Training flow: queue panel open with 1/1 + Ready; solo battle starts only after Ready.</summary>
+    private bool _trainingAwaitingReady;
+    private bool _soloJoinCoroutineActive;
+
+    bool _statusUsesLoc;
+    string _statusLocKey;
+    object[] _statusLocArgs;
+    string _statusRaw;
+
+    int _lastQueueCurrent;
+    int _lastQueueRequired;
+    bool _lastQueueProgressKnown;
+
+    int _lastReadyCheckConfirmed;
+    int _lastReadyCheckRequired;
+
+    public bool IsSearching => _searching;
 
     /// <summary>When true, <see cref="FindGame"/> only opens the queue panel; socket <c>queueJoin</c> runs when the player picks a mode (toggle).</summary>
     [SerializeField] private bool _socketJoinOnlyAfterMatchTypeToggle;
 
     private void OnEnable()
     {
+        Loc.LanguageChanged += OnLocLanguageChanged;
         SessionWebSocketConnection.OnMatchmakingQueueStateUpdated += OnQueueStateUpdated;
         SessionWebSocketConnection.OnMatchmakingQueueJoined += OnQueueJoined;
         SessionWebSocketConnection.OnMatchmakingQueueLeft += OnQueueLeftMessage;
@@ -65,6 +83,7 @@ public class MainMenuMatchmaking : MonoBehaviour
 
     private void OnDisable()
     {
+        Loc.LanguageChanged -= OnLocLanguageChanged;
         SessionWebSocketConnection.OnMatchmakingQueueStateUpdated -= OnQueueStateUpdated;
         SessionWebSocketConnection.OnMatchmakingQueueJoined -= OnQueueJoined;
         SessionWebSocketConnection.OnMatchmakingQueueLeft -= OnQueueLeftMessage;
@@ -137,6 +156,9 @@ public class MainMenuMatchmaking : MonoBehaviour
         if (_queueProgressText == null)
             return;
         int req = RequiredHumansForMode(mode);
+        _lastQueueCurrent = 0;
+        _lastQueueRequired = req;
+        _lastQueueProgressKnown = true;
         _queueProgressText.text = Loc.Tf("menu.matchmaking_players_progress", 0, req);
     }
 
@@ -173,10 +195,12 @@ public class MainMenuMatchmaking : MonoBehaviour
         _searching = false;
         _usingSocketQueue = false;
         _pendingReadyCheckId = null;
+        _trainingAwaitingReady = false;
         if (_readyButton != null)
             _readyButton.gameObject.SetActive(false);
         HideQueuePanel();
-        SetStatus("");
+        _lastQueueProgressKnown = false;
+        ClearStatus();
         if (_queueProgressText != null)
             _queueProgressText.text = "";
         if (resetMatchTypeToggles)
@@ -196,7 +220,7 @@ public class MainMenuMatchmaking : MonoBehaviour
 
         if (string.IsNullOrEmpty(BattleSessionState.AccessToken))
         {
-            SetStatus(Loc.T("menu.session_required"));
+            SetStatusLoc("menu.session_required");
             InvokeMatchTypeTogglesReset();
             return;
         }
@@ -219,7 +243,7 @@ public class MainMenuMatchmaking : MonoBehaviour
         ShowQueuePanel();
         RefreshQueueModeText();
         ApplyQueueProgressPlaceholderForMode(mode);
-        SetStatus(Loc.T("menu.matchmaking_searching"));
+        SetStatusLoc("menu.matchmaking_searching");
         SessionWebSocketConnection.EnsureStarted();
         _socketMatchmakingCoroutine = StartCoroutine(SocketMatchmakingConnectAndJoinCoroutine());
     }
@@ -293,7 +317,7 @@ public class MainMenuMatchmaking : MonoBehaviour
     {
         if (string.IsNullOrEmpty(BattleSessionState.AccessToken))
         {
-            SetStatus(Loc.T("menu.session_required"));
+            SetStatusLoc("menu.session_required");
             return;
         }
 
@@ -303,11 +327,34 @@ public class MainMenuMatchmaking : MonoBehaviour
 
         _serverUrl = BattleServerRuntime.CurrentBaseUrl;
 
+        // Training (solo vs mob): show 1/1 + Ready only; no socket queue — battle starts on Ready.
+        if (GameModeState.IsSinglePlayer)
+        {
+            StopSocketMatchmakingCoroutine();
+            _usingSocketQueue = false;
+            _pendingReadyCheckId = null;
+            _trainingAwaitingReady = true;
+            _searching = true;
+            _lastQueueCurrent = 1;
+            _lastQueueRequired = 1;
+            _lastQueueProgressKnown = true;
+            if (_queueProgressText != null)
+                _queueProgressText.text = Loc.Tf("menu.matchmaking_players_progress", 1, 1);
+            if (_queueModeText != null)
+                _queueModeText.text = Loc.Tf("menu.training_mode_label");
+            if (_readyButton != null)
+                _readyButton.gameObject.SetActive(true);
+            if (_readyHintText != null)
+                _readyHintText.text = Loc.T("menu.training_press_ready");
+            SetStatusLoc("menu.training_press_ready");
+            return;
+        }
+
         if (_useHttpMatchmakingFallback)
         {
             _usingSocketQueue = false;
             _searching = true;
-            SetStatus(Loc.T("menu.matchmaking_searching"));
+            SetStatusLoc("menu.matchmaking_searching");
             StartCoroutine(JoinAndWaitForBattleCoroutine());
             return;
         }
@@ -316,14 +363,14 @@ public class MainMenuMatchmaking : MonoBehaviour
         {
             RefreshQueueModeText();
             ApplyQueueProgressPlaceholderForMode(_pvpMode);
-            SetStatus(Loc.T("menu.matchmaking_select_mode"));
+            SetStatusLoc("menu.matchmaking_select_mode");
             return;
         }
 
         _usingSocketQueue = true;
         _searching = true;
         _pendingReadyCheckId = null;
-        SetStatus(Loc.T("menu.matchmaking_searching"));
+        SetStatusLoc("menu.matchmaking_searching");
         RefreshQueueModeText();
         ApplyQueueProgressPlaceholderForMode(_pvpMode);
         SessionWebSocketConnection.EnsureStarted();
@@ -334,17 +381,20 @@ public class MainMenuMatchmaking : MonoBehaviour
     /// <summary>Одиночный режим: запросить на сервере одиночный бой (1 игрок + моб) и сразу загрузить сцену.</summary>
     public void StartSinglePlayerServerBattle()
     {
-        if (_searching)
+        if (_soloJoinCoroutineActive)
+            return;
+        if (_searching && !_trainingAwaitingReady)
             return;
         if (string.IsNullOrEmpty(BattleSessionState.AccessToken))
         {
-            SetStatus(Loc.T("menu.session_required"));
+            SetStatusLoc("menu.session_required");
             return;
         }
 
         _serverUrl = BattleServerRuntime.CurrentBaseUrl;
         _searching = true;
-        SetStatus("Starting single-player battle...");
+        _soloJoinCoroutineActive = true;
+        SetStatusLoc("menu.training_starting_battle");
         StartCoroutine(JoinSoloAndStartBattleCoroutine());
     }
 
@@ -362,10 +412,11 @@ public class MainMenuMatchmaking : MonoBehaviour
 
         if (!SessionWebSocketConnection.IsSessionSocketConnected)
         {
-            SetStatus(Loc.T("menu.matchmaking_session_connect_failed"));
+            SetStatusLoc("menu.matchmaking_session_connect_failed");
             StopSocketMatchmakingCoroutine();
             _searching = false;
             _usingSocketQueue = false;
+            _lastQueueProgressKnown = false;
             HideQueuePanel();
             if (_queueProgressText != null)
                 _queueProgressText.text = "";
@@ -383,8 +434,11 @@ public class MainMenuMatchmaking : MonoBehaviour
             return;
         if (!string.IsNullOrEmpty(mode) && mode != ModeToWire(_pvpMode))
             return;
+        _lastQueueCurrent = current;
+        _lastQueueRequired = required;
+        _lastQueueProgressKnown = true;
         string line = Loc.Tf("menu.matchmaking_players_progress", current, required);
-        SetStatus(line);
+        SetStatusLoc("menu.matchmaking_players_progress", current, required);
         if (_queueProgressText != null)
             _queueProgressText.text = line;
         if (_readyButton != null && _pvpMode == PvpMatchmakingMode.PvpRandom && string.IsNullOrEmpty(_pendingReadyCheckId))
@@ -409,8 +463,10 @@ public class MainMenuMatchmaking : MonoBehaviour
         _pendingReadyCheckId = readyCheckId;
         if (_readyButton != null)
             _readyButton.gameObject.SetActive(true);
+        _lastReadyCheckConfirmed = 0;
+        _lastReadyCheckRequired = required;
         string hint = Loc.Tf("menu.matchmaking_ready_prompt", 0, required);
-        SetStatus(hint);
+        SetStatusLoc("menu.matchmaking_ready_prompt", 0, required);
         if (_readyHintText != null)
             _readyHintText.text = hint;
     }
@@ -421,8 +477,10 @@ public class MainMenuMatchmaking : MonoBehaviour
             return;
         if (!string.IsNullOrEmpty(_pendingReadyCheckId) && _pendingReadyCheckId != readyCheckId)
             return;
+        _lastReadyCheckConfirmed = confirmed;
+        _lastReadyCheckRequired = required;
         string hint = Loc.Tf("menu.matchmaking_ready_prompt", confirmed, required);
-        SetStatus(hint);
+        SetStatusLoc("menu.matchmaking_ready_prompt", confirmed, required);
         if (_readyHintText != null)
             _readyHintText.text = hint;
     }
@@ -439,7 +497,7 @@ public class MainMenuMatchmaking : MonoBehaviour
             "player_joined" => Loc.T("menu.matchmaking_ready_cancel_reason_player_joined"),
             _ => reason ?? ""
         };
-        SetStatus(Loc.Tf("menu.matchmaking_ready_cancelled", reasonText));
+        SetStatusLoc("menu.matchmaking_ready_cancelled", reasonText);
     }
 
     private void OnMatchStarted(MatchmakingMatchStartedMessage msg)
@@ -468,10 +526,11 @@ public class MainMenuMatchmaking : MonoBehaviour
             "invalid_mode" => "menu.matchmaking_error_invalid_mode",
             _ => "menu.matchmaking_error_generic"
         };
-        SetStatus(Loc.T(key));
+        SetStatusLoc(key);
         StopSocketMatchmakingCoroutine();
         _searching = false;
         _usingSocketQueue = false;
+        _lastQueueProgressKnown = false;
         HideQueuePanel();
         if (_queueProgressText != null)
             _queueProgressText.text = "";
@@ -485,6 +544,11 @@ public class MainMenuMatchmaking : MonoBehaviour
 
     private void OnConfirmReadyClicked()
     {
+        if (GameModeState.IsSinglePlayer && _trainingAwaitingReady)
+        {
+            StartSinglePlayerServerBattle();
+            return;
+        }
         if (string.IsNullOrEmpty(_pendingReadyCheckId))
             return;
         SessionWebSocketConnection.SendMatchmakingReadyConfirm(_pendingReadyCheckId);
@@ -580,14 +644,88 @@ public class MainMenuMatchmaking : MonoBehaviour
             _readyButton.gameObject.SetActive(false);
     }
 
+    void OnLocLanguageChanged(GameLanguage _)
+    {
+        RefreshLocalizedDynamicUi();
+    }
+
+    /// <summary>Re-apply matchmaking labels and status after <see cref="Loc.SetLanguage"/> (MainMenu has few <see cref="LocalizedText"/>).</summary>
+    public void RefreshLocalizedDynamicUi()
+    {
+        SetLeaveButtonLabel();
+        SetReadyButtonLabel();
+        RefreshQueueModeText();
+
+        if (_statusUsesLoc)
+            ApplyStatusToText();
+
+        if (_trainingAwaitingReady && _searching)
+        {
+            if (_queueProgressText != null)
+                _queueProgressText.text = Loc.Tf("menu.matchmaking_players_progress", 1, 1);
+            if (_queueModeText != null)
+                _queueModeText.text = Loc.Tf("menu.training_mode_label");
+            if (_readyHintText != null)
+                _readyHintText.text = Loc.T("menu.training_press_ready");
+            return;
+        }
+
+        if (_searching && _usingSocketQueue)
+        {
+            if (_lastQueueProgressKnown && _queueProgressText != null)
+                _queueProgressText.text = Loc.Tf("menu.matchmaking_players_progress", _lastQueueCurrent, _lastQueueRequired);
+
+            if (!string.IsNullOrEmpty(_pendingReadyCheckId) && _readyHintText != null)
+                _readyHintText.text = Loc.Tf("menu.matchmaking_ready_prompt", _lastReadyCheckConfirmed, _lastReadyCheckRequired);
+        }
+    }
+
+    void ClearStatus()
+    {
+        _statusUsesLoc = false;
+        _statusLocKey = null;
+        _statusLocArgs = null;
+        _statusRaw = "";
+        ApplyStatusToText();
+    }
+
     private void SetStatus(string message)
     {
-        if (_statusText != null)
-            _statusText.text = message ?? "";
+        _statusUsesLoc = false;
+        _statusLocKey = null;
+        _statusLocArgs = null;
+        _statusRaw = message ?? "";
+        ApplyStatusToText();
+    }
+
+    private void SetStatusLoc(string key, params object[] args)
+    {
+        _statusUsesLoc = true;
+        _statusLocKey = key;
+        _statusLocArgs = args;
+        _statusRaw = null;
+        ApplyStatusToText();
+    }
+
+    private void ApplyStatusToText()
+    {
+        if (_statusText == null)
+            return;
+        if (_statusUsesLoc && !string.IsNullOrEmpty(_statusLocKey))
+        {
+            _statusText.text = _statusLocArgs != null && _statusLocArgs.Length > 0
+                ? Loc.Tf(_statusLocKey, _statusLocArgs)
+                : Loc.T(_statusLocKey);
+        }
+        else
+            _statusText.text = _statusRaw ?? "";
     }
 
     /// <summary>Status line under menu buttons (e.g. «select match type»).</summary>
     public void ShowMenuStatus(string message) => SetStatus(message ?? "");
+
+    /// <summary>Localized status line (updates when language changes).</summary>
+    public void ShowMenuStatusLoc(string localizationKey) => SetStatusLoc(localizationKey);
 
     private IEnumerator JoinAndWaitForBattleCoroutine()
     {
@@ -643,41 +781,49 @@ public class MainMenuMatchmaking : MonoBehaviour
 
     private IEnumerator JoinSoloAndStartBattleCoroutine()
     {
-        var body = new JoinRequest { startCol = 0, startRow = 0, solo = true, characterLevel = 1 };
-        var json = JsonConvert.SerializeObject(body);
-        string url = _serverUrl.TrimEnd('/') + "/api/battle/join";
-        string responseText = null;
-        string errBody = null;
-        yield return HttpSimple.PostJsonWithAuth(url, json, BattleSessionState.AccessToken, b => responseText = b, e => errBody = e);
-
-        if (errBody != null)
+        try
         {
-            SetStatus(ExtractRequestErrorFromBody(errBody, "Connection failed. Check server."));
-            _searching = false;
-            yield break;
-        }
+            var body = new JoinRequest { startCol = 0, startRow = 0, solo = true, characterLevel = 1 };
+            var json = JsonConvert.SerializeObject(body);
+            string url = _serverUrl.TrimEnd('/') + "/api/battle/join";
+            string responseText = null;
+            string errBody = null;
+            yield return HttpSimple.PostJsonWithAuth(url, json, BattleSessionState.AccessToken, b => responseText = b, e => errBody = e);
 
-        if (string.IsNullOrEmpty(responseText))
+            if (errBody != null)
+            {
+                SetStatus(ExtractRequestErrorFromBody(errBody, "Connection failed. Check server."));
+                _searching = false;
+                yield break;
+            }
+
+            if (string.IsNullOrEmpty(responseText))
+            {
+                SetStatus("Connection failed. Check server.");
+                _searching = false;
+                yield break;
+            }
+
+            var response = ParseJoinResponse(responseText);
+            string battleId = response.battleId;
+            string playerId = response.playerId;
+
+            if (response.status == "battle" && response.battleStarted != null)
+            {
+                BattleSessionState.SetPending(battleId, playerId, _serverUrl, response.battleStarted);
+                _searching = false;
+                _trainingAwaitingReady = false;
+                SceneManager.LoadScene(_gameSceneName);
+                yield break;
+            }
+
+            SetStatus("Unexpected response for solo battle.");
+            _searching = false;
+        }
+        finally
         {
-            SetStatus("Connection failed. Check server.");
-            _searching = false;
-            yield break;
+            _soloJoinCoroutineActive = false;
         }
-
-        var response = ParseJoinResponse(responseText);
-        string battleId = response.battleId;
-        string playerId = response.playerId;
-
-        if (response.status == "battle" && response.battleStarted != null)
-        {
-            BattleSessionState.SetPending(battleId, playerId, _serverUrl, response.battleStarted);
-            _searching = false;
-            SceneManager.LoadScene(_gameSceneName);
-            yield break;
-        }
-
-        SetStatus("Unexpected response for solo battle.");
-        _searching = false;
     }
 
     private static readonly WaitForSeconds _pollWait = new WaitForSeconds(0.5f);
@@ -700,7 +846,7 @@ public class MainMenuMatchmaking : MonoBehaviour
             {
                 _queueBattleId = null;
                 _queuePlayerId = null;
-                SetStatus(Loc.T("menu.search_cancelled"));
+                SetStatusLoc("menu.search_cancelled");
                 _searching = false;
                 yield break;
             }
@@ -709,7 +855,7 @@ public class MainMenuMatchmaking : MonoBehaviour
             {
                 _queueBattleId = null;
                 _queuePlayerId = null;
-                SetStatus(Loc.T("menu.session_required"));
+                SetStatusLoc("menu.session_required");
                 _searching = false;
                 yield break;
             }

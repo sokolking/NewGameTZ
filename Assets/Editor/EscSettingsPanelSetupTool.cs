@@ -500,7 +500,7 @@ public static class EscSettingsPanelSetupTool
         TryButtonChildLocalized(root, "Button_CloseSettings", "esc.settings.close", "Close");
 
         TryButtonChildLocalized(root, "Button_Resume", "esc.menu.resume", "Resume");
-        TryButtonChildLocalized(root, "Button_Surrend_Battle", "esc.menu.surrender_battle", "Surrender battle");
+        TryButtonChildLocalized(root, "Button_Back_To_Main", "esc.menu.back_to_main", "Back to main");
         TryButtonChildLocalized(root, "Button_Exit_Game", "esc.menu.exit_game", "Exit game");
         TryButtonChildLocalized(root, "Button_Settings", "esc.menu.settings", "Settings");
 

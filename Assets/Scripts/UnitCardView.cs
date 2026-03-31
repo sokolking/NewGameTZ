@@ -36,7 +36,28 @@ public sealed class UnitCardView : MonoBehaviour
 
     private readonly List<GameObject> _spawnedRows = new();
 
+    UnitCardPayload _lastRenderedPayload;
+
     private void Awake() => EnsureRoots();
+
+    void OnEnable()
+    {
+        Loc.LanguageChanged += OnLanguageChanged;
+        if (_lastRenderedPayload != null)
+            Render(_lastRenderedPayload);
+    }
+
+    void OnDisable()
+    {
+        Loc.LanguageChanged -= OnLanguageChanged;
+    }
+
+    void OnLanguageChanged(GameLanguage _)
+    {
+        if (_lastRenderedPayload == null || !isActiveAndEnabled)
+            return;
+        Render(_lastRenderedPayload);
+    }
 
     private void EnsureRoots()
     {
@@ -59,6 +80,7 @@ public sealed class UnitCardView : MonoBehaviour
     {
         if (data == null)
             return;
+        _lastRenderedPayload = data;
         EnsureRoots();
         ClearSpawned();
         if (_statsRoot == null || _resourcesRoot == null)

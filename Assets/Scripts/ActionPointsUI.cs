@@ -723,8 +723,14 @@ public class ActionPointsUI : MonoBehaviour
 
     private void ShowRoundWaitAfterSubmitDelivered()
     {
+        // Round push can arrive before the submit ACK; we already hid the wait overlay on push.
+        // Do not show it again when the late ACK fires during server replay.
+        bool roundAlreadyArrived =
+            _gameSession != null
+            && _gameSession.IsWaitingForServerRoundResolve
+            && !_roundWaitVisible;
         // Панель уже показана при нажатии «конец хода»; здесь только подтверждение по сокету.
-        if (!_roundWaitVisible)
+        if (!roundAlreadyArrived && !_roundWaitVisible)
             ShowRoundWaitPanel();
         AppendLog(Loc.T("battle_log.turn_accepted_waiting"));
     }
