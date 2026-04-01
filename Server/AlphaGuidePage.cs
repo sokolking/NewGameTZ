@@ -45,7 +45,10 @@ public static class AlphaGuidePage
     body {
       margin: 0;
       min-height: 100vh;
-      background: var(--bg0);
+      background:
+        linear-gradient(rgba(10, 12, 16, 0.82), rgba(10, 12, 16, 0.92)),
+        url('/alpha-guide/background-hero.png') center center / cover no-repeat fixed,
+        var(--bg0);
       color: var(--text);
       font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
       line-height: 1.55;
@@ -105,6 +108,28 @@ public static class AlphaGuidePage
       border-radius: 999px;
       overflow: hidden;
       background: var(--panel);
+    }
+    .top-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .music-toggle {
+      border: 1px solid var(--border);
+      background: var(--panel);
+      color: var(--muted);
+      border-radius: 999px;
+      padding: 8px 12px;
+      font-size: 12px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      min-width: 92px;
+    }
+    .music-toggle:hover { color: var(--text); border-color: #46506a; }
+    .music-toggle.active {
+      color: var(--accent2);
+      border-color: rgba(109, 211, 160, 0.45);
+      box-shadow: 0 0 0 2px rgba(109, 211, 160, 0.15);
     }
     .lang-toggle button {
       border: none;
@@ -295,6 +320,68 @@ public static class AlphaGuidePage
     }
     .cheat-item:hover { border-color: rgba(122, 162, 255, 0.4); }
     .cheat-item .keys { flex-shrink: 0; min-width: 88px; }
+    .ui-tour {
+      background: linear-gradient(180deg, rgba(23,26,34,0.92) 0%, rgba(17,21,29,0.96) 100%);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 14px;
+      overflow: hidden;
+    }
+    .ui-tour-toolbar {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+    .ui-tour-btn {
+      border: 1px solid var(--border);
+      background: #11151d;
+      color: var(--muted);
+      border-radius: 10px;
+      padding: 8px 12px;
+      font-size: 13px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+    .ui-tour-btn:hover { color: var(--text); border-color: #46506a; }
+    .ui-tour-btn.active {
+      color: var(--text);
+      border-color: rgba(122, 162, 255, 0.65);
+      background: linear-gradient(180deg, rgba(122,162,255,0.2) 0%, rgba(122,162,255,0.08) 100%);
+      box-shadow: 0 0 0 2px rgba(122,162,255,0.18);
+    }
+    .ui-tour-stage {
+      position: relative;
+      border-radius: 12px;
+      overflow: hidden;
+      border: 1px solid rgba(122,162,255,0.25);
+      background: #0d0f14;
+      aspect-ratio: 16 / 10;
+    }
+    .ui-tour-img {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      opacity: 0;
+      transform: scale(1.03);
+      pointer-events: none;
+      transition: opacity 0.45s ease, transform 0.6s ease;
+    }
+    .ui-tour-img.active {
+      opacity: 1;
+      transform: scale(1);
+      pointer-events: auto;
+      z-index: 2;
+    }
+    .ui-tour-caption {
+      margin-top: 10px;
+      font-size: 13px;
+      color: var(--muted);
+      min-height: 20px;
+    }
     .faq details {
       border: 1px solid var(--border);
       border-radius: 10px;
@@ -450,9 +537,12 @@ public static class AlphaGuidePage
   <div class="wrap">
     <header class="topbar">
       <div class="brand">Hope</div>
-      <div class="lang-toggle" role="group" aria-label="Language">
-        <button type="button" id="btn-en" class="active" data-set-lang="en">EN</button>
-        <button type="button" id="btn-ru" data-set-lang="ru">RU</button>
+      <div class="top-actions">
+        <button type="button" id="musicToggle" class="music-toggle">Music: Off</button>
+        <div class="lang-toggle" role="group" aria-label="Language">
+          <button type="button" id="btn-en" class="active" data-set-lang="en">EN</button>
+          <button type="button" id="btn-ru" data-set-lang="ru">RU</button>
+        </div>
       </div>
     </header>
 
@@ -460,7 +550,7 @@ public static class AlphaGuidePage
       <div class="lang-en">
         <div class="hero-badge">Alpha test — player guide</div>
         <h1>Welcome to Hope</h1>
-        <p class="lead">A tactical hex-grid battle: plan your turn, spend <span class="glossary-term" data-glossary-img="/alpha-guide/ap.png" data-glossary-alt="Action Points" tabindex="0" role="button">Action Points (AP)</span>, and resolve the round together with your opponent. This page explains the loop, core mechanics, and controls.</p>
+        <p class="lead">A tactical hex-grid battle: plan your turn, spend Action Points (AP), and resolve the round together with your opponent. This page explains the loop, core mechanics, and controls.</p>
         <div class="hero-grid">
           <div class="stat-pill"><strong>Hex</strong> movement &amp; range</div>
           <div class="stat-pill"><strong>AP</strong> plan &amp; queue</div>
@@ -481,7 +571,7 @@ public static class AlphaGuidePage
       <div class="lang-ru">
         <div class="hero-badge">Альфа-тест — гайд для игрока</div>
         <h1>Добро пожаловать в Hope</h1>
-        <p class="lead">Тактический бой на гексах: планируйте ход, тратьте <span class="glossary-term" data-glossary-img="/alpha-guide/ap.png" data-glossary-alt="Очки действия" tabindex="0" role="button">очки действия (ОД)</span> и одновременно с соперником разрешайте раунд. Здесь — цикл боя, механики и управление.</p>
+        <p class="lead">Тактический бой на гексах: планируйте ход, тратьте очки действия (ОД) и одновременно с соперником разрешайте раунд. Здесь — цикл боя, механики и управление.</p>
         <div class="hero-grid">
           <div class="stat-pill"><strong>Гексы</strong> движение и дальность</div>
           <div class="stat-pill"><strong>ОД</strong> план и очередь</div>
@@ -519,7 +609,7 @@ public static class AlphaGuidePage
         <ul>
           <li>Баланс, интерфейс и контент могут меняться между сборками.</li>
           <li>Сообщайте о вылетах, рассинхронах и непонятном UX — это очень помогает.</li>
-          <li>Разрыв связи сам по себе не завершает бой; сессия по задумке заканчивается победой/поражением или сдачей через меню Esc.</li>
+          <li>Разрыв связи сам по себе не завершает бой; сессия по задумке заканчивается победой/поражением или побегом.</li>
         </ul>
       </div>
     </section>
@@ -617,14 +707,14 @@ public static class AlphaGuidePage
       <div class="card lang-en">
         <h3>Escape ring</h3>
         <ul>
-          <li>Orange border hexes mark the escape edge. Double-click movement that first steps from inside onto that ring opens a confirmation dialog.</li>
+          <li>Gray border hexes mark the escape edge. Double-click movement that first steps from inside onto that ring opens a confirmation dialog.</li>
           <li>After confirming flee, the server runs the escape channel; ending the battle by escape is different from disconnecting.</li>
         </ul>
       </div>
       <div class="card lang-ru">
         <h3>Кольцо побега</h3>
         <ul>
-          <li>Оранжевая кайма гексов — край для побега. Двойной клик по пути, который впервые выходит изнутри на это кольцо, открывает подтверждение.</li>
+          <li>Серая кайма гексов — край для побега. Двойной клик по пути, который впервые выходит изнутри на это кольцо, открывает подтверждение.</li>
           <li>После подтверждения сервер ведёт канал побега; побег — не то же самое, что обрыв связи.</li>
         </ul>
       </div>
@@ -669,10 +759,6 @@ public static class AlphaGuidePage
           <div>Queue reload (AP cost from your weapon).</div>
         </div>
         <div class="cheat-item">
-          <div class="keys"><kbd>H</kbd></div>
-          <div>Queue use of the active medicine item (if selected in inventory).</div>
-        </div>
-        <div class="cheat-item">
           <div class="keys"><kbd>Wheel</kbd></div>
           <div>Zoom the tactical camera in and out.</div>
         </div>
@@ -715,10 +801,6 @@ public static class AlphaGuidePage
           <div>Перезарядка в очередь (стоимость с оружия).</div>
         </div>
         <div class="cheat-item">
-          <div class="keys"><kbd>H</kbd></div>
-          <div>Использование активного медпредмета из инвентаря.</div>
-        </div>
-        <div class="cheat-item">
           <div class="keys"><kbd>Колёсико</kbd></div>
           <div>Зум тактической камеры.</div>
         </div>
@@ -752,6 +834,24 @@ public static class AlphaGuidePage
       </div>
     </section>
 
+    <section class="reveal" data-reveal>
+      <h2 class="section-title lang-en">Interface walkthrough</h2>
+      <h2 class="section-title lang-ru">Пояснение интерфейса</h2>
+      <p class="section-sub lang-en">Switch between BaseView (top-down) and 3rdPView to understand how the battle UI is placed during gameplay.</p>
+      <p class="section-sub lang-ru">Переключайте BaseView (вид сверху) и 3rdPView (вид от третьего лица), чтобы быстрее разобраться в расположении элементов интерфейса боя.</p>
+      <div class="ui-tour">
+        <div class="ui-tour-toolbar">
+          <button type="button" class="ui-tour-btn active" data-ui-view="base">BaseView</button>
+          <button type="button" class="ui-tour-btn" data-ui-view="third">3rdPView</button>
+        </div>
+        <div class="ui-tour-stage" aria-live="polite">
+          <img class="ui-tour-img active" data-ui-image="base" src="/alpha-guide/BaseView.png" alt="BaseView interface explanation image" />
+          <img class="ui-tour-img" data-ui-image="third" src="/alpha-guide/3rdPView.png" alt="3rdPView interface explanation image" />
+        </div>
+        <div id="uiTourCaption" class="ui-tour-caption"></div>
+      </div>
+    </section>
+
     <section class="reveal faq" data-reveal>
       <h2 class="section-title lang-en">FAQ</h2>
       <h2 class="section-title lang-ru">Частые вопросы</h2>
@@ -763,7 +863,7 @@ public static class AlphaGuidePage
       <div class="lang-ru">
         <details><summary>Почему действие не применилось?</summary><p>Не хватило ОД, дальность, блок пути, не тот раунд или проверка сервера. Смотрите подсказку и журнал боя.</p></details>
         <details><summary>Что если пропал интернет?</summary><p>Бой может продолжаться; зайдите снова — незавершённые бои можно возобновить, пока комната на сервере жива.</p></details>
-        <details><summary>Как сдаться?</summary><p>Через пункт сдачи в меню Esc (не просто закрыть игру).</p></details>
+        <details><summary>Как сдаться?</summary><p>Через линии побега</p></details>
       </div>
     </section>
 
@@ -786,6 +886,7 @@ public static class AlphaGuidePage
     <span class="glossary-lightbox-hint lang-en">Click anywhere or press Esc to close</span>
     <span class="glossary-lightbox-hint lang-ru">Клик или Esc — закрыть</span>
   </div>
+  <audio id="pageMusic" src="/alpha-guide/menuMusic.mp3" loop preload="auto" playsinline></audio>
   <script>
     (function () {
       var STORAGE_KEY = 'hopeAlphaGuideLang';
@@ -804,6 +905,41 @@ public static class AlphaGuidePage
       else setLang('en');
       document.getElementById('btn-en').addEventListener('click', function () { setLang('en'); });
       document.getElementById('btn-ru').addEventListener('click', function () { setLang('ru'); });
+
+      var musicEl = document.getElementById('pageMusic');
+      var musicBtn = document.getElementById('musicToggle');
+      function tryStartMusic() {
+        if (!musicEl || musicEl.muted) return;
+        var p = musicEl.play();
+        if (p && typeof p.catch === 'function') p.catch(function () {});
+      }
+      function updateMusicButton(isMuted) {
+        if (!musicBtn) return;
+        var lang = document.documentElement.lang === 'ru' ? 'ru' : 'en';
+        if (lang === 'ru')
+          musicBtn.textContent = isMuted ? 'Музыка: выкл' : 'Музыка: вкл';
+        else
+          musicBtn.textContent = isMuted ? 'Music: Off' : 'Music: On';
+        musicBtn.classList.toggle('active', !isMuted);
+      }
+      function setMusicMuted(isMuted) {
+        if (!musicEl) return;
+        musicEl.muted = !!isMuted;
+        if (!isMuted) {
+          tryStartMusic();
+        } else {
+          musicEl.pause();
+        }
+        updateMusicButton(isMuted);
+      }
+      setMusicMuted(true);
+      if (musicBtn) {
+        musicBtn.addEventListener('click', function () {
+          var nowMuted = !(musicEl && musicEl.muted);
+          setMusicMuted(nowMuted);
+        });
+      }
+
       var reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
       if (!reduce) {
         var nodes = document.querySelectorAll('[data-reveal]');
@@ -816,6 +952,47 @@ public static class AlphaGuidePage
       } else {
         document.querySelectorAll('[data-reveal]').forEach(function (n) { n.classList.add('visible'); });
       }
+
+      var uiButtons = document.querySelectorAll('[data-ui-view]');
+      var uiImages = document.querySelectorAll('[data-ui-image]');
+      var uiCaption = document.getElementById('uiTourCaption');
+      var uiCaptions = {
+        en: {
+          base: 'BaseView: tactical top-down readout with full map context.',
+          third: '3rdPView: immersive perspective for positioning and line-of-sight.'
+        },
+        ru: {
+          base: 'BaseView: тактический вид сверху с полным обзором карты.',
+          third: '3rdPView: более погружающий вид для оценки позиции и линии огня.'
+        }
+      };
+      function setUiView(view) {
+        uiButtons.forEach(function (b) { b.classList.toggle('active', b.getAttribute('data-ui-view') === view); });
+        uiImages.forEach(function (img) { img.classList.toggle('active', img.getAttribute('data-ui-image') === view); });
+        var lang = document.documentElement.lang === 'ru' ? 'ru' : 'en';
+        if (uiCaption && uiCaptions[lang] && uiCaptions[lang][view])
+          uiCaption.textContent = uiCaptions[lang][view];
+      }
+      uiButtons.forEach(function (btn) {
+        btn.addEventListener('click', function () { setUiView(btn.getAttribute('data-ui-view')); });
+      });
+      setUiView('base');
+      uiImages.forEach(function (img) {
+        img.style.cursor = 'zoom-in';
+        img.addEventListener('click', function () {
+          openGlossary(img.getAttribute('src') || '', img.getAttribute('alt') || '');
+        });
+      });
+      document.getElementById('btn-en').addEventListener('click', function () {
+        var active = document.querySelector('.ui-tour-btn.active');
+        setUiView(active ? active.getAttribute('data-ui-view') : 'base');
+        updateMusicButton(musicEl ? musicEl.muted : true);
+      });
+      document.getElementById('btn-ru').addEventListener('click', function () {
+        var active = document.querySelector('.ui-tour-btn.active');
+        setUiView(active ? active.getAttribute('data-ui-view') : 'base');
+        updateMusicButton(musicEl ? musicEl.muted : true);
+      });
 
       var lb = document.getElementById('glossaryLightbox');
       var lbImg = document.getElementById('glossaryLightboxImg');
