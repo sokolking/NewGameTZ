@@ -259,7 +259,7 @@ public partial class BattleRoomStore
             _matchmakingByUser.Remove(uid);
 
         var bid = Guid.NewGuid().ToString("N")[..8];
-        var room = new BattleRoom(bid, _weaponDb, _obstacleDb, _bodyPartDb, _userDb, _zoneShrinkDb)
+        var room = new BattleRoom(bid, _weaponDb, _obstacleDb, _bodyPartDb, _userDb, _zoneShrinkDb, _medicineDb)
         {
             MatchModeWire = mode.ToWireString()
         };
@@ -304,18 +304,17 @@ public partial class BattleRoomStore
         if (!_userDb.TryGetUsername(battleUserId, out string username))
             username = playerId;
         _userDb.TryGetCombatProfileByUserId(battleUserId, out int playerMaxHp, out int playerCurrentHp, out int playerMaxAp, out int accuracy, out int levelFromDb);
-        _userDb.TryGetEquippedWeaponCodeForUserByUserId(battleUserId, out string equippedCode);
-        string weaponCode = string.IsNullOrWhiteSpace(equippedCode) ? "fist" : equippedCode.Trim().ToLowerInvariant();
-        if (!_weaponDb.TryGetWeaponByCode(weaponCode, out var weapon))
+        _userDb.TryGetEquippedWeaponItemIdForUserByUserId(battleUserId, out long equippedItemId);
+        if (!_weaponDb.TryGetWeaponByItemId(equippedItemId, out var weapon))
         {
-            weaponCode = "fist";
-            _weaponDb.TryGetWeaponByCode(weaponCode, out weapon);
+            _weaponDb.TryGetWeaponByKey("fist", out weapon);
+            equippedItemId = weapon.Id;
         }
 
         int characterLevel = Math.Max(1, levelFromDb);
         room.SetPlayerDisplayInfo(playerId, username, characterLevel);
         room.RegisterBattlePlayerUserId(playerId, battleUserId);
-        room.SetPlayerCombatProfile(playerId, playerMaxHp, playerMaxAp, weaponCode, weapon.DamageMin, weapon.DamageMax, weapon.Range, weapon.AttackApCost, accuracy, weapon.Tightness, weapon.TrajectoryHeight, weapon.IsSniper);
+        room.SetPlayerCombatProfile(playerId, playerMaxHp, playerMaxAp, equippedItemId, weapon.DamageMin, weapon.DamageMax, weapon.Range, weapon.AttackApCost, accuracy, weapon.Tightness, weapon.TrajectoryHeight, weapon.IsSniper);
         room.SetPlayerCurrentHpOverride(playerId, playerCurrentHp);
         if (_userDb.TryGetUserProgressProfileByUserId(battleUserId, out var prog))
             room.SetPlayerUnitCardCombatStats(playerId, prog.Strength, prog.Agility, prog.Intuition, prog.Endurance, prog.Accuracy, prog.Intellect);

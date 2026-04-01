@@ -82,6 +82,11 @@ public static class BattleWeaponsDashboardPage
       throwing: 'Метательное',
       medicine: 'Медицина'
     };
+    const ITEM_TYPE_LABELS = {
+      weapon: 'weapon',
+      ammo: 'ammo',
+      medicine: 'medicine'
+    };
     const MEDICINE_HIDDEN_FIELDS = new Set([
       'damageMin',
       'damageMax',
@@ -95,11 +100,21 @@ public static class BattleWeaponsDashboardPage
       'reloadApCost',
       'isSniper'
     ]);
+    const COLD_HIDDEN_FIELDS = new Set([
+      'armorPierce',
+      'reqStrength',
+      'reqEndurance',
+      'reqAccuracy',
+      'statEffectStrength',
+      'statEffectEndurance',
+      'statEffectAccuracy'
+    ]);
 
     const COLS = [
       { k: 'id', label: 'id', ro: true, type: 'text' },
       { k: 'code', label: 'code', ro: true, type: 'text' },
       { k: 'name', label: 'name', type: 'text', wide: true },
+      { k: 'itemType', label: 'item type', title: 'Value for items.type', type: 'selectMeta', metaList: 'itemTypes', optionLabels: ITEM_TYPE_LABELS },
       { k: 'damageMin', label: 'dmg↓', title: 'Damage min' },
       { k: 'damageMax', label: 'dmg↑', title: 'Damage max' },
       { k: 'damageType', label: 'dmg type', title: 'Damage type', type: 'selectMeta', metaList: 'damageTypes', wide: true },
@@ -119,7 +134,7 @@ public static class BattleWeaponsDashboardPage
       { k: 'quality', label: 'qual', title: 'Quality' },
       { k: 'weaponCondition', label: 'cond', title: 'Condition' },
       { k: 'mass', label: 'mass', title: 'Mass', float: true, step: 0.01 },
-      { k: 'caliber', label: 'cal', type: 'selectMeta', metaList: 'calibers', wide: true },
+      { k: 'ammoTypeId', label: 'ammo', title: 'Ammo type (id). Display uses ammo item name', type: 'selectAmmo', wide: true },
       { k: 'armorPierce', label: 'AP', title: 'Armor pierce' },
       { k: 'magazineSize', label: 'mag', title: 'Magazine size' },
       { k: 'reloadApCost', label: 'reload', title: 'Reload AP cost' },
@@ -162,7 +177,7 @@ public static class BattleWeaponsDashboardPage
       quality: 'Показатель качества предмета (торговля, износ и связанные правила — по дизайну игры).',
       weaponCondition: 'Состояние / износ оружия.',
       mass: 'Масса (число; конкретная единица — по дизайну: перегруз, требования и т.д.).',
-      caliber: 'Обозначение калибра (текст) для отображения и описания.',
+      ammoTypeId: 'ID ammo item из items. В выпадающем списке показывается ammo item name.',
       armorPierce: 'Пробитие брони — задел под снижение защиты цели; в текущей версии сервера может не участвовать в расчёте боя.',
       magazineSize: 'Патронов в магазине до перезарядки.',
       reloadApCost: 'Очки действия на перезарядку.',
@@ -178,13 +193,15 @@ public static class BattleWeaponsDashboardPage
       isEquippable: 'Общий флаг предмета из items.is_equippable: можно ли брать предмет в руку.',
       isSniper: 'Если включено, для шанса попадания используется отдельная (снайперская) зависимость от дистанции.',
       iconKey: 'Имя ключа иконки на клиенте.',
+      itemType: 'Тип записи в таблице items.type: weapon, ammo или medicine.',
       _del: 'Удалить это оружие из базы (после подтверждения в диалоге).',
       _save: 'Сохранить только эту строку на сервер (POST одной записи), не перезаписывая всю таблицу.'
     };
 
     let metaDamageTypes = [];
     let metaCategories = [];
-    let metaCalibers = [];
+    let metaAmmoTypes = [];
+    let metaItemTypes = ['weapon', 'ammo', 'medicine'];
     const initialCategory = new URLSearchParams(window.location.search).get('category') || '';
 
     async function refreshMeta() {
@@ -196,15 +213,18 @@ public static class BattleWeaponsDashboardPage
       const ammoList = await ammoResp.json().catch(() => []);
       metaDamageTypes = Array.isArray(m.damageTypes) ? m.damageTypes : [];
       metaCategories = Array.isArray(m.categories) ? m.categories : [];
-      metaCalibers = Array.isArray(ammoList)
-        ? ammoList.map(x => String(x?.caliber || '').trim()).filter(Boolean)
+      metaAmmoTypes = Array.isArray(ammoList)
+        ? ammoList.map(x => ({
+            id: Number(x?.id || 0),
+            name: String(x?.name || '').trim()
+          })).filter(x => x.id > 0)
         : [];
     }
 
     function optionsForMeta(metaList, current) {
       const base = metaList === 'damageTypes'
         ? metaDamageTypes
-        : (metaList === 'categories' ? metaCategories : metaCalibers);
+        : (metaList === 'categories' ? metaCategories : metaItemTypes);
       const set = new Set(base.map(String));
       if (current != null && String(current) !== '') set.add(String(current));
       if (metaList === 'calibers') set.add('');
@@ -218,6 +238,27 @@ public static class BattleWeaponsDashboardPage
         o.value = v;
         o.textContent = (optionLabels && optionLabels[v]) ? optionLabels[v] : v;
         if (String(current) === v) o.selected = true;
+        sel.appendChild(o);
+      }
+    }
+
+    function fillAmmoSelect(sel, current) {
+      sel.innerHTML = '';
+      const currentId = Number(current || 0);
+      const ids = new Set(metaAmmoTypes.map(x => x.id));
+      const rows = metaAmmoTypes.slice().sort((a, b) => a.name.localeCompare(b.name));
+      if (currentId > 0 && !ids.has(currentId))
+        rows.push({ id: currentId, name: 'missing ammo #' + currentId });
+      const empty = document.createElement('option');
+      empty.value = '';
+      empty.textContent = '';
+      sel.appendChild(empty);
+      for (const row of rows) {
+        const o = document.createElement('option');
+        o.value = String(row.id);
+        const label = row.name || ('ammo #' + row.id);
+        o.textContent = label;
+        if (row.id === currentId) o.selected = true;
         sel.appendChild(o);
       }
     }
@@ -251,8 +292,21 @@ public static class BattleWeaponsDashboardPage
         fillSelect(
           sel,
           c.metaList,
-          value != null && value !== '' ? value : (c.k === 'damageType' ? 'physical' : (c.k === 'category' ? 'cold' : ''))
+          value != null && value !== '' ? value : (c.k === 'damageType' ? 'physical' : (c.k === 'category' ? 'cold' : (c.k === 'itemType' ? 'weapon' : ''))),
+          c.optionLabels
         );
+        td.appendChild(sel);
+        return td;
+      }
+      if (c.type === 'selectAmmo') {
+        const td = document.createElement('td');
+        td.dataset.paramKey = c.k;
+        const sel = document.createElement('select');
+        sel.setAttribute('data-field', c.k);
+        if (readOnly || c.ro) sel.disabled = true;
+        if (c.wide) sel.className = 'w-wide';
+        sel.title = c.title || '';
+        fillAmmoSelect(sel, value);
         td.appendChild(sel);
         return td;
       }
@@ -317,6 +371,7 @@ public static class BattleWeaponsDashboardPage
       if (k === 'effectSign') return 'positive';
       if (k === 'effectTarget') return 'enemy';
       if (k === 'effectType') return '';
+      if (k === 'ammoTypeId') return '';
       return 0;
     }
 
@@ -348,7 +403,7 @@ public static class BattleWeaponsDashboardPage
           sel.setAttribute('data-field', c.k);
           sel.dataset.paramKey = c.k;
           if (c.title) sel.title = c.title;
-          const def = c.k === 'damageType' ? 'physical' : (c.k === 'category' ? 'cold' : '');
+          const def = c.k === 'damageType' ? 'physical' : (c.k === 'category' ? 'cold' : (c.k === 'itemType' ? 'weapon' : ''));
           fillSelect(sel, c.metaList, def, c.optionLabels);
           sel.style.width = c.wide ? '100px' : '72px';
           lab.appendChild(sel);
@@ -369,31 +424,43 @@ public static class BattleWeaponsDashboardPage
         frag.appendChild(lab);
       });
       createFields.appendChild(frag);
-      applyMedicineVisibility(createFields, true);
+      applyCategoryVisibility(createFields, true);
     }
 
     buildCreatePanel();
 
-    function isMedicineRoot(root) {
+    function getCategoryRoot(root) {
       const cat = root.querySelector('[data-field="category"]');
-      return String(cat?.value || '').toLowerCase() === 'medicine';
+      return String(cat?.value || '').toLowerCase();
     }
 
-    function applyMedicineVisibility(root, isCreatePanel) {
-      const medicine = isMedicineRoot(root);
-      MEDICINE_HIDDEN_FIELDS.forEach((k) => {
+    function fieldsHiddenByCategory(category) {
+      const fields = new Set();
+      if (category === 'medicine')
+        MEDICINE_HIDDEN_FIELDS.forEach((k) => fields.add(k));
+      if (category === 'cold')
+        COLD_HIDDEN_FIELDS.forEach((k) => fields.add(k));
+      return fields;
+    }
+
+    function applyCategoryVisibility(root, isCreatePanel) {
+      const category = getCategoryRoot(root);
+      const hiddenFields = fieldsHiddenByCategory(category);
+      const allFields = new Set([...MEDICINE_HIDDEN_FIELDS, ...COLD_HIDDEN_FIELDS]);
+      allFields.forEach((k) => {
+        const shouldHide = hiddenFields.has(k);
         if (isCreatePanel) {
           const field = root.querySelector('[data-field="' + k + '"]');
           if (!field) return;
           const label = field.closest('label');
-          if (label) label.style.display = medicine ? 'none' : 'inline-flex';
+          if (label) label.style.display = shouldHide ? 'none' : 'inline-flex';
           return;
         }
         const cell = root.querySelector('td[data-param-key="' + k + '"]');
         if (!cell) return;
         const field = cell.querySelector('[data-field="' + k + '"]');
-        if (field) field.style.display = medicine ? 'none' : '';
-        if (medicine) {
+        if (field) field.style.display = shouldHide ? 'none' : '';
+        if (shouldHide) {
           let mark = cell.querySelector('.medicine-hidden-mark');
           if (!mark) {
             mark = document.createElement('span');
@@ -412,8 +479,8 @@ public static class BattleWeaponsDashboardPage
     function attachCategoryVisibilityBehavior(root, isCreatePanel) {
       const categoryEl = root.querySelector('[data-field="category"]');
       if (!categoryEl) return;
-      categoryEl.addEventListener('change', () => applyMedicineVisibility(root, isCreatePanel));
-      applyMedicineVisibility(root, isCreatePanel);
+      categoryEl.addEventListener('change', () => applyCategoryVisibility(root, isCreatePanel));
+      applyCategoryVisibility(root, isCreatePanel);
     }
 
     function collectWeaponFields(root) {
@@ -428,11 +495,27 @@ public static class BattleWeaponsDashboardPage
         }
         else o[k] = (el.value || '').trim();
       });
-      if (String(o.category || '').toLowerCase() === 'cold')
+      const category = String(o.category || '').toLowerCase();
+      if (category === 'cold')
         o.range = 1;
-      if (String(o.category || '').toLowerCase() === 'medicine') {
+      if (category === 'medicine') {
         o.range = 0;
         o.effectTarget = 'self';
+      }
+      const rawAmmoTypeId = String(o.ammoTypeId || '').trim();
+      const parsedAmmoTypeId = rawAmmoTypeId === '' ? 0 : numOr(rawAmmoTypeId, 0);
+      const ammoTypeId = parsedAmmoTypeId > 0 ? parsedAmmoTypeId : null;
+      const ammo = ammoTypeId > 0 ? metaAmmoTypes.find(x => x.id === ammoTypeId) : null;
+      o.ammoTypeId = ammoTypeId;
+      o.caliber = ammo ? (ammo.caliber || '') : '';
+      if (category === 'cold') {
+        o.armorPierce = 0;
+        o.reqStrength = 0;
+        o.reqEndurance = 0;
+        o.reqAccuracy = 0;
+        o.statEffectStrength = 0;
+        o.statEffectEndurance = 0;
+        o.statEffectAccuracy = 0;
       }
       return o;
     }
@@ -540,18 +623,28 @@ public static class BattleWeaponsDashboardPage
 
     async function load() {
       statusEl.textContent = 'loading...';
-      await refreshMeta();
-      buildCreatePanel();
-      attachCategoryVisibilityBehavior(createFields, true);
-      const resp = await fetch('/api/db/weapons?take=500', { cache: 'no-store' });
-      let list = await resp.json();
-      if (initialCategory) {
-        const c = String(initialCategory).toLowerCase();
-        list = (Array.isArray(list) ? list : []).filter(w => String(w?.category || '').toLowerCase() === c);
+      try {
+        await refreshMeta();
+        buildCreatePanel();
+        attachCategoryVisibilityBehavior(createFields, true);
+        const resp = await fetch('/api/db/weapons?take=500', { cache: 'no-store' });
+        if (!resp.ok) {
+          statusEl.textContent = 'load failed: ' + resp.status;
+          return;
+        }
+        let list = await resp.json();
+        if (!Array.isArray(list))
+          list = [];
+        if (initialCategory) {
+          const c = String(initialCategory).toLowerCase();
+          list = list.filter(w => String(w?.category || '').toLowerCase() === c);
+        }
+        rowsEl.innerHTML = '';
+        for (const w of list) rowsEl.appendChild(rowFromWeapon(w));
+        statusEl.textContent = 'loaded ' + list.length + ' weapons';
+      } catch (e) {
+        statusEl.textContent = 'load failed: ' + (e && e.message ? e.message : 'unknown error');
       }
-      rowsEl.innerHTML = '';
-      for (const w of list) rowsEl.appendChild(rowFromWeapon(w));
-      statusEl.textContent = 'loaded ' + list.length + ' weapons';
     }
 
     document.getElementById('reloadBtn').addEventListener('click', () => load());

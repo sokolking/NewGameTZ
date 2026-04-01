@@ -124,14 +124,15 @@ public sealed class EscMenuPanelController : MonoBehaviour
     {
         Transform t = FindChildDeep(transform, BackToMainButtonName);
         if (t != null)
-            t.gameObject.SetActive(BattleSessionState.IsSpectatorMode);
+            t.gameObject.SetActive(CanReturnToMainFromEsc());
     }
 
     void OnBackToMainClicked()
     {
-        if (!BattleSessionState.IsSpectatorMode)
+        if (!CanReturnToMainFromEsc())
             return;
 
+        BattleEscActions.NotifyLeaveCurrentBattleIfAny();
         BattleSessionState.ClearSpectatorMode();
         BattleSessionState.ClearPending();
 
@@ -139,6 +140,15 @@ public sealed class EscMenuPanelController : MonoBehaviour
             ? "MainMenu"
             : EscOpensEscScene.FallbackSceneWhenNoReturn;
         SceneManager.LoadScene(menu, LoadSceneMode.Single);
+    }
+
+    static bool CanReturnToMainFromEsc()
+    {
+        if (BattleSessionState.IsSpectatorMode)
+            return true;
+
+        GameSession gs = GameSession.Active != null ? GameSession.Active : Object.FindFirstObjectByType<GameSession>();
+        return gs != null && gs.IsBattleFinished;
     }
 
     void OnExitGameClicked()

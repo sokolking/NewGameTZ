@@ -86,7 +86,7 @@ public sealed class UnitCardView : MonoBehaviour
         if (_statsRoot == null || _resourcesRoot == null)
             return;
 
-        string name = string.IsNullOrWhiteSpace(data.DisplayName) ? "Player" : data.DisplayName.Trim();
+        string name = string.IsNullOrWhiteSpace(data.DisplayName) ? Loc.T("unitcard.fallback_name") : data.DisplayName.Trim();
         int lv = Mathf.Max(1, data.Level);
 
         if (_unitStatShortPrefab != null)
@@ -119,18 +119,18 @@ public sealed class UnitCardView : MonoBehaviour
         int maxHp = Mathf.Max(1, data.MaxHp);
         int curHp = Mathf.Clamp(data.CurrentHp, 0, maxHp);
         float hpFill = curHp / (float)maxHp;
-        AddResourceRow(hpFill, curHp, HpBarColor);
+        AddResourceRow(hpFill, curHp, HpBarColor, "unitcard.resource_hp");
 
         float pen = Mathf.Clamp01(data.PenaltyFraction);
         float fatigueFill = Mathf.Clamp01(1f - pen);
         int apRemainPct = Mathf.Clamp(Mathf.RoundToInt(fatigueFill * 100f), 0, 100);
-        AddResourceRow(fatigueFill, apRemainPct, FatigueBarColor);
+        AddResourceRow(fatigueFill, apRemainPct, FatigueBarColor, "unitcard.resource_ap");
 
         LayoutRebuilder.ForceRebuildLayoutImmediate(_statsRoot as RectTransform);
         LayoutRebuilder.ForceRebuildLayoutImmediate(_resourcesRoot as RectTransform);
     }
 
-    private void AddResourceRow(float normalizedFill, int displayNumber, Color fillColor)
+    private void AddResourceRow(float normalizedFill, int displayNumber, Color fillColor, string keyLoc)
     {
         if (_unitResourcePrefab == null) return;
         var row = Instantiate(_unitResourcePrefab, _resourcesRoot);
@@ -148,6 +148,9 @@ public sealed class UnitCardView : MonoBehaviour
             if (fill != null)
                 fill.color = fillColor;
         }
+
+        if (keyT != null)
+            keyT.text = Loc.T(keyLoc);
 
         if (val != null)
             val.text = displayNumber.ToString();

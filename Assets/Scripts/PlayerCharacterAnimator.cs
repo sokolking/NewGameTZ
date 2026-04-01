@@ -762,9 +762,10 @@ public sealed class PlayerCharacterAnimator : MonoBehaviour
 
     private AnimationClip ResolveLocomotionClip()
     {
-        bool rifleLoco = _player != null && WeaponCatalog.UsesRifleLocomotionClips(_player.WeaponCode, _player.WeaponCategory);
-        bool pistolLoco = _player != null && WeaponCatalog.UsesPistolLocomotionClips(_player.WeaponCode, _player.WeaponCategory);
-        bool coldIdle = _player != null && WeaponCatalog.IsColdWeapon(_player.WeaponCode) && ClipIdleCold != null;
+        string weaponCategory = _player != null ? (_player.WeaponCategory ?? string.Empty).Trim().ToLowerInvariant() : string.Empty;
+        bool rifleLoco = weaponCategory == "medium";
+        bool pistolLoco = weaponCategory == "light";
+        bool coldIdle = weaponCategory == "cold" && ClipIdleCold != null;
         MovementPosture posture = _player != null ? _player.CurrentMovementPosture : MovementPosture.Walk;
         bool moving = _player != null ? _player.IsMoving : _remoteBattleUnit != null && _remoteBattleUnit.IsMoving;
 

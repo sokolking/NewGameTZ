@@ -35,7 +35,7 @@ public partial class BattleRoom
     public const int DefaultPlayerMaxHp = PlayerLevelStatsTable.BaseMaxHp;
     public const int DefaultPlayerMaxAp = PlayerLevelStatsTable.BaseMaxAp;
     public const int DefaultMobMaxHp = 10;
-    public const string DefaultWeaponCode = "fist";
+    public const string DefaultUnarmedKey = "fist";
     public const int DefaultWeaponDamage = 1;
     public const int DefaultWeaponRange = 1;
     public int RoundIndex { get; set; }
@@ -107,8 +107,8 @@ public partial class BattleRoom
 
     /// <summary>Текущее состояние каждого игрока (позиция, ОД, штраф). Обновляется после каждого раунда.</summary>
     public Dictionary<string, PlayerBattleState> CurrentState { get; } = new();
-    /// <summary>Кортеж: … weaponDamageMin, weaponDamageMax, weaponRange, attackApCost, accuracy, tightness T, traj, sniper.</summary>
-    public Dictionary<string, (int maxHp, int maxAp, string weaponCode, int weaponDamageMin, int weaponDamageMax, int weaponRange, int weaponAttackApCost, int accuracy, double weaponTightness, int weaponTrajectoryHeight, bool weaponIsSniper)> PlayerCombatProfiles { get; } = new();
+    /// <summary>Кортеж: … weaponItemId, weaponDamageMin, weaponDamageMax, weaponRange, attackApCost, accuracy, tightness T, traj, sniper.</summary>
+    public Dictionary<string, (int maxHp, int maxAp, long weaponItemId, int weaponDamageMin, int weaponDamageMax, int weaponRange, int weaponAttackApCost, int accuracy, double weaponTightness, int weaponTrajectoryHeight, bool weaponIsSniper)> PlayerCombatProfiles { get; } = new();
     public Dictionary<string, int> PlayerCurrentHpOverrides { get; } = new();
 
     /// <summary>Порядок отправки хода в текущем раунде (кто раньше отправил — выше приоритет на клетку).</summary>
@@ -165,6 +165,7 @@ public partial class BattleRoom
 
     private readonly Random _rng;
     private readonly BattleWeaponDatabase? _weaponDb;
+    private readonly BattleMedicineDatabase? _medicineDb;
     private readonly BattleObstacleBalanceDatabase? _obstacleDb;
     private readonly BattleZoneShrinkDatabase? _zoneShrinkDb;
     private readonly BattleBodyPartDatabase? _bodyPartDb;
@@ -187,11 +188,12 @@ public partial class BattleRoom
         && col >= _activeMinCol && col <= _activeMaxCol
         && row >= _activeMinRow && row <= _activeMaxRow;
 
-    public BattleRoom(string battleId, BattleWeaponDatabase? weaponDb = null, BattleObstacleBalanceDatabase? obstacleDb = null, BattleBodyPartDatabase? bodyPartDb = null, BattleUserDatabase? userDb = null, BattleZoneShrinkDatabase? zoneShrinkDb = null)
+    public BattleRoom(string battleId, BattleWeaponDatabase? weaponDb = null, BattleObstacleBalanceDatabase? obstacleDb = null, BattleBodyPartDatabase? bodyPartDb = null, BattleUserDatabase? userDb = null, BattleZoneShrinkDatabase? zoneShrinkDb = null, BattleMedicineDatabase? medicineDb = null)
     {
         BattleId = battleId;
         _rng = new Random(Guid.NewGuid().GetHashCode());
         _weaponDb = weaponDb;
+        _medicineDb = medicineDb;
         _obstacleDb = obstacleDb;
         _zoneShrinkDb = zoneShrinkDb;
         _userDb = userDb;

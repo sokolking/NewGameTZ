@@ -27,7 +27,7 @@ public partial class BattleRoom
 
             var profile = PlayerCombatProfiles.TryGetValue(playerId, out var p)
                 ? p
-                : (DefaultPlayerMaxHp, DefaultPlayerMaxAp, DefaultWeaponCode, DefaultWeaponDamage, DefaultWeaponDamage, DefaultWeaponRange, GetWeaponAttackApCostFromDb(DefaultWeaponCode), 10, 1.0, 1, false);
+                : (DefaultPlayerMaxHp, DefaultPlayerMaxAp, GetWeaponItemIdFromLegacyKey(DefaultUnarmedKey), DefaultWeaponDamage, DefaultWeaponDamage, DefaultWeaponRange, GetWeaponAttackApCostFromLegacyKey(DefaultUnarmedKey), 10, 1.0, 1, false);
             PlayerToUnitId[playerId] = unitId;
             int pvpTeam = ComputePvpTeamIdForPlayer(playerId);
             Units[unitId] = new UnitStateDto
@@ -42,12 +42,12 @@ public partial class BattleRoom
                 PenaltyFraction = 0f,
                 MaxHp = profile.Item1,
                 CurrentHp = Math.Clamp(PlayerCurrentHpOverrides.GetValueOrDefault(playerId, profile.Item1), 0, Math.Max(1, profile.Item1)),
-                WeaponCode = profile.Item3,
+                WeaponItemId = profile.Item3,
                 WeaponDamageMin = profile.Item4,
                 WeaponDamage = profile.Item5,
                 WeaponRange = profile.Item6,
                 WeaponAttackApCost = Math.Max(1, profile.Item7),
-                CurrentMagazineRounds = GetWeaponMagazineSizeFromDb(profile.Item3),
+                CurrentMagazineRounds = GetWeaponMagazineSizeFromDbByItemId(profile.Item3),
                 Accuracy = profile.Item8,
                 WeaponTightness = profile.Item9,
                 WeaponTrajectoryHeight = profile.Item10,
@@ -110,12 +110,12 @@ public partial class BattleRoom
                     PenaltyFraction = 0f,
                     MaxHp = mobMaxHp,
                     CurrentHp = mobCurHp,
-                    WeaponCode = DefaultWeaponCode,
+                    WeaponItemId = GetWeaponItemIdFromLegacyKey(DefaultUnarmedKey),
                     WeaponDamageMin = DefaultWeaponDamage,
                     WeaponDamage = DefaultWeaponDamage,
                     WeaponRange = DefaultWeaponRange,
-                    WeaponAttackApCost = GetWeaponAttackApCostFromDb(DefaultWeaponCode),
-                    CurrentMagazineRounds = GetWeaponMagazineSizeFromDb(DefaultWeaponCode),
+                    WeaponAttackApCost = GetWeaponAttackApCostFromLegacyKey(DefaultUnarmedKey),
+                    CurrentMagazineRounds = GetWeaponMagazineSizeFromLegacyKey(DefaultUnarmedKey),
                     Accuracy = 10,
                     WeaponTightness = 1.0,
                     WeaponTrajectoryHeight = 1,

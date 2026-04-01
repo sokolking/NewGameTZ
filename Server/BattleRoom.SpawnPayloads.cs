@@ -6,11 +6,11 @@ namespace BattleServer;
 
 public partial class BattleRoom
 {
-    public void FillSpawnArrays(out string[] ids, out int[] cols, out int[] rows, out int[] currentAps, out int[] maxAps, out int[] maxHps, out int[] currentHps, out string[] currentPostures, out string[] weaponCodes, out string[] weaponCategories, out int[] weaponDamageMins, out int[] weaponDamages, out int[] weaponRanges, out int[] weaponAttackApCosts, out int[] currentMagazineRounds, out double[] weaponTightnesses, out int[] weaponTrajectoryHeights, out bool[] weaponIsSnipers, out string[] spawnDisplayNames, out int[] spawnLevels, out int[] spawnTeamIds, out int[] spawnStrengths, out int[] spawnAgilities, out int[] spawnIntuitions, out int[] spawnEndurances, out int[] spawnAccuracies, out int[] spawnIntellects)
+    public void FillSpawnArrays(out string[] ids, out int[] cols, out int[] rows, out int[] currentAps, out int[] maxAps, out int[] maxHps, out int[] currentHps, out string[] currentPostures, out long[] weaponItemIds, out string[] weaponCategories, out int[] weaponDamageMins, out int[] weaponDamages, out int[] weaponRanges, out int[] weaponAttackApCosts, out int[] currentMagazineRounds, out double[] weaponTightnesses, out int[] weaponTrajectoryHeights, out bool[] weaponIsSnipers, out string[] spawnDisplayNames, out int[] spawnLevels, out int[] spawnTeamIds, out int[] spawnStrengths, out int[] spawnAgilities, out int[] spawnIntuitions, out int[] spawnEndurances, out int[] spawnAccuracies, out int[] spawnIntellects)
     {
         EnsureUnitsInitialized();
 
-        var items = new List<(string id, int col, int row, int currentAp, int maxAp, int maxHp, int currentHp, string posture, string wc, string wcat, int wdm, int wd, int wr, int wac, int wmag, double wtn, int wth, bool wsn, string displayName, int level, int teamId, int st, int agi, int intu, int endu, int accu, int intl)>();
+        var items = new List<(string id, int col, int row, int currentAp, int maxAp, int maxHp, int currentHp, string posture, long wid, string wcat, int wdm, int wd, int wr, int wac, int wmag, double wtn, int wth, bool wsn, string displayName, int level, int teamId, int st, int agi, int intu, int endu, int accu, int intl)>();
 
         foreach (var playerId in ParticipantIds.Where(Players.ContainsKey))
         {
@@ -28,8 +28,8 @@ public partial class BattleRoom
                     unit.MaxHp,
                     unit.CurrentHp,
                     NormalizePosture(unit.Posture),
-                    unit.WeaponCode ?? DefaultWeaponCode,
-                    GetWeaponCategoryFromDb(unit.WeaponCode ?? DefaultWeaponCode),
+                    unit.WeaponItemId,
+                    GetWeaponCategoryFromDbByItemId(unit.WeaponItemId),
                     unit.WeaponDamageMin,
                     unit.WeaponDamage,
                     unit.WeaponRange,
@@ -50,13 +50,13 @@ public partial class BattleRoom
             }
             else
             {
-                string wc = DefaultWeaponCode;
+                long wid = GetWeaponItemIdFromLegacyKey(DefaultUnarmedKey);
                 int wdm = DefaultWeaponDamage;
                 int wd = DefaultWeaponDamage;
                 int wr = DefaultWeaponRange;
-                int wac = GetWeaponAttackApCostFromDb(DefaultWeaponCode);
-                int wmag = GetWeaponMagazineSizeFromDb(wc);
-                string wcat = GetWeaponCategoryFromDb(wc);
+                int wac = GetWeaponAttackApCostFromLegacyKey(DefaultUnarmedKey);
+                int wmag = GetWeaponMagazineSizeFromDbByItemId(wid);
+                string wcat = GetWeaponCategoryFromDbByItemId(wid);
                 double wtn = 1.0;
                 int wth = 1;
                 bool wsn = false;
@@ -64,11 +64,13 @@ public partial class BattleRoom
                 int maxAp = DefaultPlayerMaxAp;
                 if (PlayerCombatProfiles.TryGetValue(playerId, out var prof))
                 {
-                    wc = prof.Item3;
+                    wid = prof.Item3;
                     wdm = prof.Item4;
                     wd = prof.Item5;
                     wr = prof.Item6;
                     wac = prof.Item7;
+                    wmag = GetWeaponMagazineSizeFromDbByItemId(wid);
+                    wcat = GetWeaponCategoryFromDbByItemId(wid);
                     wtn = prof.Item9;
                     wth = prof.Item10;
                     wsn = prof.Item11;
@@ -76,7 +78,7 @@ public partial class BattleRoom
                     maxAp = prof.Item2;
                 }
 
-                items.Add((playerId, Players[playerId].col, Players[playerId].row, maxAp, maxAp, maxHp, maxHp, PostureWalk, wc, wcat, wdm, wd, wr, wac, wmag, wtn, wth, wsn, dn, lv, ComputePvpTeamIdForPlayer(playerId), cs.s, cs.ag, cs.i, cs.e, cs.acc, cs.intl));
+                items.Add((playerId, Players[playerId].col, Players[playerId].row, maxAp, maxAp, maxHp, maxHp, PostureWalk, wid, wcat, wdm, wd, wr, wac, wmag, wtn, wth, wsn, dn, lv, ComputePvpTeamIdForPlayer(playerId), cs.s, cs.ag, cs.i, cs.e, cs.acc, cs.intl));
             }
         }
 
@@ -91,8 +93,8 @@ public partial class BattleRoom
                 unit.MaxHp,
                 unit.CurrentHp,
                 NormalizePosture(unit.Posture),
-                unit.WeaponCode ?? DefaultWeaponCode,
-                GetWeaponCategoryFromDb(unit.WeaponCode ?? DefaultWeaponCode),
+                unit.WeaponItemId,
+                GetWeaponCategoryFromDbByItemId(unit.WeaponItemId),
                 unit.WeaponDamageMin,
                 unit.WeaponDamage,
                 unit.WeaponRange,
@@ -120,7 +122,7 @@ public partial class BattleRoom
         maxHps = items.Select(x => x.maxHp).ToArray();
         currentHps = items.Select(x => x.currentHp).ToArray();
         currentPostures = items.Select(x => x.posture).ToArray();
-        weaponCodes = items.Select(x => x.wc).ToArray();
+        weaponItemIds = items.Select(x => x.wid).ToArray();
         weaponCategories = items.Select(x => x.wcat).ToArray();
         weaponDamageMins = items.Select(x => x.wdm).ToArray();
         weaponDamages = items.Select(x => x.wd).ToArray();
@@ -186,7 +188,7 @@ public partial class BattleRoom
             SpawnMaxHps = smh,
             SpawnCurrentHps = sch,
             SpawnCurrentPostures = spos,
-            SpawnWeaponCodes = swc,
+            SpawnWeaponItemIds = swc,
             SpawnWeaponCategories = swcat,
             SpawnWeaponDamageMins = swdm,
             SpawnWeaponDamages = swd,

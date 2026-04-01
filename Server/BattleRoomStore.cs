@@ -9,6 +9,7 @@ public partial class BattleRoomStore
     private readonly BattleHistoryDatabase _battleHistoryDb;
     private readonly BattleTurnDatabase _battleTurnDb;
     private readonly BattleWeaponDatabase _weaponDb;
+    private readonly BattleMedicineDatabase _medicineDb;
     private readonly BattleObstacleBalanceDatabase _obstacleDb;
     private readonly BattleZoneShrinkDatabase _zoneShrinkDb;
     private readonly BattleBodyPartDatabase _bodyPartDb;
@@ -18,11 +19,12 @@ public partial class BattleRoomStore
 
     private readonly Dictionary<string, BattleRoom> _rooms = new();
 
-    public BattleRoomStore(BattleHistoryDatabase battleHistoryDb, BattleTurnDatabase battleTurnDb, BattleWeaponDatabase weaponDb, BattleObstacleBalanceDatabase obstacleDb, BattleZoneShrinkDatabase zoneShrinkDb, BattleBodyPartDatabase bodyPartDb, BattleUserDatabase userDb)
+    public BattleRoomStore(BattleHistoryDatabase battleHistoryDb, BattleTurnDatabase battleTurnDb, BattleWeaponDatabase weaponDb, BattleMedicineDatabase medicineDb, BattleObstacleBalanceDatabase obstacleDb, BattleZoneShrinkDatabase zoneShrinkDb, BattleBodyPartDatabase bodyPartDb, BattleUserDatabase userDb)
     {
         _battleHistoryDb = battleHistoryDb;
         _battleTurnDb = battleTurnDb;
         _weaponDb = weaponDb;
+        _medicineDb = medicineDb;
         _obstacleDb = obstacleDb;
         _zoneShrinkDb = zoneShrinkDb;
         _bodyPartDb = bodyPartDb;
@@ -48,7 +50,7 @@ public partial class BattleRoomStore
             {
                 var bid = Guid.NewGuid().ToString("N")[..8];
                 _waitingBattleId = bid;
-                var room = new BattleRoom(bid, _weaponDb, _obstacleDb, _bodyPartDb, _userDb, _zoneShrinkDb);
+                var room = new BattleRoom(bid, _weaponDb, _obstacleDb, _bodyPartDb, _userDb, _zoneShrinkDb, _medicineDb);
                 var sp1 = HexSpawn.FindTwoTeamSpawnsOnOppositeHorizontalSides(1, HexSpawn.DefaultGridWidth, HexSpawn.DefaultGridLength);
                 if (sp1.Count < 1)
                     throw new InvalidOperationException("PVP 1v1 spawn failed");
@@ -104,7 +106,7 @@ public partial class BattleRoomStore
     /// - Если есть ожидающий и solo == false — создаём пару и возвращаем battleStarted второму игроку.
     /// - Иначе встаём в очередь как P1 и ждём второго игрока.
     /// </summary>
-    public JoinResponse JoinOrCreate(int startCol, int startRow, bool solo, int playerMaxHp, int playerCurrentHp, int playerMaxAp, string weaponCode, int weaponDamageMin, int weaponDamageMax, int weaponRange, int weaponAttackApCost, string displayName, long battleUserId, int characterLevel = 1, int accuracy = 10, double weaponTightness = 1, int weaponTrajectoryHeight = 1, bool weaponIsSniper = false)
+    public JoinResponse JoinOrCreate(int startCol, int startRow, bool solo, int playerMaxHp, int playerCurrentHp, int playerMaxAp, long weaponItemId, int weaponDamageMin, int weaponDamageMax, int weaponRange, int weaponAttackApCost, string displayName, long battleUserId, int characterLevel = 1, int accuracy = 10, double weaponTightness = 1, int weaponTrajectoryHeight = 1, bool weaponIsSniper = false)
     {
         lock (_lock)
         {
@@ -114,7 +116,7 @@ public partial class BattleRoomStore
             if (solo)
             {
                 var soloBattleId = Guid.NewGuid().ToString("N")[..8];
-                var soloRoom = new BattleRoom(soloBattleId, _weaponDb, _obstacleDb, _bodyPartDb, _userDb, _zoneShrinkDb)
+                var soloRoom = new BattleRoom(soloBattleId, _weaponDb, _obstacleDb, _bodyPartDb, _userDb, _zoneShrinkDb, _medicineDb)
                 {
                     IsSolo = true,
                     MatchModeWire = "solo"
@@ -129,7 +131,7 @@ public partial class BattleRoomStore
                     if (_userDb.TryGetUserProgressProfileByUserId(battleUserId, out var soloProf))
                         soloRoom.SetPlayerUnitCardCombatStats("P1", soloProf.Strength, soloProf.Agility, soloProf.Intuition, soloProf.Endurance, soloProf.Accuracy, soloProf.Intellect);
                 }
-                soloRoom.SetPlayerCombatProfile("P1", playerMaxHp, playerMaxAp, weaponCode, weaponDamageMin, weaponDamageMax, weaponRange, weaponAttackApCost, accuracy, weaponTightness, weaponTrajectoryHeight, weaponIsSniper);
+                soloRoom.SetPlayerCombatProfile("P1", playerMaxHp, playerMaxAp, weaponItemId, weaponDamageMin, weaponDamageMax, weaponRange, weaponAttackApCost, accuracy, weaponTightness, weaponTrajectoryHeight, weaponIsSniper);
                 soloRoom.SetPlayerCurrentHpOverride("P1", playerCurrentHp);
                 _rooms[soloBattleId] = soloRoom;
                 _battleHistoryDb.EnsureBattle(soloBattleId);
@@ -159,7 +161,7 @@ public partial class BattleRoomStore
                     if (_userDb.TryGetUserProgressProfileByUserId(battleUserId, out var p2Prof))
                         waitingRoom.SetPlayerUnitCardCombatStats("P2", p2Prof.Strength, p2Prof.Agility, p2Prof.Intuition, p2Prof.Endurance, p2Prof.Accuracy, p2Prof.Intellect);
                 }
-                waitingRoom.SetPlayerCombatProfile("P2", playerMaxHp, playerMaxAp, weaponCode, weaponDamageMin, weaponDamageMax, weaponRange, weaponAttackApCost, accuracy, weaponTightness, weaponTrajectoryHeight, weaponIsSniper);
+                waitingRoom.SetPlayerCombatProfile("P2", playerMaxHp, playerMaxAp, weaponItemId, weaponDamageMin, weaponDamageMax, weaponRange, weaponAttackApCost, accuracy, weaponTightness, weaponTrajectoryHeight, weaponIsSniper);
                 waitingRoom.SetPlayerCurrentHpOverride("P2", playerCurrentHp);
                 waitingRoom.MatchModeWire = "1v1";
                 waitingRoom.StartFirstRound();
@@ -170,7 +172,7 @@ public partial class BattleRoomStore
             }
 
             var bid = Guid.NewGuid().ToString("N")[..8];
-            var r = new BattleRoom(bid, _weaponDb, _obstacleDb, _bodyPartDb, _userDb, _zoneShrinkDb);
+            var r = new BattleRoom(bid, _weaponDb, _obstacleDb, _bodyPartDb, _userDb, _zoneShrinkDb, _medicineDb);
             var spWait = HexSpawn.FindTwoTeamSpawnsOnOppositeHorizontalSides(1, HexSpawn.DefaultGridWidth, HexSpawn.DefaultGridLength);
             if (spWait.Count < 1)
                 throw new InvalidOperationException("PVP 1v1 spawn failed");
@@ -184,7 +186,7 @@ public partial class BattleRoomStore
                 if (_userDb.TryGetUserProgressProfileByUserId(battleUserId, out var p1Prof))
                     r.SetPlayerUnitCardCombatStats("P1", p1Prof.Strength, p1Prof.Agility, p1Prof.Intuition, p1Prof.Endurance, p1Prof.Accuracy, p1Prof.Intellect);
             }
-            r.SetPlayerCombatProfile("P1", playerMaxHp, playerMaxAp, weaponCode, weaponDamageMin, weaponDamageMax, weaponRange, weaponAttackApCost, accuracy, weaponTightness, weaponTrajectoryHeight, weaponIsSniper);
+            r.SetPlayerCombatProfile("P1", playerMaxHp, playerMaxAp, weaponItemId, weaponDamageMin, weaponDamageMax, weaponRange, weaponAttackApCost, accuracy, weaponTightness, weaponTrajectoryHeight, weaponIsSniper);
             r.SetPlayerCurrentHpOverride("P1", playerCurrentHp);
             _rooms[bid] = r;
             _battleHistoryDb.EnsureBattle(bid);

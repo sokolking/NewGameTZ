@@ -64,29 +64,29 @@ public static class BattleDatabaseBackup
     {
         "body_parts",
         "battle_obstacle_balance",
+        "battle_zone_shrink",
         "hope_schema_migrations",
         "users",
         "items",
         "weapons",
-        "ammo_types",
+        "medicine",
         "battles",
         "battle_turns",
         "battle_turn_links",
         "user_inventory_items",
-        "user_ammo_packs",
     };
 
     private const string TruncateSql = """
         TRUNCATE TABLE
             user_inventory_items,
-            user_ammo_packs,
             battle_turn_links,
             battle_turns,
             battles,
+            medicine,
             weapons,
-            ammo_types,
             items,
             users,
+            battle_zone_shrink,
             battle_obstacle_balance,
             body_parts,
             hope_schema_migrations
@@ -98,9 +98,7 @@ public static class BattleDatabaseBackup
         ("users", "id"),
         ("items", "id"),
         ("weapons", "id"),
-        ("ammo_types", "id"),
         ("user_inventory_items", "id"),
-        ("user_ammo_packs", "id"),
     };
 
     public static async Task<string> ExportJsonAsync(NpgsqlConnection connection, CancellationToken cancellationToken = default)
@@ -166,7 +164,13 @@ public static class BattleDatabaseBackup
 
             foreach (string table in TableOrder)
             {
-                if (!tablesEl.TryGetProperty(table, out JsonElement arrEl) || arrEl.ValueKind != JsonValueKind.Array)
+                if (!tablesEl.TryGetProperty(table, out JsonElement arrEl))
+                {
+                    rowCounts[table] = 0;
+                    continue;
+                }
+
+                if (arrEl.ValueKind != JsonValueKind.Array)
                     throw new InvalidOperationException($"Table \"{table}\" must be a JSON array (possibly empty).");
 
                 int n = arrEl.GetArrayLength();

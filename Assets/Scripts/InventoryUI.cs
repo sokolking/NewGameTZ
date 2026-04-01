@@ -5,6 +5,7 @@ using Newtonsoft.Json;
 using TMPro;
 using UnityEngine;
 using UnityEngine.EventSystems;
+using UnityEngine.InputSystem;
 using UnityEngine.UI;
 
 /// <summary>
@@ -31,14 +32,20 @@ public sealed class InventoryUI : MonoBehaviour
     [SerializeField] private Text _activeItemAmmoText;
     [Header("Debug")]
     [SerializeField] private bool _debugAmmoLogs = false;
+    [Header("Item card hover")]
+    [SerializeField] private ItemCardView _itemCardView;
+    [SerializeField] private Vector2 _itemCardCursorOffset = new Vector2(0f, 10f);
 
     private UserInventorySlotPayload[] _slots = new UserInventorySlotPayload[12];
-    private readonly Dictionary<string, WeaponDbRowPayload> _weaponRowsByCode = new(StringComparer.OrdinalIgnoreCase);
-    private readonly Dictionary<string, UserAmmoPackPayload> _ammoByCaliber = new(StringComparer.OrdinalIgnoreCase);
-    private readonly Dictionary<string, int> _localAmmoRoundsByCaliber = new(StringComparer.OrdinalIgnoreCase);
-    private readonly Dictionary<string, int> _localMagazineRoundsByWeapon = new(StringComparer.OrdinalIgnoreCase);
-    private readonly Dictionary<string, int> _serverChamberRoundsByWeapon = new(StringComparer.OrdinalIgnoreCase);
-    private string _ammoWeaponCodeApplied = "";
+    private readonly Dictionary<long, WeaponDbRowPayload> _weaponRowsById = new();
+    /// <summary>Reserve rounds keyed by ammo item id (<c>items.id</c>).</summary>
+    private readonly Dictionary<long, UserAmmoPackPayload> _ammoByAmmoTypeId = new();
+    private readonly Dictionary<long, int> _localAmmoRoundsByAmmoTypeId = new();
+    /// <summary>Medicine uses left per <c>items.id</c>; updated from <see cref="Player.MedicineInventoryRounds"/> while medicine is equipped.</summary>
+    private readonly Dictionary<long, int> _localMedicineRoundsByItemId = new();
+    private readonly Dictionary<long, int> _localMagazineRoundsByWeapon = new();
+    private readonly Dictionary<long, int> _serverChamberRoundsByWeapon = new();
+    private long _ammoWeaponItemIdApplied;
     private int _ammoMagazineCapacity;
     private int _ammoReserveRounds;
     private ActiveItemAmmoDonutSlider _ammoDonutSlider;
@@ -49,6 +56,9 @@ public sealed class InventoryUI : MonoBehaviour
     private int _lastAmmoAp = int.MinValue;
     private int _lastKnownReloadApCost = 1;
     private string _lastAmmoLogLine;
+    private bool _itemCardVisible;
+    private int _hoveredSlotIndex = -1;
+    readonly List<RaycastResult> _hoverRaycastBuffer = new();
 
     private void Awake()
     {
@@ -58,6 +68,8 @@ public sealed class InventoryUI : MonoBehaviour
         ResolveHierarchyIfNeeded();
         ClearActiveWeaponPlaceholder();
         TryResolveAmmoUi();
+        EnsureItemCardReference();
+        HideItemCard();
     }
 
     private void OnEnable()
@@ -89,6 +101,7 @@ public sealed class InventoryUI : MonoBehaviour
         BattleSessionStateHooks.OnBattleIdentified -= OnBattleIdentifiedForInventory;
         if (_player != null)
             _player.OnEquippedWeaponChanged -= OnPlayerEquippedWeaponChanged;
+        HideItemCard();
     }
 
     private void Update()
@@ -107,8 +120,12 @@ public sealed class InventoryUI : MonoBehaviour
         _lastAmmoAp = ap;
         RefreshActiveItemAmmoUi();
         SyncLocalAmmoFromCurrentWeaponState();
+        SyncLocalMedicineFromCurrentWeaponState();
         SyncLocalMagazineFromCurrentWeaponState();
         ApplySlotsToCells();
+        if (_itemCardVisible && !IsPointerOverInventoryCell())
+            HideItemCard();
+        UpdateItemCardPosition();
     }
 
     /// <summary>
@@ -137,6 +154,7 @@ public sealed class InventoryUI : MonoBehaviour
 
     private void OnPlayerEquippedWeaponChanged()
     {
+        _lastDisplayedAttackApCost = int.MinValue;
         RefreshActiveWeaponIcon();
         RefreshItemActionPointsCostText();
         RefreshActiveItemAmmoUi();
@@ -194,6 +212,11 @@ public sealed class InventoryUI : MonoBehaviour
                 {
                     _cellButtons[i].onClick.RemoveAllListeners();
                     _cellButtons[i].onClick.AddListener(() => OnCellClicked(slot));
+                    var hover = _cellButtons[i].GetComponent<InventoryCellHoverRelay>();
+                    if (hover == null)
+                        hover = _cellButtons[i].gameObject.AddComponent<InventoryCellHoverRelay>();
+                    hover.Owner = this;
+                    hover.SlotIndex = slot;
                 }
             }
         }
@@ -338,7 +361,7 @@ public sealed class InventoryUI : MonoBehaviour
         }
 
         {
-            // JsonUtility не десериализует массив слотов с weaponId:null и другими нюансами System.Text.Json.
+            // JsonUtility хуже переносит nullable/optional поля слотов; используем Newtonsoft.
             UserInventorySlotsPayload parsed;
             try
             {
@@ -367,15 +390,15 @@ public sealed class InventoryUI : MonoBehaviour
             _serverChamberRoundsByWeapon.Clear();
             foreach (var s in _slots)
             {
-                if (s == null || s.continuation || string.IsNullOrWhiteSpace(s.weaponCode))
+                if (s == null || s.continuation)
                     continue;
-                string code = WeaponCatalog.NormalizeWeaponCode(s.weaponCode);
-                if (string.IsNullOrEmpty(code))
+                long weaponItemId = s.itemId ?? 0;
+                if (weaponItemId <= 0)
                     continue;
-                if (_serverChamberRoundsByWeapon.ContainsKey(code))
+                if (_serverChamberRoundsByWeapon.ContainsKey(weaponItemId))
                     continue;
-                _serverChamberRoundsByWeapon[code] = Mathf.Max(0, s.chamberRounds);
-                AmmoLog($"[InventorySync] slot weapon={code}, slotIndex={s.slotIndex}, chamberRounds={s.chamberRounds}, equipped={s.equipped}, stackable={s.stackable}");
+                _serverChamberRoundsByWeapon[weaponItemId] = Mathf.Max(0, s.chamberRounds);
+                AmmoLog($"[InventorySync] slot weaponItemId={weaponItemId}, slotIndex={s.slotIndex}, chamberRounds={s.chamberRounds}, equipped={s.equipped}, stackable={s.stackable}");
             }
 
             ApplySlotsToCells();
@@ -396,31 +419,59 @@ public sealed class InventoryUI : MonoBehaviour
         string weaponsText = null;
         string weaponsErr = null;
 
-        string weaponsUrl = $"{baseUrl}/api/db/weapons?take=500";
+        string weaponsUrl = $"{baseUrl}/api/db/weapons?take=2000";
+        string medicineText = null;
+        string medicineErr = null;
+        string medicineUrl = $"{baseUrl}/api/db/medicine?take=2000";
 
         yield return HttpSimple.GetString(weaponsUrl, b => weaponsText = b, e => weaponsErr = e);
+        yield return HttpSimple.GetString(medicineUrl, b => medicineText = b, e => medicineErr = e);
 
-        _weaponRowsByCode.Clear();
+        _weaponRowsById.Clear();
         if (string.IsNullOrEmpty(weaponsErr) && !string.IsNullOrEmpty(weaponsText))
         {
             WeaponDbRowPayload[] rows = null;
-            try { rows = JsonConvert.DeserializeObject<WeaponDbRowPayload[]>(weaponsText); } catch { }
+            try { rows = JsonConvert.DeserializeObject<WeaponDbRowPayload[]>(weaponsText, HopeBattleJson.DeserializeSettings); } catch { }
             if (rows != null)
             {
                 for (int i = 0; i < rows.Length; i++)
                 {
                     var r = rows[i];
-                    if (r == null || string.IsNullOrWhiteSpace(r.code))
+                    if (r == null || r.id <= 0)
                         continue;
-                    _weaponRowsByCode[r.code.Trim().ToLowerInvariant()] = r;
+                    _weaponRowsById[r.id] = r;
+                }
+            }
+        }
+        if (string.IsNullOrEmpty(medicineErr) && !string.IsNullOrEmpty(medicineText))
+        {
+            WeaponDbRowPayload[] medRows = null;
+            try { medRows = JsonConvert.DeserializeObject<WeaponDbRowPayload[]>(medicineText, HopeBattleJson.DeserializeSettings); } catch { }
+            if (medRows != null)
+            {
+                for (int i = 0; i < medRows.Length; i++)
+                {
+                    var r = medRows[i];
+                    if (r == null || r.id <= 0)
+                        continue;
+                    r.itemType = "medicine";
+                    r.damageMin = 0;
+                    r.damageMax = 0;
+                    r.range = 0;
+                    r.magazineSize = 0;
+                    r.reloadApCost = 0;
+                    r.category = "";
+                    _weaponRowsById[r.id] = r;
                 }
             }
         }
 
-        _ammoByCaliber.Clear();
-        _localAmmoRoundsByCaliber.Clear();
+        _ammoByAmmoTypeId.Clear();
+        _localAmmoRoundsByAmmoTypeId.Clear();
         _localMagazineRoundsByWeapon.Clear();
+        _localMedicineRoundsByItemId.Clear();
         RebuildAmmoCacheFromSlots();
+        RebuildMedicineCacheFromSlots();
         RefreshActiveItemAmmoUi(forceResetOnWeaponChange: true);
         ApplySlotsToCells();
     }
@@ -435,25 +486,77 @@ public sealed class InventoryUI : MonoBehaviour
             var slot = _slots[i];
             if (slot == null || !slot.stackable || slot.continuation)
                 continue;
-            string caliber = (slot.weaponCode ?? string.Empty).Trim().ToLowerInvariant();
-            if (string.IsNullOrEmpty(caliber))
+            long ammoKey = ResolveAmmoStackKey(slot);
+            if (ammoKey <= 0)
                 continue;
-            int rounds = Mathf.Max(0, slot.quantity);
-            if (_localAmmoRoundsByCaliber.ContainsKey(caliber))
-                _localAmmoRoundsByCaliber[caliber] += rounds;
+            int rounds = GetServerSlotRounds(slot);
+            if (_localAmmoRoundsByAmmoTypeId.ContainsKey(ammoKey))
+                _localAmmoRoundsByAmmoTypeId[ammoKey] += rounds;
             else
-                _localAmmoRoundsByCaliber[caliber] = rounds;
+                _localAmmoRoundsByAmmoTypeId[ammoKey] = rounds;
         }
 
-        foreach (var kv in _localAmmoRoundsByCaliber)
+        foreach (var kv in _localAmmoRoundsByAmmoTypeId)
         {
-            _ammoByCaliber[kv.Key] = new UserAmmoPackPayload
+            _ammoByAmmoTypeId[kv.Key] = new UserAmmoPackPayload
             {
-                caliber = kv.Key,
+                ammoTypeId = kv.Key,
                 roundsCount = kv.Value,
                 totalRounds = kv.Value
             };
         }
+    }
+
+    private void RebuildMedicineCacheFromSlots()
+    {
+        if (_slots == null || _slots.Length == 0)
+            return;
+        _localMedicineRoundsByItemId.Clear();
+        for (int i = 0; i < _slots.Length; i++)
+        {
+            var slot = _slots[i];
+            if (slot == null || slot.continuation || !IsMedicineInventorySlot(slot))
+                continue;
+            long itemId = slot.itemId ?? 0;
+            if (itemId <= 0)
+                continue;
+            int r = GetServerSlotRounds(slot);
+            if (_localMedicineRoundsByItemId.ContainsKey(itemId))
+                _localMedicineRoundsByItemId[itemId] += r;
+            else
+                _localMedicineRoundsByItemId[itemId] = r;
+        }
+    }
+
+    private int GetMedicineRoundsFromSlotsForItemId(long itemId)
+    {
+        if (itemId <= 0)
+            return 0;
+        int sum = 0;
+        for (int i = 0; i < _slots.Length; i++)
+        {
+            var s = _slots[i];
+            if (s == null || s.continuation)
+                continue;
+            if ((s.itemId ?? 0) != itemId)
+                continue;
+            if (!IsMedicineInventorySlot(s))
+                continue;
+            sum += GetServerSlotRounds(s);
+        }
+        return sum;
+    }
+
+    /// <summary>Stackable ammo rows: prefer server <see cref="UserInventorySlotPayload.ammoTypeId"/>, else <see cref="UserInventorySlotPayload.itemId"/>.</summary>
+    private static long ResolveAmmoStackKey(UserInventorySlotPayload slot)
+    {
+        if (slot == null)
+            return 0;
+        long aid = slot.ammoTypeId ?? 0;
+        if (aid > 0)
+            return aid;
+        long iid = slot.itemId ?? 0;
+        return slot.stackable && iid > 0 ? iid : 0;
     }
 
     private void FillFallbackLocalIcons()
@@ -500,51 +603,99 @@ public sealed class InventoryUI : MonoBehaviour
                 _cellImages[i].color = dim ? new Color(1f, 1f, 1f, 0.55f) : Color.white;
             }
             int displayQty = GetDisplayedItemQuantity(s);
-            bool showCount = s.stackable && !s.continuation && displayQty > 0;
+            bool showCount = !s.continuation && displayQty > 0
+                && (s.stackable || IsMedicineInventorySlot(s));
             SetCellCountVisible(i, showCount, showCount ? FormatStackCount(displayQty) : "");
             if (_cellButtons[i] != null)
-                _cellButtons[i].interactable = !s.continuation && s.isEquippable && !string.IsNullOrWhiteSpace(s.weaponCode);
+                _cellButtons[i].interactable = !s.continuation && s.isEquippable && (s.itemId ?? 0) > 0;
         }
+    }
+
+    /// <summary>Stack count from API: <c>rounds</c> (<c>user_inventory_items.rounds</c>), then legacy <c>quantity</c>.</summary>
+    private static int GetServerSlotRounds(UserInventorySlotPayload slot)
+    {
+        if (slot == null)
+            return 0;
+        int r = Mathf.Max(0, slot.rounds);
+        int q = Mathf.Max(0, slot.quantity);
+        // Medicine: prefer max(rounds, quantity) so a mistaken weapon slot (quantity=1) still shows DB rounds.
+        if (IsMedicineInventorySlot(slot))
+            return Mathf.Max(r, q);
+        if (r > 0)
+            return r;
+        return q;
     }
 
     private int GetDisplayedItemQuantity(UserInventorySlotPayload slot)
     {
-        if (slot == null || !slot.stackable)
+        if (slot == null)
             return 0;
 
-        int serverQty = Mathf.Max(0, slot.quantity);
-        string slotCode = (slot.weaponCode ?? string.Empty).Trim().ToLowerInvariant();
-        if (string.IsNullOrEmpty(slotCode))
-            return serverQty;
-        if (_localAmmoRoundsByCaliber.TryGetValue(slotCode, out int localQty))
+        int serverRounds = GetServerSlotRounds(slot);
+
+        if (!slot.stackable)
+        {
+            if (IsMedicineInventorySlot(slot))
+            {
+                long itemId = slot.itemId ?? 0;
+                if (itemId > 0 && _localMedicineRoundsByItemId.TryGetValue(itemId, out int localMed))
+                    return Mathf.Max(0, localMed);
+                return serverRounds;
+            }
+            return 0;
+        }
+
+        long ammoKey = ResolveAmmoStackKey(slot);
+        if (ammoKey <= 0)
+            return serverRounds;
+        if (_localAmmoRoundsByAmmoTypeId.TryGetValue(ammoKey, out int localQty))
             return Mathf.Max(0, localQty);
-        return serverQty;
+        return serverRounds;
+    }
+
+    private static bool IsMedicineInventorySlot(UserInventorySlotPayload slot)
+    {
+        if (slot == null)
+            return false;
+        return string.Equals((slot.itemType ?? "").Trim(), "medicine", StringComparison.OrdinalIgnoreCase);
     }
 
     private void SyncLocalAmmoFromCurrentWeaponState()
     {
         if (_player == null)
             return;
-        string weaponCode = WeaponCatalog.NormalizeWeaponCode(_player.WeaponCode);
-        if (!_weaponRowsByCode.TryGetValue(weaponCode, out var w) || w == null)
+        long weaponItemId = _player.WeaponItemId;
+        if (weaponItemId <= 0 || !_weaponRowsById.TryGetValue(weaponItemId, out var w) || w == null)
             return;
-        string cal = (w.caliber ?? string.Empty).Trim().ToLowerInvariant();
-        if (string.IsNullOrEmpty(cal))
+        long ammoId = w.ammoTypeId ?? 0;
+        if (ammoId <= 0)
             return;
-        _localAmmoRoundsByCaliber[cal] = Mathf.Max(0, _player.ReserveAmmoRounds);
+        _localAmmoRoundsByAmmoTypeId[ammoId] = Mathf.Max(0, _player.ReserveAmmoRounds);
+    }
+
+    private void SyncLocalMedicineFromCurrentWeaponState()
+    {
+        if (_player == null)
+            return;
+        long weaponItemId = _player.WeaponItemId;
+        if (weaponItemId <= 0 || !_weaponRowsById.TryGetValue(weaponItemId, out var w) || w == null)
+            return;
+        if (!IsWeaponRowMedicine(w))
+            return;
+        _localMedicineRoundsByItemId[weaponItemId] = Mathf.Max(0, _player.MedicineInventoryRounds);
     }
 
     private void SyncLocalMagazineFromCurrentWeaponState()
     {
         if (_player == null)
             return;
-        string weaponCode = WeaponCatalog.NormalizeWeaponCode(_player.WeaponCode);
-        if (string.IsNullOrEmpty(weaponCode))
+        long weaponItemId = _player.WeaponItemId;
+        if (weaponItemId <= 0)
             return;
         int cap = Mathf.Max(0, _player.MagazineCapacity);
         if (cap <= 0)
             return;
-        _localMagazineRoundsByWeapon[weaponCode] = Mathf.Clamp(_player.CurrentMagazineRounds, 0, cap);
+        _localMagazineRoundsByWeapon[weaponItemId] = Mathf.Clamp(_player.CurrentMagazineRounds, 0, cap);
     }
 
     private static string ResolveItemIconKey(UserInventorySlotPayload slot)
@@ -553,10 +704,8 @@ public sealed class InventoryUI : MonoBehaviour
             return null;
         if (!string.IsNullOrWhiteSpace(slot.iconKey))
             return slot.iconKey.Trim();
-        if (!string.IsNullOrWhiteSpace(slot.weaponCode))
-            return slot.weaponCode.Trim();
-        if (!string.IsNullOrWhiteSpace(slot.weaponName))
-            return slot.weaponName.Trim();
+        if (!string.IsNullOrWhiteSpace(slot.itemName))
+            return slot.itemName.Trim();
         return null;
     }
 
@@ -632,8 +781,10 @@ public sealed class InventoryUI : MonoBehaviour
             return;
         if (_player == null)
             _player = FindFirstObjectByType<Player>();
-        string code = _player != null ? _player.WeaponCode : WeaponCatalog.DefaultWeaponCode;
-        int attackApCost = GetAttackApCostForCurrentWeaponDisplay(code);
+        long weaponItemId = _player != null ? _player.WeaponItemId : 0;
+        int attackApCost = IsActiveItemMedicine()
+            ? GetCurrentActiveItemUseApCost()
+            : GetAttackApCostForCurrentWeaponDisplay(weaponItemId);
         if (attackApCost == _lastDisplayedAttackApCost)
             return;
         _lastDisplayedAttackApCost = attackApCost;
@@ -645,25 +796,23 @@ public sealed class InventoryUI : MonoBehaviour
     }
 
     /// <summary>Стоимость атаки (не смены оружия): слот инвентаря из БД или синхронизированное значение у игрока.</summary>
-    private int GetAttackApCostForCurrentWeaponDisplay(string weaponCode)
+    private int GetAttackApCostForCurrentWeaponDisplay(long weaponItemId)
     {
-        if (string.IsNullOrWhiteSpace(weaponCode))
-            weaponCode = WeaponCatalog.DefaultWeaponCode;
-        string norm = WeaponCatalog.NormalizeWeaponCode(weaponCode);
-        if (_weaponRowsByCode.TryGetValue(norm, out var w) && w != null && w.attackApCost > 0)
+        if (weaponItemId > 0 && _weaponRowsById.TryGetValue(weaponItemId, out var w) && w != null && w.attackApCost > 0)
             return w.attackApCost;
         for (int i = 0; i < 12; i++)
         {
             var s = _slots[i];
-            if (s == null || string.IsNullOrWhiteSpace(s.weaponCode))
+            if (s == null)
                 continue;
-            if (!string.Equals(s.weaponCode, weaponCode, StringComparison.OrdinalIgnoreCase))
+            long slotWeaponItemId = s.itemId ?? 0;
+            if (slotWeaponItemId <= 0 || slotWeaponItemId != weaponItemId)
                 continue;
-            if (s.attackApCost > 0)
-                return s.attackApCost;
+            if (s.useApCost > 0)
+                return s.useApCost;
             break;
         }
-        if (_player != null && string.Equals(_player.WeaponCode, weaponCode, StringComparison.OrdinalIgnoreCase))
+        if (_player != null && _player.WeaponItemId == weaponItemId)
             return _player.WeaponAttackApCost;
         return 1;
     }
@@ -683,60 +832,80 @@ public sealed class InventoryUI : MonoBehaviour
             return;
         }
 
-        string code = _player.WeaponCode;
+        long weaponItemId = _player.WeaponItemId;
         string iconKey = null;
         for (int i = 0; i < 12; i++)
         {
             var slot = _slots[i];
-            if (slot == null || string.IsNullOrWhiteSpace(slot.weaponCode))
+            if (slot == null)
                 continue;
-            if (!string.Equals(slot.weaponCode, code, StringComparison.OrdinalIgnoreCase))
+            long slotWeaponItemId = slot.itemId ?? 0;
+            if (slotWeaponItemId <= 0 || slotWeaponItemId != weaponItemId)
                 continue;
             if (!string.IsNullOrWhiteSpace(slot.iconKey))
                 iconKey = slot.iconKey.Trim();
             break;
         }
 
-        Sprite sp = !string.IsNullOrEmpty(iconKey)
-            ? WeaponIconHelper.LoadInventoryIcon(iconKey)
-            : WeaponIconHelper.LoadEquippedWeaponIcon(code);
+        Sprite sp = !string.IsNullOrEmpty(iconKey) ? WeaponIconHelper.LoadInventoryIcon(iconKey) : null;
         SetImageIcon(_activeWeaponImage, sp, ActiveIconSize);
     }
 
     private void RefreshActiveItemAmmoUi(bool forceResetOnWeaponChange = false)
     {
         TryResolveAmmoUi();
-        if (_activeItemAmmoDonutImage == null || _activeItemAmmoText == null)
-            return;
         if (_player == null)
             _player = FindFirstObjectByType<Player>();
-        string weaponCode = _player != null ? WeaponCatalog.NormalizeWeaponCode(_player.WeaponCode) : WeaponCatalog.DefaultWeaponCode;
-        string previousWeaponCode = _ammoWeaponCodeApplied;
-        bool weaponChanged = !string.Equals(_ammoWeaponCodeApplied, weaponCode, StringComparison.OrdinalIgnoreCase);
-        if (weaponChanged && _player != null && !string.IsNullOrEmpty(previousWeaponCode) && _player.MagazineCapacity > 0)
+        long weaponItemId = _player != null ? _player.WeaponItemId : 0;
+        long previousWeaponItemId = _ammoWeaponItemIdApplied;
+        bool weaponChanged = previousWeaponItemId != weaponItemId;
+        if (weaponChanged && _player != null && previousWeaponItemId > 0 && _player.MagazineCapacity > 0)
         {
-            _localMagazineRoundsByWeapon[previousWeaponCode] = Mathf.Clamp(_player.CurrentMagazineRounds, 0, _player.MagazineCapacity);
-            AmmoLog($"[WeaponSwitch] save prev weapon={previousWeaponCode}, mag={_player.CurrentMagazineRounds}/{_player.MagazineCapacity}");
+            _localMagazineRoundsByWeapon[previousWeaponItemId] = Mathf.Clamp(_player.CurrentMagazineRounds, 0, _player.MagazineCapacity);
+            AmmoLog($"[WeaponSwitch] save prev weaponItemId={previousWeaponItemId}, mag={_player.CurrentMagazineRounds}/{_player.MagazineCapacity}");
         }
         if (weaponChanged)
-            _ammoWeaponCodeApplied = weaponCode;
+            _ammoWeaponItemIdApplied = weaponItemId;
 
-        if (!_weaponRowsByCode.TryGetValue(weaponCode, out var w))
+        // Planning: medicine uses left in hand (like ammo reserve). Sync even when ammo donut UI is not assigned.
+        if (weaponItemId > 0 && _weaponRowsById.TryGetValue(weaponItemId, out var wMed) && IsWeaponRowMedicine(wMed))
+        {
+            int serverMed = GetMedicineRoundsFromSlotsForItemId(weaponItemId);
+            bool hasLocal = _localMedicineRoundsByItemId.TryGetValue(weaponItemId, out int localMed);
+            if (forceResetOnWeaponChange)
+            {
+                // After GET /api/db/user/items — slots are authoritative; do not keep stale planning counts.
+                int medQty = Mathf.Max(0, serverMed);
+                _localMedicineRoundsByItemId[weaponItemId] = medQty;
+                _player?.SetMedicineInventoryRounds(medQty, notify: false);
+            }
+            else if (weaponChanged || !hasLocal)
+            {
+                int medQty = hasLocal ? Mathf.Max(0, localMed) : serverMed;
+                _localMedicineRoundsByItemId[weaponItemId] = medQty;
+                _player?.SetMedicineInventoryRounds(medQty, notify: false);
+            }
+        }
+
+        if (_activeItemAmmoDonutImage == null || _activeItemAmmoText == null)
+            return;
+
+        if (weaponItemId <= 0 || !_weaponRowsById.TryGetValue(weaponItemId, out var w))
         {
             SetAmmoUiVisible(false);
             return;
         }
 
         int mag = Mathf.Max(0, w.magazineSize);
-        string cal = (w.caliber ?? string.Empty).Trim().ToLowerInvariant();
-        bool isMedicine = string.Equals((w.category ?? string.Empty).Trim(), "medicine", StringComparison.OrdinalIgnoreCase);
+        long ammoTypeId = w.ammoTypeId ?? 0;
+        bool isMedicine = IsWeaponRowMedicine(w);
         if (isMedicine)
         {
             // Self-use items should hide both ammo donut and ammo count.
             SetAmmoUiVisible(false);
             return;
         }
-        bool weaponUsesAmmo = mag > 0 && !string.IsNullOrEmpty(cal);
+        bool weaponUsesAmmo = mag > 0 && ammoTypeId > 0;
         if (!weaponUsesAmmo)
         {
             SetAmmoUiVisible(false);
@@ -744,15 +913,24 @@ public sealed class InventoryUI : MonoBehaviour
         }
 
         _ammoMagazineCapacity = mag;
-        if (!string.IsNullOrEmpty(cal) && _ammoByCaliber.TryGetValue(cal, out var ammo))
+        if (ammoTypeId > 0 && _ammoByAmmoTypeId.TryGetValue(ammoTypeId, out var ammo))
         {
             int serverReserve = Mathf.Max(0, ammo.roundsCount > 0 ? ammo.roundsCount : ammo.totalRounds);
-            bool hasLocal = _localAmmoRoundsByCaliber.TryGetValue(cal, out int localReserve);
+            bool hasLocal = _localAmmoRoundsByAmmoTypeId.TryGetValue(ammoTypeId, out int localReserve);
             int reserve = hasLocal ? Mathf.Max(0, localReserve) : serverReserve;
-            _localAmmoRoundsByCaliber[cal] = reserve;
+            _localAmmoRoundsByAmmoTypeId[ammoTypeId] = reserve;
             _ammoReserveRounds = reserve;
             // Do not overwrite local in-turn ammo on every frame.
             // Push into Player only on weapon switch / explicit server refresh, or when local value not initialized yet.
+            if (_player != null && (weaponChanged || forceResetOnWeaponChange || !hasLocal))
+                _player.SetReserveAmmoRounds(reserve, notify: false);
+        }
+        else if (ammoTypeId > 0)
+        {
+            // No stack in inventory for this ammo item id — reserve is 0 unless we already tracked local state.
+            bool hasLocal = _localAmmoRoundsByAmmoTypeId.TryGetValue(ammoTypeId, out int localReserve);
+            int reserve = hasLocal ? Mathf.Max(0, localReserve) : 0;
+            _ammoReserveRounds = reserve;
             if (_player != null && (weaponChanged || forceResetOnWeaponChange || !hasLocal))
                 _player.SetReserveAmmoRounds(reserve, notify: false);
         }
@@ -760,7 +938,7 @@ public sealed class InventoryUI : MonoBehaviour
         string roundsSource = "default_mag_capacity";
         if (forceResetOnWeaponChange)
         {
-            if (_serverChamberRoundsByWeapon.TryGetValue(weaponCode, out int srv))
+            if (_serverChamberRoundsByWeapon.TryGetValue(weaponItemId, out int srv))
             {
                 currentRounds = srv;
                 roundsSource = "server_slot_chamber_force";
@@ -777,12 +955,12 @@ public sealed class InventoryUI : MonoBehaviour
             currentRounds = _player.CurrentMagazineRounds;
             roundsSource = "player_current_same_weapon";
         }
-        else if (_localMagazineRoundsByWeapon.TryGetValue(weaponCode, out int savedRounds))
+        else if (_localMagazineRoundsByWeapon.TryGetValue(weaponItemId, out int savedRounds))
         {
             currentRounds = savedRounds;
             roundsSource = "local_mag_cache";
         }
-        else if (_serverChamberRoundsByWeapon.TryGetValue(weaponCode, out int serverChamber))
+        else if (_serverChamberRoundsByWeapon.TryGetValue(weaponItemId, out int serverChamber))
         {
             currentRounds = serverChamber;
             roundsSource = "server_slot_chamber";
@@ -794,8 +972,9 @@ public sealed class InventoryUI : MonoBehaviour
         }
         currentRounds = Mathf.Clamp(currentRounds, 0, _ammoMagazineCapacity);
         _player?.SetMagazineState(_ammoMagazineCapacity, currentRounds, notify: false);
-        _localMagazineRoundsByWeapon[weaponCode] = currentRounds;
-        AmmoLog($"[AmmoUi] weapon={weaponCode}, weaponChanged={weaponChanged}, source={roundsSource}, currentRounds={currentRounds}, magCap={_ammoMagazineCapacity}, forceReset={forceResetOnWeaponChange}");
+        if (weaponItemId > 0)
+            _localMagazineRoundsByWeapon[weaponItemId] = currentRounds;
+        AmmoLog($"[AmmoUi] weaponItemId={weaponItemId}, weaponChanged={weaponChanged}, source={roundsSource}, currentRounds={currentRounds}, magCap={_ammoMagazineCapacity}, forceReset={forceResetOnWeaponChange}");
 
         int spent = Mathf.Max(0, _ammoMagazineCapacity - currentRounds);
         float fill = _ammoMagazineCapacity > 0 ? (float)spent / _ammoMagazineCapacity : 0f;
@@ -816,8 +995,8 @@ public sealed class InventoryUI : MonoBehaviour
     {
         if (_player == null)
             _player = FindFirstObjectByType<Player>();
-        string weaponCode = _player != null ? WeaponCatalog.NormalizeWeaponCode(_player.WeaponCode) : WeaponCatalog.DefaultWeaponCode;
-        if (_weaponRowsByCode.TryGetValue(weaponCode, out var w) && w != null)
+        long weaponItemId = _player != null ? _player.WeaponItemId : 0;
+        if (weaponItemId > 0 && _weaponRowsById.TryGetValue(weaponItemId, out var w) && w != null)
             return Mathf.Max(1, w.reloadApCost);
         return Mathf.Max(1, _lastKnownReloadApCost);
     }
@@ -826,8 +1005,8 @@ public sealed class InventoryUI : MonoBehaviour
     {
         if (_player == null)
             _player = FindFirstObjectByType<Player>();
-        string weaponCode = _player != null ? WeaponCatalog.NormalizeWeaponCode(_player.WeaponCode) : WeaponCatalog.DefaultWeaponCode;
-        if (_weaponRowsByCode.TryGetValue(weaponCode, out var w) && w != null)
+        long weaponItemId = _player != null ? _player.WeaponItemId : 0;
+        if (weaponItemId > 0 && _weaponRowsById.TryGetValue(weaponItemId, out var w) && w != null)
             return Mathf.Max(1, w.attackApCost);
         return 1;
     }
@@ -836,10 +1015,36 @@ public sealed class InventoryUI : MonoBehaviour
     {
         if (_player == null)
             _player = FindFirstObjectByType<Player>();
-        string weaponCode = _player != null ? WeaponCatalog.NormalizeWeaponCode(_player.WeaponCode) : WeaponCatalog.DefaultWeaponCode;
-        if (!_weaponRowsByCode.TryGetValue(weaponCode, out var w) || w == null)
+        long weaponItemId = _player != null ? _player.WeaponItemId : 0;
+        if (weaponItemId <= 0)
             return false;
-        return string.Equals((w.category ?? string.Empty).Trim(), "medicine", StringComparison.OrdinalIgnoreCase);
+        if (_player != null
+            && string.Equals((_player.WeaponCategory ?? string.Empty).Trim(), "medicine", StringComparison.OrdinalIgnoreCase))
+            return true;
+        if (_weaponRowsById.TryGetValue(weaponItemId, out var w) && w != null)
+            return IsWeaponRowMedicine(w);
+        if (_slots != null)
+        {
+            for (int i = 0; i < _slots.Length; i++)
+            {
+                var s = _slots[i];
+                if (s == null || s.continuation)
+                    continue;
+                if ((s.itemId ?? 0) != weaponItemId)
+                    continue;
+                return string.Equals((s.itemType ?? string.Empty).Trim(), "medicine", StringComparison.OrdinalIgnoreCase);
+            }
+        }
+        return false;
+    }
+
+    private static bool IsWeaponRowMedicine(WeaponDbRowPayload row)
+    {
+        if (row == null)
+            return false;
+        if (string.Equals((row.category ?? string.Empty).Trim(), "medicine", StringComparison.OrdinalIgnoreCase))
+            return true;
+        return string.Equals((row.itemType ?? string.Empty).Trim(), "medicine", StringComparison.OrdinalIgnoreCase);
     }
 
     private void OnAmmoDonutValueChanged(float value01)
@@ -849,11 +1054,11 @@ public sealed class InventoryUI : MonoBehaviour
         int shotsUsed = Mathf.Clamp(Mathf.RoundToInt(value01 * _ammoMagazineCapacity), 0, _ammoMagazineCapacity);
         int currentRounds = Mathf.Max(0, _ammoMagazineCapacity - shotsUsed);
         _player?.SetMagazineState(_ammoMagazineCapacity, currentRounds, notify: false);
-        if (!string.IsNullOrEmpty(_ammoWeaponCodeApplied))
-            _localMagazineRoundsByWeapon[_ammoWeaponCodeApplied] = currentRounds;
-        AmmoLog($"[AmmoDonut] weapon={_ammoWeaponCodeApplied}, value01={value01:0.###}, currentRounds={currentRounds}, magCap={_ammoMagazineCapacity}");
+        if (_ammoWeaponItemIdApplied > 0)
+            _localMagazineRoundsByWeapon[_ammoWeaponItemIdApplied] = currentRounds;
+        AmmoLog($"[AmmoDonut] weaponItemId={_ammoWeaponItemIdApplied}, value01={value01:0.###}, currentRounds={currentRounds}, magCap={_ammoMagazineCapacity}");
         float fill = _ammoMagazineCapacity > 0 ? (float)shotsUsed / _ammoMagazineCapacity : 0f;
-        if (_activeItemAmmoText != null && _weaponRowsByCode.TryGetValue(_ammoWeaponCodeApplied, out var row))
+        if (_activeItemAmmoText != null && _weaponRowsById.TryGetValue(_ammoWeaponItemIdApplied, out var row))
             _activeItemAmmoText.text = $"{Mathf.Max(1, row.reloadApCost)} AP";
     }
 
@@ -910,6 +1115,253 @@ public sealed class InventoryUI : MonoBehaviour
         rt.sizeDelta = new Vector2(sizePx, sizePx);
     }
 
+    void EnsureItemCardReference()
+    {
+        if (_itemCardView != null)
+            return;
+        Canvas canvas = GetComponentInParent<Canvas>() ?? FindFirstObjectByType<Canvas>();
+        if (canvas != null)
+        {
+            Transform tr = canvas.transform.Find("ItemCard") ?? FindChildRecursive(canvas.transform, "ItemCard");
+            if (tr != null)
+            {
+                _itemCardView = tr.GetComponent<ItemCardView>();
+                if (_itemCardView == null)
+                    _itemCardView = tr.gameObject.AddComponent<ItemCardView>();
+            }
+        }
+
+        if (_itemCardView == null)
+            _itemCardView = FindFirstObjectByType<ItemCardView>();
+
+        if (_itemCardView != null)
+        {
+            DisableLegacyProfileLoaderOnItemCard(_itemCardView.gameObject);
+            DisableItemCardRaycasts(_itemCardView.gameObject);
+        }
+    }
+
+    static void DisableLegacyProfileLoaderOnItemCard(GameObject card)
+    {
+        if (card == null)
+            return;
+        var profile = card.GetComponent<PlayerProfileCardController>();
+        if (profile != null)
+            profile.enabled = false;
+    }
+
+    static void DisableItemCardRaycasts(GameObject card)
+    {
+        if (card == null)
+            return;
+        var graphics = card.GetComponentsInChildren<Graphic>(true);
+        for (int i = 0; i < graphics.Length; i++)
+            graphics[i].raycastTarget = false;
+    }
+
+    public void OnInventoryCellHoverEnter(int slotIndex)
+    {
+        if (slotIndex < 0 || slotIndex >= _slots.Length)
+            return;
+        var slot = _slots[slotIndex];
+        if (slot == null || (slot.itemId ?? 0) <= 0)
+            return;
+        if (slot.continuation)
+            return;
+
+        EnsureItemCardReference();
+        if (_itemCardView == null)
+            return;
+
+        _hoveredSlotIndex = slotIndex;
+        RenderItemCard(slot);
+        _itemCardView.SetVisible(true);
+        _itemCardVisible = true;
+        UpdateItemCardPosition();
+    }
+
+    public void OnInventoryCellHoverExit(int slotIndex)
+    {
+        if (_hoveredSlotIndex == slotIndex)
+            HideItemCard();
+    }
+
+    void HideItemCard()
+    {
+        _hoveredSlotIndex = -1;
+        _itemCardVisible = false;
+        if (_itemCardView == null)
+            return;
+        _itemCardView.Clear();
+        _itemCardView.SetVisible(false);
+    }
+
+    void UpdateItemCardPosition()
+    {
+        if (!_itemCardVisible || _itemCardView == null)
+            return;
+        var rt = _itemCardView.transform as RectTransform;
+        if (rt == null)
+            return;
+        rt.pivot = new Vector2(0.5f, 0f);
+        rt.anchorMin = rt.anchorMax = new Vector2(0.5f, 0.5f);
+        var canvas = _itemCardView.GetComponentInParent<Canvas>();
+        if (canvas == null)
+            return;
+        var rootRt = canvas.transform as RectTransform;
+        if (rootRt == null)
+            return;
+
+        Camera eventCam = null;
+        if (canvas.renderMode == RenderMode.ScreenSpaceCamera || canvas.renderMode == RenderMode.WorldSpace)
+            eventCam = canvas.worldCamera;
+
+        Vector2 screen = GetHoveredCellAnchorScreen(eventCam) + _itemCardCursorOffset;
+        if (RectTransformUtility.ScreenPointToLocalPointInRectangle(rootRt, screen, eventCam, out var localPos))
+            rt.anchoredPosition = localPos;
+    }
+
+    Vector2 GetHoveredCellAnchorScreen(Camera eventCam)
+    {
+        if (_hoveredSlotIndex < 0 || _hoveredSlotIndex >= _cellButtons.Length)
+            return GetMouseScreenPosition();
+
+        RectTransform cellRt = null;
+        var btn = _cellButtons[_hoveredSlotIndex];
+        if (btn != null)
+            cellRt = btn.transform as RectTransform;
+        if (cellRt == null && _hoveredSlotIndex < _cellImages.Length && _cellImages[_hoveredSlotIndex] != null)
+            cellRt = _cellImages[_hoveredSlotIndex].transform as RectTransform;
+        if (cellRt == null)
+            return GetMouseScreenPosition();
+
+        var corners = new Vector3[4];
+        cellRt.GetWorldCorners(corners);
+        Vector2 topCenterWorld = (corners[1] + corners[2]) * 0.5f;
+        return RectTransformUtility.WorldToScreenPoint(eventCam, topCenterWorld);
+    }
+
+    static Vector2 GetMouseScreenPosition()
+    {
+#if ENABLE_INPUT_SYSTEM
+        if (Mouse.current != null)
+            return Mouse.current.position.ReadValue();
+#endif
+        return Vector2.zero;
+    }
+
+    bool IsPointerOverInventoryCell()
+    {
+        if (EventSystem.current == null)
+            return false;
+
+        var eventData = new PointerEventData(EventSystem.current)
+        {
+            position = GetMouseScreenPosition()
+        };
+        _hoverRaycastBuffer.Clear();
+        EventSystem.current.RaycastAll(eventData, _hoverRaycastBuffer);
+        for (int i = 0; i < _hoverRaycastBuffer.Count; i++)
+        {
+            var go = _hoverRaycastBuffer[i].gameObject;
+            if (go == null)
+                continue;
+            if (go.GetComponentInParent<InventoryCellHoverRelay>() != null)
+                return true;
+        }
+
+        return false;
+    }
+
+    void RenderItemCard(UserInventorySlotPayload slot)
+    {
+        if (_itemCardView == null || slot == null)
+            return;
+
+        _itemCardView.Clear();
+
+        string rowType = !string.IsNullOrWhiteSpace(slot.itemType)
+            ? slot.itemType.Trim().ToLowerInvariant()
+            : (slot.stackable ? "ammo" : "weapon");
+        WeaponDbRowPayload weapon = null;
+        long slotItemId = slot.itemId ?? 0;
+        if (slotItemId > 0 && _weaponRowsById.TryGetValue(slotItemId, out var row) && row != null)
+        {
+            weapon = row;
+            if (!string.IsNullOrWhiteSpace(row.itemType))
+                rowType = row.itemType.Trim().ToLowerInvariant();
+            else if (IsWeaponRowMedicine(row))
+                rowType = "medicine";
+        }
+
+        string displayName = !string.IsNullOrWhiteSpace(slot.itemName) ? slot.itemName.Trim() : "";
+        if (string.IsNullOrWhiteSpace(displayName) && weapon != null && !string.IsNullOrWhiteSpace(weapon.name))
+            displayName = weapon.name.Trim();
+        if (string.IsNullOrWhiteSpace(displayName) && slotItemId > 0)
+            displayName = "#" + slotItemId;
+        if (string.IsNullOrWhiteSpace(displayName))
+            displayName = Loc.T("itemcard.fallback_item_name");
+        _itemCardView.AddItemStatShort(displayName);
+
+        if (rowType == "weapon")
+        {
+            int range = weapon != null ? weapon.range : slot.range;
+            int useAp = weapon != null ? weapon.attackApCost : slot.useApCost;
+            int damageMin = weapon != null ? weapon.damageMin : Mathf.Max(0, slot.damageMin);
+            int damageMax = weapon != null ? weapon.damageMax : Mathf.Max(damageMin, slot.damageMax);
+            int reload = weapon != null ? weapon.reloadApCost : slot.reloadApCost;
+            string ammoLabel = weapon != null
+                ? (weapon.ammoName ?? weapon.caliber ?? "").Trim()
+                : "";
+            if (string.IsNullOrEmpty(ammoLabel))
+                ammoLabel = (slot.caliber ?? "").Trim();
+            int mag = weapon != null ? weapon.magazineSize : slot.magazineSize;
+            bool isCold = weapon != null
+                && string.Equals((weapon.category ?? "").Trim(), "cold", StringComparison.OrdinalIgnoreCase);
+
+            _itemCardView.AddItemStat(Loc.T("itemcard.stat.range"), range.ToString());
+            _itemCardView.AddItemStat(Loc.T("itemcard.stat.damage"), $"{damageMin}...{damageMax}");
+            _itemCardView.AddItemStat(Loc.T("itemcard.stat.use_ap"), Mathf.Max(0, useAp).ToString());
+            if (!isCold)
+            {
+                _itemCardView.AddItemStat(Loc.T("itemcard.stat.reload"), Mathf.Max(0, reload).ToString());
+                if (!string.IsNullOrEmpty(ammoLabel))
+                    _itemCardView.AddItemStat(Loc.T("itemcard.stat.ammo"), ammoLabel);
+                _itemCardView.AddItemStat(Loc.T("itemcard.stat.magazine_size"), Mathf.Max(0, mag).ToString());
+            }
+            return;
+        }
+
+        if (rowType == "medicine")
+        {
+            int useAp = weapon != null ? weapon.attackApCost : slot.useApCost;
+            string effectType = weapon != null ? (weapon.effectType ?? "") : "";
+            int effectMin = weapon != null ? weapon.effectMin : 0;
+            int effectMax = weapon != null ? weapon.effectMax : 0;
+            if (effectMin > effectMax)
+                (effectMin, effectMax) = (effectMax, effectMin);
+            if (string.IsNullOrWhiteSpace(effectType))
+                effectType = Loc.T("itemcard.effect_type.hp");
+
+            _itemCardView.AddItemStat(Loc.T("itemcard.stat.use_ap"), Mathf.Max(0, useAp).ToString());
+            _itemCardView.AddItemStatShort(Loc.T("itemcard.section.effects"));
+            _itemCardView.AddItemStat(Loc.T("itemcard.stat.effect_type"), effectType);
+            _itemCardView.AddItemStat(Loc.T("itemcard.stat.effect"), $"{effectMin}...{effectMax}");
+            int medQty = GetDisplayedItemQuantity(slot);
+            if (medQty > 0)
+                _itemCardView.AddItemStat(Loc.T("itemcard.stat.quantity"), medQty.ToString());
+            return;
+        }
+
+        if (weapon != null)
+        {
+            string stackAmmo = (weapon.ammoName ?? weapon.caliber ?? "").Trim();
+            if (!string.IsNullOrEmpty(stackAmmo))
+                _itemCardView.AddItemStat(Loc.T("itemcard.stat.ammo"), stackAmmo);
+        }
+        _itemCardView.AddItemStat(Loc.T("itemcard.stat.quantity"), GetDisplayedItemQuantity(slot).ToString());
+    }
+
     private void OnCellClicked(int slotIndex)
     {
         if (GameplayMapInputBlock.IsBlocked)
@@ -922,25 +1374,26 @@ public sealed class InventoryUI : MonoBehaviour
             return;
 
         var s = _slots[slotIndex];
-        if (s == null || string.IsNullOrWhiteSpace(s.weaponCode))
+        if (s == null || (s.itemId ?? 0) <= 0)
             return;
         if (s.continuation)
             return;
         if (!s.isEquippable)
             return;
-        if (_player != null && s.equipped &&
-            string.Equals(s.weaponCode, _player.WeaponCode, StringComparison.OrdinalIgnoreCase))
+        long selectedItemId = s.itemId ?? 0;
+        if (_player != null && s.equipped && selectedItemId > 0 && selectedItemId == _player.WeaponItemId)
             return;
 
         var session = GameSession.Active != null
             ? GameSession.Active
             : FindFirstObjectByType<GameSession>();
-        int atk = s.attackApCost > 0 ? s.attackApCost : 1;
-        string normCode = WeaponCatalog.NormalizeWeaponCode(s.weaponCode);
+        int atk = s.useApCost > 0 ? s.useApCost : 1;
         string categoryFromDb = null;
-        if (_weaponRowsByCode.TryGetValue(normCode, out var wRow) && wRow != null && !string.IsNullOrWhiteSpace(wRow.category))
+        if (selectedItemId > 0 && _weaponRowsById.TryGetValue(selectedItemId, out var wRow) && wRow != null && !string.IsNullOrWhiteSpace(wRow.category))
             categoryFromDb = wRow.category.Trim();
-        session?.RequestEquipWeapon(s.weaponCode, atk, s.damage, s.range, categoryFromDb);
+        else if (string.Equals((s.itemType ?? "").Trim(), "medicine", StringComparison.OrdinalIgnoreCase))
+            categoryFromDb = "medicine";
+        session?.RequestEquipWeapon(selectedItemId, atk, s.damageMax, s.range, categoryFromDb);
     }
 }
 
@@ -953,9 +1406,4 @@ public static class WeaponIconHelper
         return WeaponCatalog.LoadSpriteFromWeaponIconsFolder(iconKeyOrCode);
     }
 
-    /// <summary>Панель текущего оружия: пустой код → <see cref="WeaponCatalog.DefaultWeaponCode"/>.</summary>
-    public static Sprite LoadEquippedWeaponIcon(string weaponCode)
-    {
-        return WeaponCatalog.LoadSpriteForEquippedWeaponPanel(weaponCode);
-    }
 }

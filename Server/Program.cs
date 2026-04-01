@@ -110,11 +110,15 @@ builder.Services.AddSingleton<BattlePostgresDatabase>();
 builder.Services.AddSingleton<BattleHistoryDatabase>();
 builder.Services.AddSingleton<BattleTurnDatabase>();
 builder.Services.AddSingleton<BattleWeaponDatabase>();
-builder.Services.AddSingleton<BattleAmmoDatabase>();
+builder.Services.AddSingleton<BattleMedicineDatabase>();
+builder.Services.AddSingleton(sp => new BattleItemsCatalogDatabase(
+    sp.GetRequiredService<BattlePostgresDatabase>(),
+    sp.GetRequiredService<BattleWeaponDatabase>(),
+    sp.GetRequiredService<BattleMedicineDatabase>()));
 builder.Services.AddSingleton(sp => new BattleUserDatabase(
     sp.GetRequiredService<BattlePostgresDatabase>(),
     sp.GetRequiredService<BattleWeaponDatabase>(),
-    sp.GetRequiredService<BattleAmmoDatabase>()));
+    sp.GetRequiredService<BattleMedicineDatabase>()));
 builder.Services.AddSingleton<BattleObstacleBalanceDatabase>();
 builder.Services.AddSingleton<BattleZoneShrinkDatabase>();
 builder.Services.AddSingleton<BattleBodyPartDatabase>();
@@ -122,6 +126,7 @@ builder.Services.AddSingleton<BattleRoomStore>(sp => new BattleRoomStore(
     sp.GetRequiredService<BattleHistoryDatabase>(),
     sp.GetRequiredService<BattleTurnDatabase>(),
     sp.GetRequiredService<BattleWeaponDatabase>(),
+    sp.GetRequiredService<BattleMedicineDatabase>(),
     sp.GetRequiredService<BattleObstacleBalanceDatabase>(),
     sp.GetRequiredService<BattleZoneShrinkDatabase>(),
     sp.GetRequiredService<BattleBodyPartDatabase>(),
@@ -197,6 +202,7 @@ var battleHistoryDb = app.Services.GetRequiredService<BattleHistoryDatabase>();
 var battleTurnDb = app.Services.GetRequiredService<BattleTurnDatabase>();
 var battleUserDb = app.Services.GetRequiredService<BattleUserDatabase>();
 var battleWeaponDb = app.Services.GetRequiredService<BattleWeaponDatabase>();
+var battleMedicineDb = app.Services.GetRequiredService<BattleMedicineDatabase>();
 
 BattleRoom.RoundClosedForPush += room =>
 {
@@ -293,12 +299,31 @@ app.MapPost("/api/battle/join", (HttpContext http, BattleRoomStore s, BattleAuth
         return Results.Json(new ErrorResponse { Error = "User not found" }, jsonOpt, statusCode: 401);
 
     battleUserDb.TryGetCombatProfileByUserId(battleUserId, out int playerMaxHp, out int playerCurrentHp, out int playerMaxAp, out int accuracy, out int levelFromDb);
-    battleUserDb.TryGetEquippedWeaponCodeForUserByUserId(battleUserId, out string equippedCode);
-    string weaponCode = string.IsNullOrWhiteSpace(equippedCode) ? "fist" : equippedCode.Trim().ToLowerInvariant();
-    if (!battleWeaponDb.TryGetWeaponByCode(weaponCode, out var weapon))
+    battleUserDb.TryGetEquippedWeaponItemIdForUserByUserId(battleUserId, out long equippedItemId);
+    if (!battleWeaponDb.TryGetWeaponByItemId(equippedItemId, out var weapon))
     {
-        weaponCode = "fist";
-        battleWeaponDb.TryGetWeaponByCode(weaponCode, out weapon);
+        if (battleMedicineDb.TryGetMedicineByItemId(equippedItemId, out var med))
+        {
+            equippedItemId = med.Id;
+            weapon = new BattleWeaponBrowseRowDto
+            {
+                Id = med.Id,
+                Name = med.Name,
+                DamageMin = 0,
+                DamageMax = 0,
+                Range = 0,
+                AttackApCost = Math.Max(1, med.AttackApCost),
+                Tightness = 1.0,
+                TrajectoryHeight = 0,
+                IsSniper = false,
+                ItemType = "medicine"
+            };
+        }
+        else
+        {
+            battleWeaponDb.TryGetWeaponByKey("fist", out weapon);
+            equippedItemId = weapon.Id;
+        }
     }
 
     int characterLevel = levelFromDb;
@@ -310,7 +335,7 @@ app.MapPost("/api/battle/join", (HttpContext http, BattleRoomStore s, BattleAuth
         playerMaxHp,
         playerCurrentHp,
         playerMaxAp,
-        weaponCode,
+        equippedItemId,
         weapon.DamageMin,
         weapon.DamageMax,
         weapon.Range,
@@ -652,7 +677,7 @@ app.MapGet("/api/battle/{battleId}", (HttpContext http, string battleId, BattleR
     if (room == null) return Results.Json(new { error = "Battle not found" }, statusCode: 404);
     var battleRecord = battleHistoryDb.GetBattle(battleId);
 
-    room.FillSpawnArrays(out var spawnIds, out var spawnCols, out var spawnRows, out var spawnCurrentAps, out var spawnMaxAps, out var spawnMaxHps, out var spawnCurrentHps, out var spawnCurrentPostures, out var spawnWeaponCodes, out var spawnWeaponCategories, out var spawnWeaponDamageMins, out var spawnWeaponDamages, out var spawnWeaponRanges, out var spawnWeaponAttackApCosts, out var spawnCurrentMagazineRounds, out var spawnWeaponTightnesses, out var spawnWeaponTrajectoryHeights, out var spawnWeaponIsSnipers, out var spawnDisplayNames, out var spawnLevels, out var spawnTeamIds, out var spawnStrengths, out var spawnAgilities, out var spawnIntuitions, out var spawnEndurances, out var spawnAccuracies, out var spawnIntellects);
+    room.FillSpawnArrays(out var spawnIds, out var spawnCols, out var spawnRows, out var spawnCurrentAps, out var spawnMaxAps, out var spawnMaxHps, out var spawnCurrentHps, out var spawnCurrentPostures, out var spawnWeaponItemIds, out var spawnWeaponCategories, out var spawnWeaponDamageMins, out var spawnWeaponDamages, out var spawnWeaponRanges, out var spawnWeaponAttackApCosts, out var spawnCurrentMagazineRounds, out var spawnWeaponTightnesses, out var spawnWeaponTrajectoryHeights, out var spawnWeaponIsSnipers, out var spawnDisplayNames, out var spawnLevels, out var spawnTeamIds, out var spawnStrengths, out var spawnAgilities, out var spawnIntuitions, out var spawnEndurances, out var spawnAccuracies, out var spawnIntellects);
     var response = new BattleStateResponse
     {
         RoundIndex = room.RoundIndex,
@@ -672,7 +697,7 @@ app.MapGet("/api/battle/{battleId}", (HttpContext http, string battleId, BattleR
         SpawnMaxHps = spawnMaxHps,
         SpawnCurrentHps = spawnCurrentHps,
         SpawnCurrentPostures = spawnCurrentPostures,
-        SpawnWeaponCodes = spawnWeaponCodes,
+        SpawnWeaponItemIds = spawnWeaponItemIds,
         SpawnWeaponCategories = spawnWeaponCategories,
         SpawnWeaponDamageMins = spawnWeaponDamageMins,
         SpawnWeaponDamages = spawnWeaponDamages,
@@ -695,25 +720,38 @@ app.MapGet("/api/battle/{battleId}", (HttpContext http, string battleId, BattleR
     return Results.Json(response, jsonOpt);
 });
 
-app.MapPost("/api/battle/{battleId}/equip-weapon", (HttpContext http, string battleId, EquipWeaponHttpRequest? body, BattleRoomStore store, BattleWeaponDatabase weapons, BattleUserDatabase users, BattleAuthSession auth) =>
+app.MapPost("/api/battle/{battleId}/equip-weapon", (HttpContext http, string battleId, EquipWeaponHttpRequest? body, BattleRoomStore store, BattleWeaponDatabase weapons, BattleMedicineDatabase medicine, BattleUserDatabase users, BattleAuthSession auth) =>
 {
     if (!BattleAuthHttp.TryGetBearerUserId(http.Request, auth, out long jwtUserId))
         return Results.Json(new ErrorResponse { Error = "Unauthorized" }, jsonOpt, statusCode: 401);
-    if (body == null || string.IsNullOrWhiteSpace(body.PlayerId) || string.IsNullOrWhiteSpace(body.WeaponCode))
-        return Results.Json(new { error = "playerId and weaponCode required" }, statusCode: 400);
+    if (body == null || string.IsNullOrWhiteSpace(body.PlayerId))
+        return Results.Json(new { error = "playerId required" }, statusCode: 400);
     var room = store.GetRoom(battleId);
     if (room == null)
         return Results.Json(new { error = "Battle not found" }, statusCode: 404);
     if (!room.TryGetBattlePlayerUserId(body.PlayerId.Trim(), out long equipUserId) || equipUserId != jwtUserId)
         return Results.Json(new ErrorResponse { Error = "Forbidden" }, jsonOpt, statusCode: 403);
-    if (!weapons.TryGetWeaponByCode(body.WeaponCode.Trim(), out var w))
-        return Results.Json(new { error = "Unknown weapon" }, statusCode: 400);
-    if (!users.TryValidateEquippedWeaponForRegisteredUser(equipUserId, w.Code, out var invErr))
-        return Results.Json(new { error = invErr ?? "weapon_not_allowed" }, jsonOpt, statusCode: 400);
-    if (!room.TryEquipWeapon(body.PlayerId.Trim(), w.Code, w.DamageMin, w.DamageMax, w.Range, w.AttackApCost, w.Tightness, w.TrajectoryHeight, w.IsSniper, out var fail))
-        return Results.Json(new { error = fail ?? "equip_failed" }, statusCode: 400);
-    users.SyncEquippedWeaponForRegisteredUser(equipUserId, w.Code);
-    return Results.Json(new { ok = true, weaponCode = w.Code, weaponDamageMin = w.DamageMin, weaponDamage = w.DamageMax, weaponRange = w.Range, weaponAttackApCost = w.AttackApCost, weaponTightness = w.Tightness, weaponTrajectoryHeight = w.TrajectoryHeight, weaponIsSniper = w.IsSniper });
+    if (!body.ItemId.HasValue || body.ItemId.Value <= 0)
+        return Results.Json(new { error = "itemId required" }, statusCode: 400);
+    if (weapons.TryGetWeaponByItemId(body.ItemId.Value, out var w))
+    {
+        if (!users.TryValidateEquippedWeaponForRegisteredUserByItemId(equipUserId, w.Id, out var invErr))
+            return Results.Json(new { error = invErr ?? "weapon_not_allowed" }, jsonOpt, statusCode: 400);
+        if (!room.TryEquipWeapon(body.PlayerId.Trim(), w.Id, w.DamageMin, w.DamageMax, w.Range, w.AttackApCost, w.Tightness, w.TrajectoryHeight, w.IsSniper, out var fail))
+            return Results.Json(new { error = fail ?? "equip_failed" }, statusCode: 400);
+        users.SyncEquippedWeaponForRegisteredUserByItemId(equipUserId, w.Id);
+        return Results.Json(new { ok = true, itemId = w.Id, weaponDamageMin = w.DamageMin, weaponDamage = w.DamageMax, weaponRange = w.Range, weaponAttackApCost = w.AttackApCost, weaponTightness = w.Tightness, weaponTrajectoryHeight = w.TrajectoryHeight, weaponIsSniper = w.IsSniper });
+    }
+    if (medicine.TryGetMedicineByItemId(body.ItemId.Value, out var m))
+    {
+        if (!users.TryValidateEquippedWeaponForRegisteredUserByItemId(equipUserId, m.Id, out var invErr))
+            return Results.Json(new { error = invErr ?? "weapon_not_allowed" }, jsonOpt, statusCode: 400);
+        if (!room.TryEquipWeapon(body.PlayerId.Trim(), m.Id, 0, 0, 0, Math.Max(1, m.AttackApCost), 1.0, 0, false, out var fail))
+            return Results.Json(new { error = fail ?? "equip_failed" }, statusCode: 400);
+        users.SyncEquippedWeaponForRegisteredUserByItemId(equipUserId, m.Id);
+        return Results.Json(new { ok = true, itemId = m.Id, weaponDamageMin = 0, weaponDamage = 0, weaponRange = 0, weaponAttackApCost = Math.Max(1, m.AttackApCost), weaponTightness = 1.0, weaponTrajectoryHeight = 0, weaponIsSniper = false });
+    }
+    return Results.Json(new { error = "Unknown weapon" }, statusCode: 400);
 });
 
 app.MapGet("/api/battle/{battleId}/turns/{turnId}", (HttpContext http, string battleId, string turnId, BattleAuthSession auth) =>
@@ -811,6 +849,40 @@ app.MapGet("/api/db/user/items", (HttpContext http, BattleUserDatabase users, Ba
     return Results.Json(new { slots, userId }, jsonOpt);
 });
 
+/// <summary>Sync equipped hand item when not in battle (MainScene). Battle equip uses POST /api/battle/.../equip-weapon.</summary>
+app.MapPost("/api/db/user/equip-weapon", async (HttpContext http, BattleUserDatabase users, BattleWeaponDatabase weapons, BattleMedicineDatabase medicine, BattleAuthSession auth) =>
+{
+    if (!BattleAuthHttp.TryGetBearerUserId(http.Request, auth, out long userId))
+        return Results.Json(new ErrorResponse { Error = "Unauthorized" }, jsonOpt, statusCode: 401);
+    UserEquipWeaponHttpBody? body;
+    try
+    {
+        body = await JsonSerializer.DeserializeAsync<UserEquipWeaponHttpBody>(http.Request.Body, jsonOpt);
+    }
+    catch
+    {
+        return Results.Json(new { error = "invalid JSON" }, jsonOpt, statusCode: 400);
+    }
+
+    if (body?.ItemId == null || body.ItemId.Value <= 0)
+        return Results.Json(new { error = "itemId required" }, jsonOpt, statusCode: 400);
+    if (weapons.TryGetWeaponByItemId(body.ItemId.Value, out var w))
+    {
+        if (!users.TryValidateEquippedWeaponForRegisteredUserByItemId(userId, w.Id, out var invErr))
+            return Results.Json(new { error = invErr ?? "weapon_not_allowed" }, jsonOpt, statusCode: 400);
+        users.SyncEquippedWeaponForRegisteredUserByItemId(userId, w.Id);
+        return Results.Json(new { ok = true, itemId = w.Id }, jsonOpt);
+    }
+    if (medicine.TryGetMedicineByItemId(body.ItemId.Value, out var m))
+    {
+        if (!users.TryValidateEquippedWeaponForRegisteredUserByItemId(userId, m.Id, out var invErr))
+            return Results.Json(new { error = invErr ?? "weapon_not_allowed" }, jsonOpt, statusCode: 400);
+        users.SyncEquippedWeaponForRegisteredUserByItemId(userId, m.Id);
+        return Results.Json(new { ok = true, itemId = m.Id }, jsonOpt);
+    }
+    return Results.Json(new { error = "Unknown weapon" }, jsonOpt, statusCode: 400);
+});
+
 app.MapGet("/api/db/user/profile", (HttpContext http, BattleUserDatabase users, BattleAuthSession auth) =>
 {
     if (!BattleAuthHttp.TryGetBearerUserId(http.Request, auth, out long userId))
@@ -835,100 +907,61 @@ app.MapGet("/api/db/weapons", (BattleWeaponDatabase db, int? take) =>
     return Results.Json(db.ListWeapons(requested), jsonOpt);
 });
 
+app.MapGet("/api/db/medicine", (BattleMedicineDatabase db, int? take) =>
+{
+    int requested = take ?? 500;
+    return Results.Json(db.ListMedicine(requested), jsonOpt);
+});
+
 app.MapGet("/api/db/weapons/meta", (BattleWeaponDatabase db) =>
     Results.Json(db.GetWeaponMeta(), jsonOpt));
 
-app.MapGet("/api/db/ammo", (BattleAmmoDatabase db, int? take) =>
+
+app.MapGet("/api/db/items/catalog", (BattleItemsCatalogDatabase db, int? take, string? itemType, string? weaponCategory, string? q) =>
 {
-    int requested = take ?? 200;
-    return Results.Json(db.ListAmmoTypes(requested), jsonOpt);
+    int requested = take ?? 500;
+    return Results.Json(db.List(requested, itemType, weaponCategory, q), jsonOpt);
 });
 
-app.MapPost("/api/db/ammo", (BattleAmmoDatabase db, AmmoTypeUpsertRequest? body) =>
+app.MapGet("/api/db/items/catalog/next-id", (BattleItemsCatalogDatabase db) =>
+    Results.Json(new { itemId = db.GetNextItemId() }, jsonOpt));
+
+app.MapPost("/api/db/items/catalog", (BattleItemsCatalogDatabase db, ItemCatalogUpsertDto? body) =>
 {
     if (body == null)
         return Results.Json(new { error = "request body required" }, jsonOpt, statusCode: 400);
-    if (!db.TryUpsertAmmoType(body, out var err))
+    if (!db.Upsert(body, out var err))
         return Results.Json(new { error = err ?? "upsert failed" }, jsonOpt, statusCode: 400);
     return Results.Ok(new { ok = true });
 });
 
-app.MapDelete("/api/db/weapons/{code}", (string code, BattleWeaponDatabase db) =>
+app.MapDelete("/api/db/items/catalog/{itemId:long}", (BattleItemsCatalogDatabase db, long itemId) =>
 {
-    if (!db.TryDeleteWeaponByCode(code, out var err))
-    {
-        int status = err is "weapon not found" ? 404 : 400;
-        return Results.Json(new { error = err }, jsonOpt, statusCode: status);
-    }
-
+    if (!db.Delete(itemId, out var err))
+        return Results.Json(new { error = err ?? "delete failed" }, jsonOpt, statusCode: 400);
     return Results.Ok(new { ok = true });
 });
 
-app.MapPut("/api/db/weapons/replace", async (HttpContext ctx, BattleWeaponDatabase db) =>
+app.MapGet("/api/db/items/catalog/export", (BattleItemsCatalogDatabase db) =>
 {
-    WeaponUpsertRequest[]? arr;
-    try
-    {
-        arr = await JsonSerializer.DeserializeAsync<WeaponUpsertRequest[]>(ctx.Request.Body, jsonOpt);
-    }
-    catch
-    {
-        return Results.Json(new { error = "invalid JSON array" }, jsonOpt, statusCode: 400);
-    }
-
-    if (arr == null || arr.Length == 0)
-        return Results.Json(new { error = "non-empty JSON array required" }, jsonOpt, statusCode: 400);
-
-    try
-    {
-        var dtos = arr.Select(r => r.ToUpsertDto()).ToList();
-        db.ReplaceAllWeapons(dtos);
-    }
-    catch (Exception ex)
-    {
-        return Results.Json(new { error = ex.Message }, jsonOpt, statusCode: 400);
-    }
-
-    return Results.Ok(new { ok = true, count = arr.Length });
+    string json = db.ExportJson();
+    return Results.Text(json, "application/json; charset=utf-8");
 });
 
-app.MapGet("/api/db/weapons/sql-export", (BattleWeaponDatabase db) =>
+app.MapPost("/api/db/items/catalog/import", async (BattleItemsCatalogDatabase db, HttpContext ctx) =>
 {
-    string sql = db.BuildWeaponsSqlExportScript();
-    return Results.Text(sql, "text/plain; charset=utf-8");
-});
-
-app.MapPost("/api/db/weapons/sql-import", async (HttpContext ctx, BattleWeaponDatabase db) =>
-{
-    string sql;
+    string json;
     using (var reader = new StreamReader(ctx.Request.Body, leaveOpen: true))
-        sql = await reader.ReadToEndAsync();
-
-    try
-    {
-        db.ImportWeaponsSqlScript(sql);
-    }
-    catch (Exception ex)
-    {
-        return Results.Json(new { error = ex.Message }, jsonOpt, statusCode: 400);
-    }
-
-    return Results.Ok(new { ok = true });
+        json = await reader.ReadToEndAsync();
+    if (!db.ImportJson(json, out var err, out var imported))
+        return Results.Json(new { error = err ?? "import failed" }, jsonOpt, statusCode: 400);
+    return Results.Ok(new { ok = true, imported });
 });
+
 
 app.MapGet("/api/db/body-parts", (BattleBodyPartDatabase db) =>
     Results.Json(db.ListBodyParts(), jsonOpt));
 
-app.MapPost("/api/db/weapons", (BattleWeaponDatabase db, WeaponUpsertRequest request) =>
-{
-    if (request == null)
-        return Results.Json(new { error = "request body required" }, statusCode: 400);
-    if (string.IsNullOrWhiteSpace(request.code) || string.IsNullOrWhiteSpace(request.name))
-        return Results.Json(new { error = "code and name are required" }, statusCode: 400);
-
-    db.UpsertWeapon(request.ToUpsertDto());
-    return Results.Ok(new { ok = true });
-});
 
 app.MapGet("/api/db/obstacle-balance", (BattleObstacleBalanceDatabase db) =>
     Results.Json(db.GetBalance(), jsonOpt));
@@ -1053,33 +1086,10 @@ app.MapGet("/api/logs/stream", async (HttpContext ctx, BattleLogStore logs) =>
 });
 
 app.MapGet("/logs", () => Results.Content(BattleLogDashboardPage.Html, "text/html; charset=utf-8"));
+app.MapGet("/alpha-guide", (IConfiguration cfg) => Results.Content(AlphaGuidePage.GetHtml(cfg), "text/html; charset=utf-8"));
 app.MapGet("/db", () => Results.Content(BattleDbDashboardPage.Html, "text/html; charset=utf-8"));
 app.MapGet("/users", () => Results.Content(BattleUsersDashboardPage.Html, "text/html; charset=utf-8"));
 app.MapGet("/items", () => Results.Content(BattleItemsDashboardPage.Html, "text/html; charset=utf-8"));
-app.MapGet("/weapons", async (HttpContext ctx) =>
-{
-    ctx.Response.Headers.CacheControl = "no-store, max-age=0, must-revalidate";
-    ctx.Response.ContentType = "text/html; charset=utf-8";
-    await ctx.Response.WriteAsync(BattleItemsDashboardPage.Html);
-});
-app.MapGet("/ammo", async (HttpContext ctx) =>
-{
-    ctx.Response.Headers.CacheControl = "no-store, max-age=0, must-revalidate";
-    ctx.Response.ContentType = "text/html; charset=utf-8";
-    await ctx.Response.WriteAsync(BattleItemsDashboardPage.Html);
-});
-app.MapGet("/weapons-table", async (HttpContext ctx) =>
-{
-    ctx.Response.Headers.CacheControl = "no-store, max-age=0, must-revalidate";
-    ctx.Response.ContentType = "text/html; charset=utf-8";
-    await ctx.Response.WriteAsync(BattleWeaponsDashboardPage.Html);
-});
-app.MapGet("/ammo-table", async (HttpContext ctx) =>
-{
-    ctx.Response.Headers.CacheControl = "no-store, max-age=0, must-revalidate";
-    ctx.Response.ContentType = "text/html; charset=utf-8";
-    await ctx.Response.WriteAsync(BattleAmmoDashboardPage.Html);
-});
 app.MapGet("/obstacle-balance", () => Results.Content(BattleObstacleBalanceDashboardPage.Html, "text/html; charset=utf-8"));
 app.MapGet("/zone-shrink", () => Results.Content(BattleZoneShrinkDashboardPage.Html, "text/html; charset=utf-8"));
 app.MapGet("/hit_formula.html", (IWebHostEnvironment env) =>
@@ -1190,7 +1200,7 @@ public class BattleStateResponse
     public int[]? SpawnMaxHps { get; set; }
     public int[]? SpawnCurrentHps { get; set; }
     public string[]? SpawnCurrentPostures { get; set; }
-    public string[]? SpawnWeaponCodes { get; set; }
+    public long[]? SpawnWeaponItemIds { get; set; }
     public string[]? SpawnWeaponCategories { get; set; }
     public int[]? SpawnWeaponDamageMins { get; set; }
     public int[]? SpawnWeaponDamages { get; set; }
@@ -1226,7 +1236,7 @@ public class ErrorResponse
 
 public class WeaponUpsertRequest
 {
-    public string code { get; set; } = "";
+    public long itemId { get; set; }
     public string name { get; set; } = "";
     /// <summary>Устаревшее поле: если <see cref="damageMax"/> не задан, подставляется в min и max.</summary>
     public int damage { get; set; }
@@ -1242,6 +1252,7 @@ public class WeaponUpsertRequest
     public int weaponCondition { get; set; } = 100;
     public bool isSniper { get; set; }
     public double mass { get; set; }
+    public long? ammoTypeId { get; set; }
     public string? caliber { get; set; }
     public int armorPierce { get; set; }
     public int magazineSize { get; set; }
@@ -1262,12 +1273,8 @@ public class WeaponUpsertRequest
     public int inventorySlotWidth { get; set; } = 1;
     /// <summary>Hand occupancy marker: 0, 1 or 2.</summary>
     public int inventoryGrid { get; set; } = 1;
-    public string? effectType { get; set; }
-    public string? effectSign { get; set; }
-    public int effectMin { get; set; }
-    public int effectMax { get; set; }
-    public string? effectTarget { get; set; }
     public bool isEquippable { get; set; } = true;
+    public string? itemType { get; set; }
 
     public BattleWeaponUpsertDto ToUpsertDto()
     {
@@ -1297,7 +1304,7 @@ public class WeaponUpsertRequest
 
         return new BattleWeaponUpsertDto
         {
-            Code = code,
+            ItemId = itemId,
             Name = name,
             DamageMin = dMin,
             DamageMax = dMax,
@@ -1310,7 +1317,7 @@ public class WeaponUpsertRequest
             WeaponCondition = weaponCondition,
             IsSniper = isSniper,
             Mass = mass,
-            Caliber = caliber ?? "",
+            AmmoTypeId = ammoTypeId,
             ArmorPierce = armorPierce,
             MagazineSize = magazineSize,
             ReloadApCost = reloadApCost,
@@ -1326,13 +1333,10 @@ public class WeaponUpsertRequest
             DamageType = damageType ?? "physical",
             BurstRounds = burstRounds,
             BurstApCost = burstApCost,
+            InventorySlotWidth = inventorySlotWidth,
             InventoryGrid = inventoryGrid,
-            EffectType = effectType ?? "",
-            EffectSign = effectSign ?? "positive",
-            EffectMin = effectMin,
-            EffectMax = effectMax,
-            EffectTarget = effectTarget ?? "enemy",
-            IsEquippable = isEquippable
+            IsEquippable = isEquippable,
+            ItemType = string.IsNullOrWhiteSpace(itemType) ? "weapon" : itemType.Trim()
         };
     }
 }
@@ -1340,7 +1344,12 @@ public class WeaponUpsertRequest
 public class EquipWeaponHttpRequest
 {
     public string PlayerId { get; set; } = "";
-    public string WeaponCode { get; set; } = "";
+    public long? ItemId { get; set; }
+}
+
+public sealed class UserEquipWeaponHttpBody
+{
+    public long? ItemId { get; set; }
 }
 
 public static class BattleLogDashboardPage

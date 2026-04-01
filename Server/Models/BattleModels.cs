@@ -53,8 +53,8 @@ public class QueuedBattleActionDto
     public int BodyPart { get; set; }
     public string? Posture { get; set; }
     public int Cost { get; set; } = 1;
-    /// <summary>Для EquipWeapon: код оружия из БД.</summary>
-    public string? WeaponCode { get; set; }
+    /// <summary>Для EquipWeapon: идентификатор предмета оружия (<c>items.id</c>).</summary>
+    public long? WeaponItemId { get; set; }
     /// <summary>Для отмены EquipWeapon: стоимость атаки предыдущего оружия (клиент).</summary>
     public int PreviousWeaponAttackApCost { get; set; }
     /// <summary>Для EquipWeapon: стоимость атаки нового оружия (клиент).</summary>
@@ -102,7 +102,6 @@ public class BattleZoneShrinkRowDto
 public class BattleWeaponBrowseRowDto
 {
     public long Id { get; set; }
-    public string Code { get; set; } = "";
     public string Name { get; set; } = "";
     /// <summary>Диапазон урона в бою (случайное целое inclusive).</summary>
     public int DamageMin { get; set; } = 1;
@@ -123,7 +122,8 @@ public class BattleWeaponBrowseRowDto
     /// <summary>Ослабленный штраф к p за дистанцию за пределами <see cref="Range"/> (кривая «снайпер»).</summary>
     public bool IsSniper { get; set; }
     public double Mass { get; set; }
-    public string Caliber { get; set; } = "";
+    public long? AmmoTypeId { get; set; }
+    public string AmmoName { get; set; } = "";
     /// <summary>In DB, <c>-1</c> means N/A; combat uses 0.</summary>
     public int ArmorPierce { get; set; }
     /// <summary>In DB, <c>-1</c> means N/A; combat uses 0.</summary>
@@ -154,18 +154,37 @@ public class BattleWeaponBrowseRowDto
     public int InventorySlotWidth { get; set; } = 1;
     /// <summary>Hand slots consumed by item in inventory grid: 0, 1 or 2.</summary>
     public int InventoryGrid { get; set; } = 1;
-    /// <summary>Universal effect type (for example hp, ap).</summary>
-    public string EffectType { get; set; } = "";
-    /// <summary>Effect sign: positive or negative.</summary>
-    public string EffectSign { get; set; } = "positive";
-    /// <summary>Effect roll lower bound.</summary>
-    public int EffectMin { get; set; }
-    /// <summary>Effect roll upper bound.</summary>
-    public int EffectMax { get; set; }
-    /// <summary>Effect target: self or enemy.</summary>
-    public string EffectTarget { get; set; } = "enemy";
     /// <summary>Common item flag from <c>items.is_equippable</c>.</summary>
     public bool IsEquippable { get; set; }
+    /// <summary>Common item type from <c>items.type</c> (weapon/ammo/medicine).</summary>
+    public string ItemType { get; set; } = "weapon";
+}
+
+/// <summary>Row from <c>medicine</c> joined with <c>items</c> (consumables — not weapons).</summary>
+public sealed class BattleMedicineBrowseRowDto
+{
+    /// <summary><c>items.id</c> (same as equipped / inventory key).</summary>
+    public long Id { get; set; }
+    public string Name { get; set; } = "";
+    public string IconKey { get; set; } = "";
+    public double Mass { get; set; }
+    public int Quality { get; set; } = 100;
+    public int Condition { get; set; } = 100;
+    public int AttackApCost { get; set; } = 1;
+    public int ReqLevel { get; set; } = 1;
+    public int ReqStrength { get; set; }
+    public int ReqEndurance { get; set; }
+    public int ReqAccuracy { get; set; }
+    public string ReqMasteryCategory { get; set; } = "";
+    public string EffectType { get; set; } = "";
+    public string EffectSign { get; set; } = "positive";
+    public int EffectMin { get; set; }
+    public int EffectMax { get; set; }
+    public string EffectTarget { get; set; } = "enemy";
+    public int InventorySlotWidth { get; set; } = 1;
+    public int InventoryGrid { get; set; } = 1;
+    public bool IsEquippable { get; set; }
+    public string ItemType { get; set; } = "medicine";
 }
 
 /// <summary>Distinct <c>damage_type</c> / <c>category</c> values for weapons admin UI.</summary>
@@ -178,7 +197,7 @@ public sealed class BattleWeaponMetaDto
 /// <summary>Полная запись для upsert в <c>weapons</c>.</summary>
 public sealed class BattleWeaponUpsertDto
 {
-    public string Code { get; set; } = "";
+    public long ItemId { get; set; }
     public string Name { get; set; } = "";
     public int DamageMin { get; set; } = 1;
     public int DamageMax { get; set; } = 1;
@@ -192,7 +211,7 @@ public sealed class BattleWeaponUpsertDto
     public int WeaponCondition { get; set; } = 100;
     public bool IsSniper { get; set; }
     public double Mass { get; set; }
-    public string Caliber { get; set; } = "";
+    public long? AmmoTypeId { get; set; }
     public int ArmorPierce { get; set; }
     public int MagazineSize { get; set; }
     public int ReloadApCost { get; set; }
@@ -212,12 +231,9 @@ public sealed class BattleWeaponUpsertDto
     public int InventorySlotWidth { get; set; } = 1;
     /// <summary>Hand slots consumed by item in inventory grid: 0, 1 or 2.</summary>
     public int InventoryGrid { get; set; } = 1;
-    public string EffectType { get; set; } = "";
-    public string EffectSign { get; set; } = "positive";
-    public int EffectMin { get; set; }
-    public int EffectMax { get; set; }
-    public string EffectTarget { get; set; } = "enemy";
     public bool IsEquippable { get; set; } = true;
+    /// <summary>Item type written to <c>items.type</c>: weapon/ammo/medicine.</summary>
+    public string ItemType { get; set; } = "weapon";
 }
 
 public class ExecutedBattleActionDto
@@ -286,7 +302,7 @@ public class UnitStateDto
     public float PenaltyFraction { get; set; }
     public int MaxHp { get; set; }
     public int CurrentHp { get; set; }
-    public string WeaponCode { get; set; } = "fist";
+    public long WeaponItemId { get; set; }
     public int WeaponDamageMin { get; set; } = 1;
     public int WeaponDamage { get; set; } = 1;
     public int WeaponRange { get; set; } = 1;
@@ -327,7 +343,7 @@ public class PlayerTurnResultDto
     /// <summary>Поза юнита до симуляции этого раунда (для проигрывания журнала на клиенте без ложных Sit↔Stand).</summary>
     public string PostureAtRoundStart { get; set; } = "walk";
     public string CurrentPosture { get; set; } = "walk";
-    public string WeaponCode { get; set; } = "fist";
+    public long WeaponItemId { get; set; }
     /// <summary>DB <c>weapons.category</c>; client uses <c>light</c> for pistol locomotion.</summary>
     public string WeaponCategory { get; set; } = "cold";
     public int WeaponDamageMin { get; set; } = 1;
@@ -424,8 +440,8 @@ public class BattleStartedPayloadDto
     public int[]? SpawnMaxHps { get; set; }
     public int[]? SpawnCurrentHps { get; set; }
     public string[]? SpawnCurrentPostures { get; set; }
-    public string[]? SpawnWeaponCodes { get; set; }
-    /// <summary>Parallel to <see cref="SpawnWeaponCodes"/>; DB <c>weapons.category</c> (e.g. cold, light, medium).</summary>
+    public long[]? SpawnWeaponItemIds { get; set; }
+    /// <summary>Parallel to <see cref="SpawnWeaponItemIds"/>; DB <c>weapons.category</c> (e.g. cold, light, medium).</summary>
     public string[]? SpawnWeaponCategories { get; set; }
     public int[]? SpawnWeaponDamages { get; set; }
     /// <summary>Параллельно <see cref="SpawnWeaponDamages"/> (макс.); мин. урон для отображения/логики клиента.</summary>
@@ -520,8 +536,8 @@ public class BattleUserBrowseRowDto
     public int MaxHp { get; set; }
     public int CurrentHp { get; set; }
     public int MaxAp { get; set; }
-    /// <summary>Equipped weapon code from <c>user_inventory_items</c> (<c>fist</c> if none).</summary>
-    public string WeaponCode { get; set; } = "fist";
+    public long? EquippedItemId { get; set; }
+    public string EquippedItemDisplay { get; set; } = "";
 }
 
 /// <summary>Обновление пользователя из админки /users (игрок сам характеристики не меняет). Пароль: null — не менять.</summary>
@@ -566,13 +582,17 @@ public class UserProgressProfileDto
 public class UserInventorySlotDto
 {
     public int SlotIndex { get; set; }
-    public long? WeaponId { get; set; }
-    public string? WeaponCode { get; set; }
-    public string? WeaponName { get; set; }
-    public int Damage { get; set; }
+    public long? ItemId { get; set; }
+    public string? ItemName { get; set; }
+    public string ItemType { get; set; } = "weapon";
+    public int DamageMin { get; set; }
+    public int DamageMax { get; set; }
     public int Range { get; set; }
     public string IconKey { get; set; } = "fist";
-    public int AttackApCost { get; set; }
+    public int UseApCost { get; set; }
+    public int ReloadApCost { get; set; }
+    public long? AmmoTypeId { get; set; }
+    public int MagazineSize { get; set; }
     /// <summary>Primary cell of a multi-slot item: width (1 or 2). Continuation cells use 0.</summary>
     public int SlotSpan { get; set; }
     /// <summary>True when this stack is currently equipped (primary cell only).</summary>
@@ -583,6 +603,11 @@ public class UserInventorySlotDto
     public bool Stackable { get; set; }
     /// <summary>Stack amount for <see cref="Stackable"/> items.</summary>
     public int Quantity { get; set; }
+    /// <summary>
+    /// Count from <c>user_inventory_items.rounds</c> (uses left / stack size); ammo stacks: same as stack count in rounds.
+    /// Clients should prefer this over <see cref="Quantity"/> for display.
+    /// </summary>
+    public int Rounds { get; set; }
     /// <summary>Rounds currently loaded in weapon chamber/magazine for this inventory item.</summary>
     public int ChamberRounds { get; set; }
     /// <summary>Whether this item can be equipped in hand.</summary>
@@ -593,9 +618,10 @@ public class UserInventorySlotDto
 public sealed class UserInventoryItemAdminDto
 {
     public long Id { get; set; }
+    public long ItemId { get; set; }
     public int StartSlot { get; set; }
-    public string WeaponCode { get; set; } = "";
     public int SlotWidth { get; set; } = 1;
+    public int Rounds { get; set; }
     public int ChamberRounds { get; set; }
     public bool IsEquipped { get; set; }
 }
@@ -611,10 +637,15 @@ public sealed class AmmoTypeDto
     public int Condition { get; set; } = 100;
     public string IconKey { get; set; } = "";
     public int InventoryGrid { get; set; } = 1;
+    /// <summary>Common item type from <c>items.type</c> (weapon/ammo/medicine).</summary>
+    public string ItemType { get; set; } = "ammo";
+    public string Category { get; set; } = "";
 }
 
 public sealed class AmmoTypeUpsertRequest
 {
+    public long Id { get; set; }
+    public long ItemId { get; set; }
     public string Caliber { get; set; } = "";
     public string Name { get; set; } = "";
     public double UnitWeight { get; set; }
@@ -622,6 +653,9 @@ public sealed class AmmoTypeUpsertRequest
     public int Condition { get; set; } = 100;
     public string? IconKey { get; set; }
     public int InventoryGrid { get; set; } = 1;
+    /// <summary>Item type written to <c>items.type</c>: weapon/ammo/medicine.</summary>
+    public string ItemType { get; set; } = "ammo";
+    public string Category { get; set; } = "";
 }
 
 public sealed class UserAmmoPackAdminDto
@@ -636,6 +670,7 @@ public sealed class UserAmmoPackAdminDto
     public int Condition { get; set; } = 100;
     public string IconKey { get; set; } = "";
     public int InventoryGrid { get; set; } = 1;
+    public string ItemType { get; set; } = "ammo";
     public int StartSlot { get; set; }
     public int RoundsCount { get; set; }
     public int PacksCount { get; set; }
@@ -644,8 +679,9 @@ public sealed class UserAmmoPackAdminDto
 
 public sealed class UserItemAdminDto
 {
+    public long? ItemId { get; set; }
+    public long? AmmoTypeId { get; set; }
     public string ItemType { get; set; } = "";
-    public string Code { get; set; } = "";
     public string Name { get; set; } = "";
     public string IconKey { get; set; } = "";
     public int Quality { get; set; } = 100;
@@ -663,8 +699,9 @@ public sealed class UserItemAdminDto
 
 public sealed class UserItemReplaceDto
 {
+    public long? ItemId { get; set; }
+    public long? AmmoTypeId { get; set; }
     public string ItemType { get; set; } = "";
-    public string Code { get; set; } = "";
     public int Quantity { get; set; }
     public int ChamberRounds { get; set; }
     public int StartSlot { get; set; } = -1;

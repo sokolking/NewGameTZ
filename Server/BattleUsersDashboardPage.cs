@@ -209,8 +209,7 @@ public static class BattleUsersDashboardPage
       <div class="nav">
         <a href="/db">Battles</a>
         <a href="/users" class="active">Users</a>
-        <a href="/weapons">Weapons</a>
-        <a href="/ammo">Ammo</a>
+        <a href="/items">Items</a>
         <a href="/obstacle-balance">Obstacle balance</a>
       </div>
       <input id="userSearch" type="search" placeholder="Search username">
@@ -263,7 +262,7 @@ public static class BattleUsersDashboardPage
     <h3>User items</h3>
     <p class="hint" style="margin:0 0 10px;font-size:12px;line-height:1.4;">
       Single list of entities: <strong>weapon</strong> and <strong>ammo</strong>. Ammo is stackable (<code>quantity</code>), weapon is non-stackable.
-      For weapons: keep exactly one equipped and include <code>fist</code>. Weapon slot uses inventory grid 0..11.
+      For weapons: keep exactly one equipped and include unarmed item. Weapon slot uses inventory grid 0..11.
     </p>
     <div id="itemsRows" style="display:flex;flex-direction:column;gap:8px;max-height:360px;overflow:auto;"></div>
     <div class="edit-actions" style="margin-top:10px;">
@@ -339,7 +338,7 @@ public static class BattleUsersDashboardPage
               <span>maxHp ${user.maxHp}</span>
               <span>curHp ${user.currentHp}</span>
               <span>maxAp ${user.maxAp}</span>
-              <span>weapon ${escapeHtml(user.weaponCode || '')}</span>
+              <span>equipped ${escapeHtml(user.equippedItemDisplay || '')}</span>
             </div>
           </div>
           <button type="button" class="edit-btn">Edit</button>
@@ -376,20 +375,25 @@ public static class BattleUsersDashboardPage
       await loadUsers();
     }
 
-    function weaponSlotWidth(code) {
-      const w = weaponList.find(x => x.code === code);
+    function getWeaponById(weaponItemId) {
+      const id = Math.max(0, Number(weaponItemId || 0));
+      return weaponList.find(x => Number(x.id || 0) === id) || null;
+    }
+
+    function weaponSlotWidth(weaponItemId) {
+      const w = getWeaponById(weaponItemId);
       const n = w && w.inventorySlotWidth != null ? Number(w.inventorySlotWidth) : 1;
       return n >= 2 ? 2 : 1;
     }
 
-    function weaponMagazineSize(code) {
-      const w = weaponList.find(x => x.code === code);
+    function weaponMagazineSize(weaponItemId) {
+      const w = getWeaponById(weaponItemId);
       return w && w.magazineSize != null ? Math.max(0, Number(w.magazineSize) || 0) : 0;
     }
 
-    function weaponHasCaliber(code) {
-      const w = weaponList.find(x => x.code === code);
-      return !!(w && String(w.caliber || '').trim());
+    function weaponHasCaliber(weaponItemId) {
+      const w = getWeaponById(weaponItemId);
+      return !!(w && Number(w.ammoTypeId || 0) > 0);
     }
 
     function openEdit(user) {
@@ -409,39 +413,42 @@ public static class BattleUsersDashboardPage
       loadItemsForUser(user.id);
     }
 
-    function addWeaponOptions(sel, code) {
+    function addWeaponOptions(sel, itemId) {
       for (const w of weaponList) {
         const opt = document.createElement('option');
-        opt.value = w.code;
-        opt.textContent = w.code + ' - ' + w.name;
+        opt.value = String(Number(w.id || 0));
+        opt.textContent = String(Number(w.id || 0)) + ' (' + (w.name || '') + ')';
         sel.appendChild(opt);
       }
-      const wc = (code || 'fist').toLowerCase();
-      if (![...sel.options].some(o => o.value === wc)) {
+      const wantedId = Math.max(0, Number(itemId || 0));
+      if (wantedId > 0 && ![...sel.options].some(o => Number(o.value) === wantedId)) {
+        const known = weaponList.find(x => Number(x.id || 0) === wantedId);
         const opt = document.createElement('option');
-        opt.value = wc;
-        opt.textContent = wc + ' (missing in weapons list)';
+        opt.value = String(wantedId);
+        opt.textContent = String(wantedId) + ' (' + (known?.name || 'missing') + ')';
         sel.appendChild(opt);
       }
-      sel.value = wc;
+      if (wantedId > 0) sel.value = String(wantedId);
+      else if (sel.options.length) sel.value = sel.options[0].value;
     }
 
-    function addAmmoOptions(sel, caliber) {
+    function addAmmoOptions(sel, ammoTypeId, caliber) {
       for (const a of ammoTypeList) {
         const opt = document.createElement('option');
-        opt.value = a.caliber;
-        opt.textContent = a.caliber;
+        opt.value = String(a.itemId || 0);
+        opt.textContent = (a.name || ('ammo #' + (a.itemId || '')));
         sel.appendChild(opt);
       }
+      const id = Math.max(0, Number(ammoTypeId || 0));
       const cal = (caliber || '').trim();
-      if (cal && ![...sel.options].some(o => o.value === cal)) {
+      if (id > 0 && ![...sel.options].some(o => Number(o.value) === id)) {
         const opt = document.createElement('option');
-        opt.value = cal;
-        opt.textContent = cal + ' (missing in ammo list)';
+        opt.value = String(id);
+        opt.textContent = (cal || ('id:' + id)) + ' (missing in ammo list)';
         sel.appendChild(opt);
       }
-      if (sel.options.length && !cal) sel.value = sel.options[0].value;
-      else sel.value = cal;
+      if (sel.options.length && id <= 0) sel.value = sel.options[0].value;
+      else sel.value = String(id);
     }
 
     function renderItemsRows(items) {
@@ -449,6 +456,7 @@ public static class BattleUsersDashboardPage
       for (const it of items) {
         const row = document.createElement('div');
         row.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;align-items:center;border:1px solid var(--border);border-radius:8px;padding:8px;';
+        row.dataset.itemId = String(Number(it.itemId || 0) || 0);
 
         const type = document.createElement('select');
         type.innerHTML = '<option value="weapon">weapon</option><option value="ammo">ammo</option><option value="medicine">medicine</option>';
@@ -488,12 +496,14 @@ public static class BattleUsersDashboardPage
         function syncUi() {
           code.innerHTML = '';
           if (type.value === 'weapon') {
-            addWeaponOptions(code, it.code || 'fist');
+            addWeaponOptions(code, it.itemId || 0);
             slot.disabled = false;
             qty.disabled = true;
             qty.value = '1';
-            const magSize = weaponMagazineSize(code.value);
-            const hasCal = weaponHasCaliber(code.value);
+            const selectedWeaponId = Math.max(0, Number(code.value || 0));
+            row.dataset.itemId = String(selectedWeaponId);
+            const magSize = weaponMagazineSize(selectedWeaponId);
+            const hasCal = weaponHasCaliber(selectedWeaponId);
             chamber.disabled = !(hasCal && magSize > 0);
             chamber.max = String(Math.max(0, magSize));
             if (chamber.disabled) chamber.value = '0';
@@ -501,11 +511,11 @@ public static class BattleUsersDashboardPage
             if (!canEq.checked) eq.checked = false;
             eqLab.style.display = canEq.checked ? '' : 'none';
             canEqLab.style.display = '';
-            const weaponDef = weaponList.find(x => x.code === code.value);
+            const weaponDef = getWeaponById(selectedWeaponId);
             const hand = weaponDef && weaponDef.inventoryGrid != null ? Number(weaponDef.inventoryGrid) : 1;
-            info.textContent = 'uses ' + weaponSlotWidth(code.value) + ' cell(s), hand ' + hand + ', mag ' + magSize;
+            info.textContent = 'uses ' + weaponSlotWidth(selectedWeaponId) + ' cell(s), hand ' + hand + ', mag ' + magSize;
           } else if (type.value === 'ammo') {
-            addAmmoOptions(code, it.code || '');
+            addAmmoOptions(code, it.ammoTypeId || 0, '');
             slot.disabled = false;
             qty.disabled = false;
             chamber.disabled = true;
@@ -513,26 +523,27 @@ public static class BattleUsersDashboardPage
             if (!canEq.checked) eq.checked = false;
             eqLab.style.display = canEq.checked ? '' : 'none';
             canEqLab.style.display = '';
-            const ammoDef = ammoTypeList.find(x => x.caliber === code.value);
+            const ammoDef = ammoTypeList.find(x => Number(x.itemId) === Number(code.value));
             const hand = ammoDef && ammoDef.inventoryGrid != null ? Number(ammoDef.inventoryGrid) : 1;
             info.textContent = 'stackable item, 1 cell, hand ' + hand;
           } else {
             code.innerHTML = '';
             for (const w of medicineWeaponList) {
               const opt = document.createElement('option');
-              opt.value = w.code;
-              opt.textContent = w.code + ' - ' + w.name;
+              opt.value = String(Number(w.itemId || 0));
+              opt.textContent = String(Number(w.itemId || 0)) + ' (' + (w.name || '') + ')';
               code.appendChild(opt);
             }
-            const medCode = (it.code || '').trim().toLowerCase();
-            if (medCode && ![...code.options].some(o => o.value === medCode)) {
+            const medItemId = Math.max(0, Number(it.itemId || 0));
+            if (medItemId > 0 && ![...code.options].some(o => Number(o.value) === medItemId)) {
               const opt = document.createElement('option');
-              opt.value = medCode;
-              opt.textContent = medCode + ' (missing in medicine list)';
+              opt.value = String(medItemId);
+              opt.textContent = String(medItemId) + ' (missing in medicine list)';
               code.appendChild(opt);
             }
-            if (code.options.length && !medCode) code.value = code.options[0].value;
-            else code.value = medCode;
+            if (code.options.length && medItemId <= 0) code.value = code.options[0].value;
+            else code.value = String(medItemId);
+            row.dataset.itemId = String(Math.max(0, Number(code.value || 0)));
             slot.disabled = false;
             qty.disabled = false;
             chamber.disabled = true;
@@ -540,7 +551,7 @@ public static class BattleUsersDashboardPage
             if (!canEq.checked) eq.checked = false;
             eqLab.style.display = canEq.checked ? '' : 'none';
             canEqLab.style.display = '';
-            const medDef = medicineWeaponList.find(x => x.code === code.value);
+            const medDef = medicineWeaponList.find(x => Number(x.itemId || 0) === Number(code.value || 0));
             const hand = medDef && medDef.inventoryGrid != null ? Number(medDef.inventoryGrid) : 1;
             info.textContent = 'medicine stack, hand ' + hand;
           }
@@ -563,21 +574,24 @@ public static class BattleUsersDashboardPage
         type.addEventListener('change', syncUi);
         code.addEventListener('change', () => {
           if (type.value === 'weapon') {
-            const magSize = weaponMagazineSize(code.value);
-            const hasCal = weaponHasCaliber(code.value);
+            const selectedWeaponId = Math.max(0, Number(code.value || 0));
+            row.dataset.itemId = String(selectedWeaponId);
+            const magSize = weaponMagazineSize(selectedWeaponId);
+            const hasCal = weaponHasCaliber(selectedWeaponId);
             chamber.disabled = !(hasCal && magSize > 0);
             chamber.max = String(Math.max(0, magSize));
             if (chamber.disabled) chamber.value = '0';
             else chamber.value = String(Math.min(Math.max(0, Number(chamber.value || 0)), magSize));
-            const weaponDef = weaponList.find(x => x.code === code.value);
+            const weaponDef = getWeaponById(selectedWeaponId);
             const hand = weaponDef && weaponDef.inventoryGrid != null ? Number(weaponDef.inventoryGrid) : 1;
-            info.textContent = 'uses ' + weaponSlotWidth(code.value) + ' cell(s), hand ' + hand + ', mag ' + magSize;
+            info.textContent = 'uses ' + weaponSlotWidth(selectedWeaponId) + ' cell(s), hand ' + hand + ', mag ' + magSize;
           } else if (type.value === 'ammo') {
-            const ammoDef = ammoTypeList.find(x => x.caliber === code.value);
+            const ammoDef = ammoTypeList.find(x => Number(x.itemId) === Number(code.value));
             const hand = ammoDef && ammoDef.inventoryGrid != null ? Number(ammoDef.inventoryGrid) : 1;
             info.textContent = 'stackable item, 1 cell, hand ' + hand;
           } else {
-            const medDef = medicineWeaponList.find(x => x.code === code.value);
+            row.dataset.itemId = String(Math.max(0, Number(code.value || 0)));
+            const medDef = medicineWeaponList.find(x => Number(x.itemId || 0) === Number(code.value || 0));
             const hand = medDef && medDef.inventoryGrid != null ? Number(medDef.inventoryGrid) : 1;
             info.textContent = 'medicine stack, hand ' + hand;
           }
@@ -586,7 +600,7 @@ public static class BattleUsersDashboardPage
 
         row.appendChild(document.createTextNode('type'));
         row.appendChild(type);
-        row.appendChild(document.createTextNode('code'));
+        row.appendChild(document.createTextNode('item'));
         row.appendChild(code);
         row.appendChild(document.createTextNode('slot'));
         row.appendChild(slot);
@@ -618,9 +632,17 @@ public static class BattleUsersDashboardPage
         let outType = typeEl.value;
         if (outType === 'medicine')
           outType = 'medicine';
+        const ammoTypeId = typeEl.value === 'ammo' ? Math.max(0, Number(codeEl.value || 0)) : 0;
+        const ammoDef = ammoTypeId > 0 ? ammoTypeList.find(x => Number(x.itemId) === ammoTypeId) : null;
+        const rowItemId = Math.max(0, Number(row.dataset.itemId || 0)) || 0;
+        const weaponDef = typeEl.value === 'weapon' ? getWeaponById(rowItemId) : null;
+        const medicineDef = typeEl.value === 'medicine'
+          ? medicineWeaponList.find(x => Number(x.itemId || 0) === Math.max(0, Number(codeEl.value || 0)))
+          : null;
         out.push({
+          itemId: rowItemId > 0 ? rowItemId : null,
+          ammoTypeId: ammoTypeId > 0 ? ammoTypeId : null,
           itemType: outType,
-          code: (codeEl.value || '').trim(),
           quantity: Math.max(0, Number(qtyEl.value || 0)),
           chamberRounds: Math.max(0, Number(chamberEl.value || 0)),
           startSlot: Number(slotEl.value || -1),
@@ -640,7 +662,8 @@ public static class BattleUsersDashboardPage
         return;
       }
       const items = Array.isArray(data.items) ? data.items : [];
-      const defaults = items.length ? items : [{ itemType: 'weapon', code: 'fist', quantity: 1, startSlot: 0, isEquipped: true, isEquippable: true }];
+      const fist = (Array.isArray(weaponList) ? weaponList : []).find(w => String(w?.code || '').toLowerCase() === 'fist');
+      const defaults = items.length ? items : [{ itemType: 'weapon', itemId: Number(fist?.id || 0), quantity: 1, startSlot: 0, isEquipped: true, isEquippable: true }];
       renderItemsRows(defaults);
       itemsDialog.showModal();
       setStatus('items loaded');
@@ -648,7 +671,8 @@ public static class BattleUsersDashboardPage
 
     itemsAddRowBtn.addEventListener('click', () => {
       const cur = collectItemsRowsFromDom();
-      cur.push({ itemType: 'weapon', code: 'fist', quantity: 1, startSlot: 0, isEquipped: false, isEquippable: true });
+      const fist = (Array.isArray(weaponList) ? weaponList : []).find(w => String(w?.code || '').toLowerCase() === 'fist');
+      cur.push({ itemType: 'weapon', itemId: Number(fist?.id || 0), quantity: 1, startSlot: 0, isEquipped: false, isEquippable: true });
       renderItemsRows(cur);
     });
 
@@ -710,16 +734,16 @@ public static class BattleUsersDashboardPage
 
     async function loadUsers() {
       setStatus('loading users...');
-      const [usersResp, weaponsResp, ammoResp] = await Promise.all([
+      const [usersResp, weaponsResp, ammoResp, medicineResp] = await Promise.all([
         fetch('/api/db/users?take=200'),
         fetch('/api/db/weapons?take=200'),
-        fetch('/api/db/ammo?take=300')
+        fetch('/api/db/items/catalog?itemType=ammo&take=300'),
+        fetch('/api/db/items/catalog?itemType=medicine&take=300')
       ]);
       users = await usersResp.json();
       weaponList = await weaponsResp.json();
       ammoTypeList = await ammoResp.json();
-      medicineWeaponList = (Array.isArray(weaponList) ? weaponList : [])
-        .filter(w => String(w?.category || '').toLowerCase() === 'medicine');
+      medicineWeaponList = await medicineResp.json().catch(() => []);
       renderUsers();
       setStatus(`loaded ${users.length} users`);
     }

@@ -99,8 +99,8 @@ public partial class BattleRoom
         var runNormalHexCount = new Dictionary<string, int>();
         var runPenaltyHexCount = new Dictionary<string, int>();
         var apSpentByUnit = new Dictionary<string, int>();
-        var reloadedByPlayerAndCaliber = new Dictionary<string, Dictionary<string, int>>(StringComparer.OrdinalIgnoreCase);
-        var consumedByPlayerAndItemCode = new Dictionary<string, Dictionary<string, int>>(StringComparer.OrdinalIgnoreCase);
+        var reloadedByPlayerAndAmmoTypeId = new Dictionary<string, Dictionary<long, int>>(StringComparer.OrdinalIgnoreCase);
+        var consumedByPlayerAndItemId = new Dictionary<string, Dictionary<long, int>>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var uid in order)
         {
@@ -111,7 +111,7 @@ public partial class BattleRoom
             {
                 string pid = PlayerToUnitId.FirstOrDefault(kv => kv.Value == uid).Key ?? uid;
                 if (_userDb != null && TryGetBattlePlayerUserId(pid, out long dbUid) &&
-                    _userDb.TryGetUserWeaponChamberRounds(dbUid, us.WeaponCode ?? DefaultWeaponCode, out int dbChamber))
+                    _userDb.TryGetUserWeaponChamberRoundsByItemId(dbUid, us.WeaponItemId, out int dbChamber))
                     us.CurrentMagazineRounds = Math.Max(0, dbChamber);
                 Units[uid] = us;
             }
@@ -314,7 +314,7 @@ public partial class BattleRoom
                     }
                     else if (string.Equals(actionType, ActionAttack, StringComparison.OrdinalIgnoreCase))
                     {
-                        int magazineSize = GetWeaponMagazineSizeFromDb(unit.WeaponCode);
+                        int magazineSize = GetWeaponMagazineSizeFromDbByItemId(unit.WeaponItemId);
                         if (magazineSize > 0 && unit.CurrentMagazineRounds <= 0)
                         {
                             executed.FailureReason = "Magazine is empty";
@@ -704,18 +704,18 @@ public partial class BattleRoom
                     else if (string.Equals(actionType, ActionReload, StringComparison.OrdinalIgnoreCase))
                     {
                         executed.Succeeded = true;
-                        int magazineSize = GetWeaponMagazineSizeFromDb(unit.WeaponCode);
+                        int magazineSize = GetWeaponMagazineSizeFromDbByItemId(unit.WeaponItemId);
                         int before = Math.Max(0, unit.CurrentMagazineRounds);
                         int after = Math.Max(0, magazineSize);
-                        string reloadCaliber = "";
-                        if (_weaponDb != null && _weaponDb.TryGetWeaponByCode(unit.WeaponCode ?? DefaultWeaponCode, out var reloadWeaponDef))
-                            reloadCaliber = (reloadWeaponDef.Caliber ?? "").Trim().ToLowerInvariant();
-                        if (unit.UnitType == UnitType.Player && _userDb != null && !string.IsNullOrWhiteSpace(reloadCaliber))
+                        long reloadAmmoTypeId = 0;
+                        if (_weaponDb != null && _weaponDb.TryGetWeaponByItemId(unit.WeaponItemId, out var reloadWeaponDef))
+                            reloadAmmoTypeId = reloadWeaponDef.AmmoTypeId ?? 0;
+                        if (unit.UnitType == UnitType.Player && _userDb != null && reloadAmmoTypeId > 0)
                         {
                             string pid = PlayerToUnitId.FirstOrDefault(kv => kv.Value == uid).Key ?? uid;
                             int reserveRounds = 0;
                             if (TryGetBattlePlayerUserId(pid, out long reloadUid))
-                                _userDb.TryGetUserAmmoRounds(reloadUid, reloadCaliber, out reserveRounds);
+                                _userDb.TryGetUserAmmoRoundsByAmmoTypeId(reloadUid, reloadAmmoTypeId, out reserveRounds);
                             int canLoad = Math.Max(0, reserveRounds);
                             int need = Math.Max(0, magazineSize - before);
                             after = before + Math.Min(need, canLoad);
@@ -726,28 +726,27 @@ public partial class BattleRoom
                         if (loaded > 0 && unit.UnitType == UnitType.Player)
                         {
                             string pid = PlayerToUnitId.FirstOrDefault(kv => kv.Value == uid).Key ?? uid;
-                            string caliber = reloadCaliber;
-                            if (!string.IsNullOrWhiteSpace(caliber))
+                            if (reloadAmmoTypeId > 0)
                             {
-                                if (!reloadedByPlayerAndCaliber.TryGetValue(pid, out var byCaliber))
+                                if (!reloadedByPlayerAndAmmoTypeId.TryGetValue(pid, out var byAmmoType))
                                 {
-                                    byCaliber = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-                                    reloadedByPlayerAndCaliber[pid] = byCaliber;
+                                    byAmmoType = new Dictionary<long, int>();
+                                    reloadedByPlayerAndAmmoTypeId[pid] = byAmmoType;
                                 }
-                                byCaliber[caliber] = byCaliber.GetValueOrDefault(caliber) + loaded;
+                                byAmmoType[reloadAmmoTypeId] = byAmmoType.GetValueOrDefault(reloadAmmoTypeId) + loaded;
                             }
                         }
                     }
                     else if (string.Equals(actionType, ActionEquipWeapon, StringComparison.OrdinalIgnoreCase))
                     {
-                        string wc = action.WeaponCode ?? "";
-                        if (string.IsNullOrWhiteSpace(wc))
+                        long weaponItemId = action.WeaponItemId ?? 0;
+                        if (_weaponDb == null && _medicineDb == null)
                         {
-                            executed.FailureReason = "Weapon code missing";
+                            executed.FailureReason = "Weapon database missing";
                         }
-                        else if (_weaponDb == null || !_weaponDb.TryGetWeaponByCode(wc, out var wpn))
+                        else if (weaponItemId <= 0)
                         {
-                            executed.FailureReason = "Unknown weapon";
+                            executed.FailureReason = "Weapon item id missing";
                         }
                         else
                         {
@@ -763,55 +762,83 @@ public partial class BattleRoom
 
                             long equipUid = 0;
                             bool hasDbUser = !string.IsNullOrEmpty(pid) && TryGetBattlePlayerUserId(pid, out equipUid);
-                            if (_userDb != null && hasDbUser && !_userDb.TryValidateEquippedWeaponForRegisteredUser(equipUid, wpn.Code, out var invErr))
+
+                            bool applied = false;
+                            if (_weaponDb != null && _weaponDb.TryGetWeaponByItemId(weaponItemId, out var wpn))
                             {
-                                executed.FailureReason = invErr ?? "weapon not in inventory";
+                                if (_userDb != null && hasDbUser && !_userDb.TryValidateEquippedWeaponForRegisteredUserByItemId(equipUid, wpn.Id, out var invErr))
+                                    executed.FailureReason = invErr ?? "weapon not in inventory";
+                                else
+                                {
+                                    unit.WeaponItemId = wpn.Id;
+                                    unit.WeaponDamageMin = wpn.DamageMin;
+                                    unit.WeaponDamage = wpn.DamageMax;
+                                    unit.WeaponRange = wpn.Range;
+                                    unit.WeaponAttackApCost = Math.Max(1, wpn.AttackApCost);
+                                    int equippedMag = GetWeaponMagazineSizeFromDbByItemId(wpn.Id);
+                                    if (_userDb != null && hasDbUser)
+                                    {
+                                        int chamberFromDb;
+                                        if (_userDb.TryGetUserWeaponChamberRoundsByItemId(equipUid, wpn.Id, out chamberFromDb))
+                                            equippedMag = Math.Clamp(chamberFromDb, 0, Math.Max(0, wpn.MagazineSize));
+                                    }
+                                    unit.CurrentMagazineRounds = Math.Max(0, equippedMag);
+                                    unit.WeaponTightness = Math.Clamp(wpn.Tightness, 0.0, 1.0);
+                                    unit.WeaponTrajectoryHeight = Math.Clamp(wpn.TrajectoryHeight, 0, 3);
+                                    unit.WeaponIsSniper = wpn.IsSniper;
+                                    Units[uid] = unit;
+
+                                    if (!string.IsNullOrEmpty(pid) && PlayerCombatProfiles.TryGetValue(pid, out var prof))
+                                        PlayerCombatProfiles[pid] = (prof.Item1, prof.Item2, wpn.Id, wpn.DamageMin, wpn.DamageMax, wpn.Range, Math.Max(1, wpn.AttackApCost), prof.Item8, unit.WeaponTightness, unit.WeaponTrajectoryHeight, unit.WeaponIsSniper);
+                                    if (_userDb != null && hasDbUser)
+                                        _userDb.SyncEquippedWeaponForRegisteredUserByItemId(equipUid, wpn.Id);
+                                    applied = true;
+                                }
+                            }
+                            else if (_medicineDb != null && _medicineDb.TryGetMedicineByItemId(weaponItemId, out var med))
+                            {
+                                if (_userDb != null && hasDbUser && !_userDb.TryValidateEquippedWeaponForRegisteredUserByItemId(equipUid, med.Id, out var invErr))
+                                    executed.FailureReason = invErr ?? "weapon not in inventory";
+                                else
+                                {
+                                    unit.WeaponItemId = med.Id;
+                                    unit.WeaponDamageMin = 0;
+                                    unit.WeaponDamage = 0;
+                                    unit.WeaponRange = 0;
+                                    unit.WeaponAttackApCost = Math.Max(1, med.AttackApCost);
+                                    unit.CurrentMagazineRounds = 0;
+                                    unit.WeaponTightness = 1.0;
+                                    unit.WeaponTrajectoryHeight = 0;
+                                    unit.WeaponIsSniper = false;
+                                    Units[uid] = unit;
+
+                                    if (!string.IsNullOrEmpty(pid) && PlayerCombatProfiles.TryGetValue(pid, out var prof))
+                                        PlayerCombatProfiles[pid] = (prof.Item1, prof.Item2, med.Id, 0, 0, 0, Math.Max(1, med.AttackApCost), prof.Item8, unit.WeaponTightness, unit.WeaponTrajectoryHeight, unit.WeaponIsSniper);
+                                    if (_userDb != null && hasDbUser)
+                                        _userDb.SyncEquippedWeaponForRegisteredUserByItemId(equipUid, med.Id);
+                                    applied = true;
+                                }
                             }
                             else
-                            {
-                                unit.WeaponCode = wpn.Code;
-                                unit.WeaponDamageMin = wpn.DamageMin;
-                                unit.WeaponDamage = wpn.DamageMax;
-                                unit.WeaponRange = wpn.Range;
-                                unit.WeaponAttackApCost = Math.Max(1, wpn.AttackApCost);
-                                int equippedMag = GetWeaponMagazineSizeFromDb(wpn.Code);
-                                if (_userDb != null && hasDbUser)
-                                {
-                                    int chamberFromDb;
-                                    if (_userDb.TryGetUserWeaponChamberRounds(equipUid, wpn.Code, out chamberFromDb))
-                                        equippedMag = Math.Clamp(chamberFromDb, 0, Math.Max(0, wpn.MagazineSize));
-                                }
-                                unit.CurrentMagazineRounds = Math.Max(0, equippedMag);
-                                unit.WeaponTightness = Math.Clamp(wpn.Tightness, 0.0, 1.0);
-                                unit.WeaponTrajectoryHeight = Math.Clamp(wpn.TrajectoryHeight, 0, 3);
-                                unit.WeaponIsSniper = wpn.IsSniper;
-                                Units[uid] = unit;
+                                executed.FailureReason = "Unknown weapon";
 
-                                if (!string.IsNullOrEmpty(pid) && PlayerCombatProfiles.TryGetValue(pid, out var prof))
-                                    PlayerCombatProfiles[pid] = (prof.Item1, prof.Item2, wpn.Code, wpn.DamageMin, wpn.DamageMax, wpn.Range, Math.Max(1, wpn.AttackApCost), prof.Item7, unit.WeaponTightness, unit.WeaponTrajectoryHeight, unit.WeaponIsSniper);
-                                if (_userDb != null && hasDbUser)
-                                    _userDb.SyncEquippedWeaponForRegisteredUser(equipUid, wpn.Code);
+                            if (applied)
                                 executed.Succeeded = true;
-                            }
                         }
                     }
                     else if (string.Equals(actionType, ActionUseItem, StringComparison.OrdinalIgnoreCase))
                     {
-                        if (_weaponDb == null || !_weaponDb.TryGetWeaponByCode(unit.WeaponCode ?? DefaultWeaponCode, out var activeItem))
+                        if (_medicineDb == null || !_medicineDb.TryGetMedicineByItemId(unit.WeaponItemId, out var med))
                         {
                             executed.FailureReason = "Active item not found";
                         }
-                        else if (!string.Equals(activeItem.Category, "medicine", StringComparison.OrdinalIgnoreCase))
-                        {
-                            executed.FailureReason = "Active item is not usable";
-                        }
-                        else if (!string.Equals(activeItem.EffectType, "hp", StringComparison.OrdinalIgnoreCase)
-                            || !string.Equals(activeItem.EffectSign, "positive", StringComparison.OrdinalIgnoreCase)
-                            || !string.Equals(activeItem.EffectTarget, "self", StringComparison.OrdinalIgnoreCase))
+                        else if (!string.Equals(med.EffectType, "hp", StringComparison.OrdinalIgnoreCase)
+                            || !string.Equals(med.EffectSign, "positive", StringComparison.OrdinalIgnoreCase)
+                            || !string.Equals(med.EffectTarget, "self", StringComparison.OrdinalIgnoreCase))
                         {
                             executed.FailureReason = "Item affect config invalid";
                         }
-                        else if (activeItem.EffectMax < activeItem.EffectMin)
+                        else if (med.EffectMax < med.EffectMin)
                         {
                             executed.FailureReason = "Item affect range invalid";
                         }
@@ -828,9 +855,9 @@ public partial class BattleRoom
                             string pid = PlayerToUnitId.FirstOrDefault(kv => kv.Value == uid).Key ?? uid;
                             int availableQty = 0;
                             if (TryGetBattlePlayerUserId(pid, out long itemUid))
-                                _userDb.TryGetUserAmmoRounds(itemUid, activeItem.Code, out availableQty);
-                            if (consumedByPlayerAndItemCode.TryGetValue(pid, out var consumedByCode)
-                                && consumedByCode.TryGetValue(activeItem.Code, out var alreadyConsumed))
+                                _userDb.TryGetMedicineUseQuantity(itemUid, med.Id, out availableQty);
+                            if (consumedByPlayerAndItemId.TryGetValue(pid, out var consumedByItem)
+                                && consumedByItem.TryGetValue(med.Id, out var alreadyConsumed))
                             {
                                 availableQty = Math.Max(0, availableQty - alreadyConsumed);
                             }
@@ -840,20 +867,20 @@ public partial class BattleRoom
                             }
                             else
                             {
-                                int min = Math.Max(0, activeItem.EffectMin);
-                                int max = Math.Max(min, activeItem.EffectMax);
+                                int min = Math.Max(0, med.EffectMin);
+                                int max = Math.Max(min, med.EffectMax);
                                 int heal = _rng.Next(min, max + 1);
                                 int beforeHp = Math.Max(0, unit.CurrentHp);
                                 unit.CurrentHp = Math.Clamp(beforeHp + heal, 0, Math.Max(1, unit.MaxHp));
                                 executed.Healed = Math.Max(0, unit.CurrentHp - beforeHp);
                                 Units[uid] = unit;
                                 executed.Succeeded = true;
-                                if (!consumedByPlayerAndItemCode.TryGetValue(pid, out consumedByCode))
+                                if (!consumedByPlayerAndItemId.TryGetValue(pid, out consumedByItem))
                                 {
-                                    consumedByCode = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-                                    consumedByPlayerAndItemCode[pid] = consumedByCode;
+                                    consumedByItem = new Dictionary<long, int>();
+                                    consumedByPlayerAndItemId[pid] = consumedByItem;
                                 }
-                                consumedByCode[activeItem.Code] = consumedByCode.GetValueOrDefault(activeItem.Code) + 1;
+                                consumedByItem[med.Id] = consumedByItem.GetValueOrDefault(med.Id) + 1;
                             }
                         }
                     }
@@ -949,29 +976,38 @@ public partial class BattleRoom
                 int chamberRounds = Math.Max(0, us.CurrentMagazineRounds);
                 if (Submissions.TryGetValue(playerId, out var submitted) && submitted != null)
                     chamberRounds = Math.Max(0, submitted.CurrentMagazineRounds);
-                _userDb?.TrySetUserWeaponChamberRounds(persistUid, us.WeaponCode ?? DefaultWeaponCode, chamberRounds, out _);
-                if (reloadedByPlayerAndCaliber.TryGetValue(playerId, out var byCaliber))
+                _userDb?.TrySetUserWeaponChamberRoundsByItemId(persistUid, us.WeaponItemId, chamberRounds, out _);
+                if (reloadedByPlayerAndAmmoTypeId.TryGetValue(playerId, out var byAmmoType))
                 {
-                    foreach (var kv in byCaliber)
+                    foreach (var kv in byAmmoType)
                     {
                         int currentRounds = 0;
-                        _userDb?.TryGetUserAmmoRounds(persistUid, kv.Key, out currentRounds);
+                        _userDb?.TryGetUserAmmoRoundsByAmmoTypeId(persistUid, kv.Key, out currentRounds);
                         int nextRounds = Math.Max(0, currentRounds - Math.Max(0, kv.Value));
-                        _userDb?.TrySetUserAmmoRounds(persistUid, kv.Key, nextRounds, out _);
+                        _userDb?.TrySetUserAmmoRoundsByAmmoTypeId(persistUid, kv.Key, nextRounds, out _);
                     }
                 }
-                if (consumedByPlayerAndItemCode.TryGetValue(playerId, out var consumedByCode))
+                if (consumedByPlayerAndItemId.TryGetValue(playerId, out var consumedByItem))
                 {
-                    foreach (var kv in consumedByCode)
+                    foreach (var kv in consumedByItem)
                     {
-                        _userDb?.TryConsumeUserItemQuantity(persistUid, kv.Key, Math.Max(0, kv.Value), out _);
+                        _userDb?.TryConsumeMedicineUse(persistUid, kv.Key, Math.Max(0, kv.Value), out _);
                     }
                 }
             }
             string weaponCategory = "cold";
-            if (_weaponDb != null && _weaponDb.TryGetWeaponByCode(us.WeaponCode ?? DefaultWeaponCode, out var weaponRowForCat)
-                && !string.IsNullOrWhiteSpace(weaponRowForCat.Category))
-                weaponCategory = weaponRowForCat.Category.Trim();
+            if (_weaponDb != null && _weaponDb.TryGetWeaponByItemId(us.WeaponItemId, out var weaponRowForCat))
+            {
+                if (!string.IsNullOrWhiteSpace(weaponRowForCat.Category))
+                    weaponCategory = weaponRowForCat.Category.Trim();
+                else if (string.Equals(weaponRowForCat.ItemType, "medicine", StringComparison.OrdinalIgnoreCase))
+                    weaponCategory = "medicine";
+            }
+            else if (_medicineDb != null && _medicineDb.TryGetMedicineByItemId(us.WeaponItemId, out _))
+            {
+                // Items only in medicine table (not in weapons) must still report category for clients.
+                weaponCategory = "medicine";
+            }
 
             results.Add(new PlayerTurnResultDto
             {
@@ -992,7 +1028,7 @@ public partial class BattleRoom
                 DamageDealt = damageByUnit.TryGetValue(uid, out var dealt) ? dealt : 0,
                 PostureAtRoundStart = roundStartPostureByUnit.TryGetValue(uid, out var prs) ? prs : PostureWalk,
                 CurrentPosture = us.Posture,
-                WeaponCode = us.WeaponCode ?? DefaultWeaponCode,
+                WeaponItemId = us.WeaponItemId,
                 WeaponCategory = weaponCategory,
                 WeaponDamageMin = us.WeaponDamageMin,
                 WeaponDamage = us.WeaponDamage,

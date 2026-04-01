@@ -595,32 +595,56 @@ public class GameSession : MonoBehaviour
     /// <param name="weaponDamageFromDb">Урон из слота инвентаря (БД). Если &lt; 0 — для офлайна подставляется 1.</param>
     /// <param name="weaponRangeFromDb">Дальность из слота. Если &lt; 0 — подставляется 1.</param>
     /// <param name="weaponCategory">Категория из БД (например <c>light</c>) — для анимации в режиме планирования до ответа сервера.</param>
-    public void RequestEquipWeapon(string weaponCode, int weaponAttackApCost = 1, int weaponDamageFromDb = -1, int weaponRangeFromDb = -1, string weaponCategory = null)
+    public void RequestEquipWeapon(long weaponItemId, int weaponAttackApCost = 1, int weaponDamageFromDb = -1, int weaponRangeFromDb = -1, string weaponCategory = null)
     {
         if (_spectatorMode)
             return;
-        if (string.IsNullOrWhiteSpace(weaponCode))
+        if (weaponItemId <= 0)
             return;
-        weaponCode = weaponCode.Trim().ToLowerInvariant();
         var pl = LocalPlayer;
         if (pl == null)
             return;
         int atk = Mathf.Max(1, weaponAttackApCost);
         if (IsInBattleWithServer())
         {
-            if (!pl.QueueEquipWeaponAction(weaponCode, null, atk, weaponDamageFromDb, weaponRangeFromDb, weaponCategory))
+            if (!pl.QueueEquipWeaponAction(weaponItemId, null, atk, weaponDamageFromDb, weaponRangeFromDb, weaponCategory))
                 OnNetworkMessage?.Invoke(Loc.T("ui.not_enough_ap"));
         }
         else
-            ApplyLocalWeaponOnly(weaponCode, atk, weaponDamageFromDb, weaponRangeFromDb, weaponCategory);
+        {
+            ApplyLocalWeaponOnly(weaponItemId, atk, weaponDamageFromDb, weaponRangeFromDb, weaponCategory);
+            StartCoroutine(CoSyncEquippedWeaponToAccount(weaponItemId));
+        }
     }
 
-    private void ApplyLocalWeaponOnly(string weaponCode, int weaponAttackApCost, int weaponDamageFromDb = -1, int weaponRangeFromDb = -1, string weaponCategory = null)
+    private void ApplyLocalWeaponOnly(long weaponItemId, int weaponAttackApCost, int weaponDamageFromDb = -1, int weaponRangeFromDb = -1, string weaponCategory = null)
     {
-        string code = WeaponCatalog.NormalizeWeaponCode(weaponCode);
         int dmg = weaponDamageFromDb >= 0 ? weaponDamageFromDb : 1;
         int range = weaponRangeFromDb >= 0 ? weaponRangeFromDb : 1;
-        LocalPlayer?.SetEquippedWeapon(code, dmg, range, weaponAttackApCost, weaponDamageMin: -1, weaponCategory: weaponCategory ?? "");
+        // null = do not overwrite category (see Player.SetEquippedWeapon). Never pass "" here — that clears category and breaks medicine self-use checks.
+        LocalPlayer?.SetEquippedWeapon(weaponItemId, dmg, range, weaponAttackApCost, weaponDamageMin: -1, weaponCategory: weaponCategory);
+    }
+
+    /// <summary>Updates <c>users.equipped_item_id</c> for admin / profile when equipping outside battle (MainScene).</summary>
+    private IEnumerator CoSyncEquippedWeaponToAccount(long weaponItemId)
+    {
+        if (weaponItemId <= 0)
+            yield break;
+        if (string.IsNullOrEmpty(BattleSessionState.AccessToken))
+            yield break;
+        string baseUrl = BattleSessionState.ServerUrl?.TrimEnd('/');
+        if (string.IsNullOrEmpty(baseUrl))
+        {
+            if (_serverConnection != null && !string.IsNullOrEmpty(_serverConnection.ServerUrl))
+                baseUrl = _serverConnection.ServerUrl.TrimEnd('/');
+        }
+        if (string.IsNullOrEmpty(baseUrl))
+            baseUrl = BattleServerRuntime.CurrentBaseUrl?.TrimEnd('/');
+        if (string.IsNullOrEmpty(baseUrl))
+            yield break;
+        string url = $"{baseUrl}/api/db/user/equip-weapon";
+        string json = "{\"itemId\":" + weaponItemId + "}";
+        yield return HttpSimple.PostJsonWithAuth(url, json, BattleSessionState.AccessToken, _ => { }, _ => { });
     }
 
     /// <summary>Включён ли онлайн-режим (отправка хода при завершении). True также при загрузке через Find Game (сессия в бою).</summary>
@@ -720,11 +744,18 @@ public class GameSession : MonoBehaviour
             return false;
 
         int useCost = Mathf.Max(1, inv.GetCurrentActiveItemUseApCost());
-        if (!local.QueueUseItemAction(useCost))
+        if (local.CurrentAp < useCost)
         {
             OnNetworkMessage?.Invoke(Loc.T("ui.not_enough_ap"));
             return false;
         }
+        if (local.IsEquippedWeaponMedicineCategory() && local.MedicineInventoryRounds <= 0)
+        {
+            OnNetworkMessage?.Invoke(Loc.T("ui.no_medicine_uses"));
+            return false;
+        }
+        if (!local.QueueUseItemAction(useCost))
+            return false;
 
         OnNetworkMessage?.Invoke("Self item queued");
         return true;
@@ -1008,12 +1039,10 @@ public class GameSession : MonoBehaviour
                 local.SetServerEscapeState(r.isEscaping);
                 if (!deferHpForReplay)
                     local.SetHealth(r.currentHp, r.maxHp > 0 ? r.maxHp : local.MaxHp);
-                if (!string.IsNullOrEmpty(r.weaponCode))
-                {
-                    int wAtk = r.weaponAttackApCost > 0 ? r.weaponAttackApCost : 1;
-                    int wMin = r.weaponDamageMin > 0 ? r.weaponDamageMin : r.weaponDamage;
-                    local.SetEquippedWeapon(r.weaponCode, r.weaponDamage, r.weaponRange, wAtk, wMin, r.weaponCategory ?? "");
-                }
+                int wAtkLocal = r.weaponAttackApCost > 0 ? r.weaponAttackApCost : 1;
+                int wMinLocal = r.weaponDamageMin > 0 ? r.weaponDamageMin : r.weaponDamage;
+                // Do not coerce null to "" — that clears WeaponCategory and breaks medicine self-use UI until next equip.
+                local.SetEquippedWeapon(local.WeaponItemId, r.weaponDamage, r.weaponRange, wAtkLocal, wMinLocal, r.weaponCategory);
                 if (r.isDead || r.hasFled)
                 {
                     _localEliminationPending = true;
@@ -2035,9 +2064,9 @@ public class GameSession : MonoBehaviour
         return false;
     }
 
-    private static bool TryGetWeaponCodeForUnit(TurnResultPayload result, string unitId, out string weaponCode)
+    private static bool TryGetWeaponCategoryForUnit(TurnResultPayload result, string unitId, out string weaponCategory)
     {
-        weaponCode = "";
+        weaponCategory = "";
         if (string.IsNullOrEmpty(unitId) || result?.results == null)
             return false;
 
@@ -2045,7 +2074,7 @@ public class GameSession : MonoBehaviour
         {
             if (item == null || item.unitId != unitId)
                 continue;
-            weaponCode = string.IsNullOrWhiteSpace(item.weaponCode) ? WeaponCatalog.DefaultWeaponCode : item.weaponCode.Trim().ToLowerInvariant();
+            weaponCategory = (item.weaponCategory ?? "").Trim().ToLowerInvariant();
             return true;
         }
 
@@ -2058,7 +2087,7 @@ public class GameSession : MonoBehaviour
         if (action == null || !action.succeeded || string.IsNullOrEmpty(action.targetUnitId))
             yield break;
 
-        if (!TryGetWeaponCodeForUnit(result, action.unitId, out string wCode) || !WeaponCatalog.IsColdWeapon(wCode))
+        if (!TryGetWeaponCategoryForUnit(result, action.unitId, out string wCat) || !string.Equals(wCat, "cold", StringComparison.OrdinalIgnoreCase))
             yield break;
 
         if (!TryGetWeaponRangeForUnit(result, action.unitId, out int wRange) || wRange > 1)
@@ -2304,7 +2333,6 @@ public class GameSession : MonoBehaviour
                     local.SetMaxAp(maxAp);
                     local.SetHealth(currentHp, maxHp);
                     local.ApplyServerTurnResult(new HexPosition(col, row), new[] { new HexPosition(col, row) }, startAp, 0f, posture);
-                    string wCode = GetSpawnString(payload.spawnWeaponCodes, spawnIndex, WeaponCatalog.DefaultWeaponCode);
                     int wDmg = GetSpawnInt(payload.spawnWeaponDamages, spawnIndex, 1);
                     int wDmgMin = (payload.spawnWeaponDamageMins != null && spawnIndex >= 0 && spawnIndex < payload.spawnWeaponDamageMins.Length)
                         ? payload.spawnWeaponDamageMins[spawnIndex]
@@ -2312,7 +2340,10 @@ public class GameSession : MonoBehaviour
                     int wRng = GetSpawnInt(payload.spawnWeaponRanges, spawnIndex, 1);
                     int wAtk = GetSpawnInt(payload.spawnWeaponAttackApCosts, spawnIndex, 1);
                     string wCat = GetSpawnString(payload.spawnWeaponCategories, spawnIndex, "");
-                    local.SetEquippedWeapon(wCode, wDmg, wRng, wAtk, wDmgMin, weaponCategory: wCat ?? "");
+                    long wItemId = (payload.spawnWeaponItemIds != null && spawnIndex >= 0 && spawnIndex < payload.spawnWeaponItemIds.Length)
+                        ? payload.spawnWeaponItemIds[spawnIndex]
+                        : local.WeaponItemId;
+                    local.SetEquippedWeapon(wItemId, wDmg, wRng, wAtk, wDmgMin, weaponCategory: wCat ?? "");
                     local.SetServerEscapeState(false);
                     int dispLevel = GetSpawnInt(payload.spawnLevels, spawnIndex, 1);
                     string dispName = GetSpawnString(payload.spawnDisplayNames, spawnIndex, "");
@@ -2773,11 +2804,11 @@ public class GameSession : MonoBehaviour
                 if (action.actionType == "Attack" && !string.IsNullOrEmpty(action.targetUnitId))
                     local.QueueAttackAction(action.targetUnitId, action.bodyPart, Mathf.Max(1, action.cost));
 
-                if (action.actionType == "EquipWeapon" && !string.IsNullOrEmpty(action.weaponCode))
+                if (action.actionType == "EquipWeapon" && action.weaponItemId > 0)
                 {
                     int atk = action.weaponAttackApCost > 0 ? action.weaponAttackApCost : 1;
                     int? swapCost = action.cost > 0 ? action.cost : (int?)null;
-                    local.QueueEquipWeaponAction(action.weaponCode, swapCost, atk, -1, -1, action.weaponCategory);
+                    local.QueueEquipWeaponAction(action.weaponItemId, swapCost, atk, -1, -1, action.weaponCategory);
                 }
             }
         }
@@ -3461,7 +3492,8 @@ public class GameSession : MonoBehaviour
                 posture = action.posture,
                 previousPosture = action.previousPosture,
                 cost = action.cost,
-                weaponCode = action.weaponCode,
+                weaponItemId = action.weaponItemId,
+                previousWeaponItemId = action.previousWeaponItemId,
                 previousWeaponAttackApCost = action.previousWeaponAttackApCost,
                 weaponAttackApCost = action.weaponAttackApCost,
                 previousMagazineRounds = action.previousMagazineRounds

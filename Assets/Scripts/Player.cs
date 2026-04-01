@@ -100,9 +100,9 @@ public class Player : MonoBehaviour
     private int _inspectAccuracy;
     private int _inspectIntellect;
 
-    /// <summary>Код оружия (сервер / локальный каталог).</summary>
-    private string _weaponCode = WeaponCatalog.DefaultWeaponCode;
-    /// <summary>DB <c>weapons.category</c> с сервера; пусто — только эвристика по <see cref="WeaponCode"/>.</summary>
+    /// <summary>Id оружия из <c>items.id</c> (сервер / локальный каталог).</summary>
+    private long _weaponItemId;
+    /// <summary>DB <c>weapons.category</c> с сервера.</summary>
     private string _weaponCategory = "";
     private int _weaponDamage = 1;
     private int _weaponDamageMin = 1;
@@ -113,6 +113,8 @@ public class Player : MonoBehaviour
     private int _magazineCapacity;
     private int _currentMagazineRounds;
     private int _reserveAmmoRounds;
+    /// <summary>Uses left for equipped medicine (<c>items.id</c> in hand); mirrors reserve ammo for planning UI.</summary>
+    private int _medicineInventoryRounds;
     /// <summary>From last <see cref="PlayerTurnResult.isEscaping"/> — server runs empty turns until flee completes or the unit leaves the escape ring.</summary>
     private bool _serverIsEscaping;
 
@@ -189,7 +191,7 @@ public class Player : MonoBehaviour
     public HexGrid Grid => _grid;
     public float MoveDurationPerHex => _moveDurationPerHex;
 
-    public string WeaponCode => _weaponCode;
+    public long WeaponItemId => _weaponItemId;
     /// <summary>Категория из TurnResult (например <c>light</c> для пистолетных клипов локомоции).</summary>
     public string WeaponCategory => _weaponCategory;
     public int WeaponDamage => _weaponDamage;
@@ -233,6 +235,8 @@ public class Player : MonoBehaviour
     public int MagazineCapacity => Mathf.Max(0, _magazineCapacity);
     public int CurrentMagazineRounds => Mathf.Clamp(_currentMagazineRounds, 0, Mathf.Max(0, _magazineCapacity));
     public int ReserveAmmoRounds => Mathf.Max(0, _reserveAmmoRounds);
+    /// <summary>Remaining self-use charges for medicine in hand (<see cref="QueueUseItemAction"/>).</summary>
+    public int MedicineInventoryRounds => Mathf.Max(0, _medicineInventoryRounds);
 
     /// <summary>Смена отображаемого оружия (после смены из инвентаря / результата раунда).</summary>
     public event System.Action OnEquippedWeaponChanged;
@@ -245,16 +249,22 @@ public class Player : MonoBehaviour
     /// <param name="attackApCost">Стоимость атаки из БД / сервера; по умолчанию 1.</param>
     /// <param name="weaponDamageMin">Если &lt; 0 — считается равным <paramref name="damage"/>.</param>
     /// <param name="weaponCategory">Если не <c>null</c>, перезаписать <see cref="WeaponCategory"/> (пустая строка сбрасывает; <c>null</c> — не трогать категорию).</param>
-    public void SetEquippedWeapon(string code, int damage, int rangeHexes, int attackApCost = 1, int weaponDamageMin = -1, string weaponCategory = null)
+    public void SetEquippedWeapon(long weaponItemId, int damage, int rangeHexes, int attackApCost = 1, int weaponDamageMin = -1, string weaponCategory = null)
     {
-        _weaponCode = WeaponCatalog.NormalizeWeaponCode(code);
+        _weaponItemId = Math.Max(0, weaponItemId);
         _weaponDamage = Mathf.Max(0, damage);
         int rawMin = weaponDamageMin >= 0 ? weaponDamageMin : _weaponDamage;
         _weaponDamageMin = Mathf.Clamp(rawMin, 0, _weaponDamage);
         _weaponRangeHexes = Mathf.Max(0, rangeHexes);
         _weaponAttackApCost = Mathf.Max(1, attackApCost);
         if (weaponCategory != null)
-            _weaponCategory = weaponCategory.Trim().ToLowerInvariant();
+        {
+            string c = weaponCategory.Trim().ToLowerInvariant();
+            _weaponCategory = c;
+            // Empty string = unknown; do not clear medicine stack (server may omit category for medicine-only items).
+            if (c.Length > 0 && !string.Equals(c, "medicine", StringComparison.OrdinalIgnoreCase))
+                _medicineInventoryRounds = 0;
+        }
         OnEquippedWeaponChanged?.Invoke();
     }
 
@@ -279,6 +289,22 @@ public class Player : MonoBehaviour
         _reserveAmmoRounds = v;
         if (notify)
             OnEquippedWeaponChanged?.Invoke();
+    }
+
+    public void SetMedicineInventoryRounds(int rounds, bool notify = true)
+    {
+        int v = Mathf.Max(0, rounds);
+        if (_medicineInventoryRounds == v)
+            return;
+        _medicineInventoryRounds = v;
+        if (notify)
+            OnEquippedWeaponChanged?.Invoke();
+    }
+
+    /// <summary>Hand item category from server is <c>medicine</c> (self-use consumable).</summary>
+    public bool IsEquippedWeaponMedicineCategory()
+    {
+        return string.Equals((_weaponCategory ?? string.Empty).Trim(), "medicine", StringComparison.OrdinalIgnoreCase);
     }
 
     public delegate void PlayerMovedHandler(HexCell cell);
@@ -682,8 +708,8 @@ public class Player : MonoBehaviour
                 bodyPart = src.bodyPart,
                 posture = src.posture,
                 previousPosture = src.previousPosture,
-                weaponCode = src.weaponCode,
-                previousWeaponCode = src.previousWeaponCode,
+                weaponItemId = src.weaponItemId,
+                previousWeaponItemId = src.previousWeaponItemId,
                 previousWeaponAttackApCost = src.previousWeaponAttackApCost,
                 previousWeaponDamage = src.previousWeaponDamage,
                 previousWeaponRange = src.previousWeaponRange,
@@ -844,17 +870,26 @@ public class Player : MonoBehaviour
         if (_currentAp < safeCost)
             return false;
 
+        bool med = IsEquippedWeaponMedicineCategory();
+        if (med && _medicineInventoryRounds <= 0)
+            return false;
+
         if (_turnActions == null)
             _turnActions = new List<BattleQueuedAction>();
 
+        int prevMed = _medicineInventoryRounds;
         _turnActions.Add(new BattleQueuedAction
         {
             actionType = "UseItem",
             posture = MovementPostureUtility.ToId(_currentPosture),
+            previousMedicineInventoryRounds = prevMed,
             cost = safeCost
         });
         _apSpentThisTurn += safeCost;
         _currentAp -= safeCost;
+        if (med)
+            _medicineInventoryRounds = Mathf.Max(0, _medicineInventoryRounds - 1);
+        OnEquippedWeaponChanged?.Invoke();
         return true;
     }
 
@@ -864,19 +899,20 @@ public class Player : MonoBehaviour
     /// <param name="weaponDamageFromDb">Урон из БД/инвентаря; если &lt; 0 — подставляется 1 (офлайн без данных).</param>
     /// <param name="weaponRangeFromDb">Дальность из БД/инвентаря; если &lt; 0 — подставляется 1.</param>
     /// <param name="weaponCategory">DB <c>weapons.category</c> for planning locomotion; empty if unknown.</param>
-    public bool QueueEquipWeaponAction(string weaponCode, int? costOverride = null, int weaponAttackApCost = 1, int weaponDamageFromDb = -1, int weaponRangeFromDb = -1, string weaponCategory = null)
+    public bool QueueEquipWeaponAction(long weaponItemId, int? costOverride = null, int weaponAttackApCost = 1, int weaponDamageFromDb = -1, int weaponRangeFromDb = -1, string weaponCategory = null)
     {
-        string norm = WeaponCatalog.NormalizeWeaponCode(weaponCode);
+        long nextWeaponItemId = Math.Max(0, weaponItemId);
+        if (nextWeaponItemId <= 0)
+            return false;
         int dmg = weaponDamageFromDb >= 0 ? weaponDamageFromDb : 1;
         int range = weaponRangeFromDb >= 0 ? weaponRangeFromDb : 1;
         int safeCost = Mathf.Max(1, costOverride ?? WeaponCatalog.EquipWeaponSwapApCost);
         if (_currentAp < safeCost)
             return false;
-        string prevCode = _weaponCode;
+        long prevWeaponItemId = _weaponItemId;
         int prevAtk = _weaponAttackApCost;
         int newAtk = Mathf.Max(1, weaponAttackApCost);
         string previousWeaponCategory = _weaponCategory;
-        string newCategory = weaponCategory ?? "";
 
         if (_turnActions == null)
             _turnActions = new List<BattleQueuedAction>();
@@ -884,20 +920,21 @@ public class Player : MonoBehaviour
         _turnActions.Add(new BattleQueuedAction
         {
             actionType = "EquipWeapon",
-            weaponCode = norm,
-            previousWeaponCode = prevCode,
+            weaponItemId = nextWeaponItemId,
+            previousWeaponItemId = prevWeaponItemId,
             previousWeaponAttackApCost = prevAtk,
             previousWeaponDamage = _weaponDamage,
             previousWeaponRange = _weaponRangeHexes,
             weaponAttackApCost = newAtk,
-            weaponCategory = newCategory,
+            weaponCategory = weaponCategory ?? "",
             previousWeaponCategory = previousWeaponCategory,
             posture = MovementPostureUtility.ToId(_currentPosture),
             cost = safeCost
         });
         _apSpentThisTurn += safeCost;
         _currentAp -= safeCost;
-        SetEquippedWeapon(norm, dmg, range, newAtk, weaponDamageMin: -1, weaponCategory: newCategory);
+        // null = leave category unchanged on Player; do not coerce to "" (that cleared category and broke medicine UI).
+        SetEquippedWeapon(nextWeaponItemId, dmg, range, newAtk, weaponDamageMin: -1, weaponCategory: weaponCategory);
         return true;
     }
 
@@ -973,17 +1010,25 @@ public class Player : MonoBehaviour
             int cost = Mathf.Max(0, last.cost);
             _currentAp += cost;
             _apSpentThisTurn -= cost;
-            string prev = string.IsNullOrEmpty(last.previousWeaponCode) ? WeaponCatalog.DefaultWeaponCode : last.previousWeaponCode;
-            string c = WeaponCatalog.NormalizeWeaponCode(prev);
             int prevAtk = last.previousWeaponAttackApCost > 0 ? last.previousWeaponAttackApCost : 1;
-            SetEquippedWeapon(c, last.previousWeaponDamage, last.previousWeaponRange, prevAtk, weaponDamageMin: -1, weaponCategory: last.previousWeaponCategory ?? "");
+            SetEquippedWeapon(last.previousWeaponItemId, last.previousWeaponDamage, last.previousWeaponRange, prevAtk, weaponDamageMin: -1, weaponCategory: last.previousWeaponCategory ?? "");
+            return true;
+        }
+
+        if (string.Equals(type, "UseItem", StringComparison.OrdinalIgnoreCase))
+        {
+            int cost = Mathf.Max(0, last.cost);
+            _currentAp += cost;
+            _apSpentThisTurn -= cost;
+            if (IsEquippedWeaponMedicineCategory())
+                _medicineInventoryRounds = Mathf.Max(0, last.previousMedicineInventoryRounds);
+            OnEquippedWeaponChanged?.Invoke();
             return true;
         }
 
         if (string.Equals(type, "Wait", StringComparison.OrdinalIgnoreCase)
             || string.Equals(type, "Reload", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(type, "Attack", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(type, "UseItem", StringComparison.OrdinalIgnoreCase))
+            || string.Equals(type, "Attack", StringComparison.OrdinalIgnoreCase))
         {
             int cost = Mathf.Max(0, last.cost);
             _currentAp += cost;

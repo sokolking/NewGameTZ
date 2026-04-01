@@ -652,6 +652,16 @@ public class ActionPointsUI : MonoBehaviour
         if (_inventoryUi == null || !_inventoryUi.IsActiveItemMedicine())
             return;
         int useCost = _inventoryUi.GetCurrentActiveItemUseApCost();
+        if (_player.CurrentAp < useCost)
+        {
+            AppendLog(Loc.T("ui.not_enough_ap"));
+            return;
+        }
+        if (_player.IsEquippedWeaponMedicineCategory() && _player.MedicineInventoryRounds <= 0)
+        {
+            AppendLog(Loc.T("ui.no_medicine_uses"));
+            return;
+        }
         if (!_player.QueueUseItemAction(useCost))
             AppendLog(Loc.T("ui.not_enough_ap"));
     }

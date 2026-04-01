@@ -56,14 +56,14 @@ public class BattleQueuedAction
     public string posture;
     /// <summary>Для ChangePosture: поза до смены (клиент, отмена последнего действия).</summary>
     public string previousPosture;
-    /// <summary>Для EquipWeapon: код оружия.</summary>
-    public string weaponCode;
+    /// <summary>Для EquipWeapon: <c>items.id</c> оружия (id-first контракт).</summary>
+    public long weaponItemId;
     /// <summary>DB category of the weapon being equipped (client planning UI / locomotion); not required by server.</summary>
     public string weaponCategory;
     /// <summary>Category before EquipWeapon (client undo / draft replay).</summary>
     public string previousWeaponCategory;
-    /// <summary>Для отмены EquipWeapon на клиенте.</summary>
-    public string previousWeaponCode;
+    /// <summary>Client-local previous weapon item id for undo.</summary>
+    public long previousWeaponItemId;
     public int previousWeaponAttackApCost;
     /// <summary>Для отмены EquipWeapon: статы до смены (не отправляются на сервер).</summary>
     public int previousWeaponDamage;
@@ -71,12 +71,15 @@ public class BattleQueuedAction
     public int weaponAttackApCost;
     /// <summary>Client-only helper for local undo/ui state.</summary>
     public int previousMagazineRounds;
+    /// <summary>UseItem: medicine stack on hand before this use (client undo).</summary>
+    public int previousMedicineInventoryRounds;
     public int cost;
 }
 
 [Serializable]
 public class BattleExecutedAction
 {
+    [JsonProperty("unitId")]
     public string unitId;
     public string actionType;
     public int tick;
@@ -89,6 +92,7 @@ public class BattleExecutedAction
     public int bodyPart;
     public string posture;
     public int damage;
+    [JsonProperty("healed")]
     public int healed;
     public bool targetDied;
     /// <summary>Сервер: итоговая вероятность попадания (0…1); null если броска не было (например, только стена).</summary>
@@ -159,8 +163,8 @@ public class PlayerTurnResult
     /// <summary>Сервер: поза до действий раунда; для согласования реплея с планированием (конец плана мог быть в другой позе).</summary>
     public string postureAtRoundStart;
     public string currentPosture;
-    /// <summary>Состояние оружия после раунда (сервер).</summary>
-    public string weaponCode;
+    /// <summary>Состояние оружия после раунда (сервер): <c>items.id</c>.</summary>
+    public long weaponItemId;
     /// <summary>DB <c>weapons.category</c> (e.g. cold, light); drives pistol vs generic locomotion clips.</summary>
     public string weaponCategory;
     public int weaponDamageMin;
@@ -300,8 +304,8 @@ public class BattleStartedPayload
     public int[] spawnMaxHps;
     public int[] spawnCurrentHps;
     public string[] spawnCurrentPostures;
-    public string[] spawnWeaponCodes;
-    /// <summary>DB <c>weapons.category</c> parallel to <see cref="spawnWeaponCodes"/> (e.g. cold, light, medium).</summary>
+    public long[] spawnWeaponItemIds;
+    /// <summary>DB <c>weapons.category</c> parallel to <see cref="spawnWeaponItemIds"/> (e.g. cold, light, medium).</summary>
     public string[] spawnWeaponCategories;
     public int[] spawnWeaponDamageMins;
     public int[] spawnWeaponDamages;
@@ -374,20 +378,40 @@ public class UserAmmoPackPayload
 [Serializable]
 public class WeaponDbRowPayload
 {
+    [JsonProperty("id")]
     public long id;
     public string code;
     public string name;
+    [JsonProperty("itemType")]
+    public string itemType;
+    public int damageMin;
+    public int damageMax;
     public int range;
+    [JsonProperty("attackApCost")]
     public int attackApCost;
+    [JsonProperty("category")]
     public string category;
+    /// <summary>FK to ammo item <c>items.id</c>; primary for matching reserve stacks.</summary>
+    [JsonProperty("ammoTypeId")]
+    public long? ammoTypeId;
+    [JsonProperty("ammoName")]
+    public string ammoName;
     public string caliber;
+    [JsonProperty("magazineSize")]
     public int magazineSize;
+    [JsonProperty("reloadApCost")]
     public int reloadApCost;
+    [JsonProperty("inventoryGrid")]
     public int inventoryGrid;
+    [JsonProperty("effectType")]
     public string effectType;
+    [JsonProperty("effectSign")]
     public string effectSign;
+    [JsonProperty("effectMin")]
     public int effectMin;
+    [JsonProperty("effectMax")]
     public int effectMax;
+    [JsonProperty("effectTarget")]
     public string effectTarget;
 }
 
@@ -395,15 +419,22 @@ public class WeaponDbRowPayload
 public class UserInventorySlotPayload
 {
     public int slotIndex;
-    /// <summary>Сервер может отдавать null для пустой ячейки — JsonUtility это ломает; для парсинга используйте Newtonsoft.</summary>
-    public long? weaponId;
-    public string weaponCode;
-    public string weaponName;
-    public int damage;
+    [JsonProperty("itemId")]
+    public long? itemId;
+    /// <summary>For weapons: compatible ammo item id; for stackable ammo: same as <see cref="itemId"/>.</summary>
+    [JsonProperty("ammoTypeId")]
+    public long? ammoTypeId;
+    public string itemName;
+    [JsonProperty("itemType")]
+    public string itemType;
+    public int damageMin;
+    public int damageMax;
     public int range;
     public string iconKey;
-    /// <summary>Стоимость атаки этим оружием (ОД), из weapons.attack_ap_cost.</summary>
-    public int attackApCost;
+    public int useApCost;
+    public int reloadApCost;
+    public string caliber;
+    public int magazineSize;
     /// <summary>Primary cell: span 1 or 2; continuation cells use 0.</summary>
     public int slotSpan;
     /// <summary>Currently equipped (in hands); primary cell only.</summary>
@@ -412,6 +443,9 @@ public class UserInventorySlotPayload
     public bool continuation;
     public bool stackable;
     public int quantity;
+    /// <summary>Uses/stack from <c>user_inventory_items.rounds</c>; prefer over <see cref="quantity"/> for UI counts.</summary>
+    [JsonProperty("rounds")]
+    public int rounds;
     public int chamberRounds;
     public bool isEquippable;
 }
