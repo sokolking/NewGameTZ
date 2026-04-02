@@ -1,3 +1,4 @@
+using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Rendering;
@@ -24,6 +25,13 @@ public class HexGrid : MonoBehaviour
     [SerializeField] private int _length = 40;
     [Tooltip("If off, generate the grid with the inspector button before play.")]
     [SerializeField] private bool _generateOnPlay = false;
+    [Tooltip("How many hexes to create per frame when generating at runtime. Higher = faster but longer frames.")]
+    [SerializeField] private int _generateBatchSize = 50;
+
+    /// <summary>True once all hex cells are created and ready.</summary>
+    public bool IsGridReady { get; private set; }
+    /// <summary>Fired on the frame the grid finishes generating (or immediately if already ready).</summary>
+    public event System.Action OnGridReady;
 
     [Header("Hex")]
     [SerializeField] private float _hexSize = 1f;
@@ -83,7 +91,13 @@ public class HexGrid : MonoBehaviour
     private void Start()
     {
         if (_generateOnPlay)
-            GenerateGrid();
+            StartCoroutine(GenerateGridAsync());
+        else
+        {
+            // Grid was pre-built in the editor — caches are populated lazily on first access.
+            IsGridReady = true;
+            OnGridReady?.Invoke();
+        }
     }
 
     /// <summary>Создаёт ровно Width×Length дочерних объектов (гексов). Вызывать кнопкой в инспекторе или при _generateOnPlay.</summary>
@@ -93,7 +107,6 @@ public class HexGrid : MonoBehaviour
         ClearGrid();
         ApplyHexTransparencyToColor();
 
-        // Отдельный экземпляр материала: не затираем shared-ассет и не смешиваем альфу с PropertyBlock.
         Material mat = _hexMaterial != null ? new Material(_hexMaterial) : CreateDefaultMaterial();
         if (mat != null)
         {
@@ -114,6 +127,78 @@ public class HexGrid : MonoBehaviour
             for (int row = 0; row < _length; row++)
             {
                 CreateHexCell(col, row, size, visualRadius, mat);
+            }
+        }
+
+        _worldPosCacheDirty = false;
+        _boundsCacheDirty = true;
+        IsGridReady = true;
+        OnGridReady?.Invoke();
+    }
+
+    /// <summary>
+    /// Generates the grid spread across multiple frames to avoid a startup hang.
+    /// Creates <see cref="_generateBatchSize"/> hexes per frame.
+    /// Fires <see cref="OnGridReady"/> when done.
+    /// </summary>
+    private IEnumerator GenerateGridAsync()
+    {
+        ClearGrid();
+        ApplyHexTransparencyToColor();
+
+        Material mat = _hexMaterial != null ? new Material(_hexMaterial) : CreateDefaultMaterial();
+        if (mat != null)
+        {
+            ConfigureHexMaterialTransparency(mat);
+            ApplyNeutralHexMaterialBase(mat);
+            mat.enableInstancing = true;
+        }
+
+        float size = Mathf.Max(MinHexSize, _hexSize);
+        float inset = Mathf.Max(0f, _edgeInset);
+        float visualRadius = Mathf.Max(MinVisualRadius, size - inset * EdgeInsetToRadiusFactor);
+
+        _cellCache = new HexCell[_width, _length];
+        _worldPosCache = new Vector3[_width, _length];
+
+        int batch = Mathf.Max(1, _generateBatchSize);
+        int created = 0;
+
+        for (int col = 0; col < _width; col++)
+        {
+            for (int row = 0; row < _length; row++)
+            {
+                CreateHexCell(col, row, size, visualRadius, mat);
+                created++;
+                if (created % batch == 0)
+                    yield return null; // pause until next frame
+            }
+        }
+
+        _worldPosCacheDirty = false;
+        _boundsCacheDirty = true;
+        IsGridReady = true;
+        OnGridReady?.Invoke();
+    }
+
+    /// <summary>
+    /// Rebuilds <see cref="_cellCache"/> and <see cref="_worldPosCache"/> from already-existing
+    /// child HexCell components (pre-built scene grid).
+    /// </summary>
+    private void RebuildCacheFromChildren()
+    {
+        _cellCache = new HexCell[_width, _length];
+        _worldPosCache = new Vector3[_width, _length];
+
+        HexCell[] cells = GetComponentsInChildren<HexCell>(true);
+        foreach (var cell in cells)
+        {
+            int col = cell.Col;
+            int row = cell.Row;
+            if (col >= 0 && col < _width && row >= 0 && row < _length)
+            {
+                _cellCache[col, row] = cell;
+                _worldPosCache[col, row] = cell.transform.position;
             }
         }
 

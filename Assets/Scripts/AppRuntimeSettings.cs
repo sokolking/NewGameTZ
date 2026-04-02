@@ -10,5 +10,9 @@ public static class AppRuntimeSettings
     {
         // Keep game loop and networking alive when app window is unfocused.
         Application.runInBackground = true;
+
+        // Cap frame rate to avoid spinning CPU at unlimited FPS in menu/login scenes.
+        Application.targetFrameRate = 60;
+        QualitySettings.vSyncCount = 0;
     }
 }

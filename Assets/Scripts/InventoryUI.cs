@@ -54,6 +54,7 @@ public sealed class InventoryUI : MonoBehaviour
     private int _lastDisplayedAttackApCost = int.MinValue;
     private int _lastAmmoActionCount = -1;
     private int _lastAmmoAp = int.MinValue;
+    private float _findPlayerCooldown;
     private int _lastKnownReloadApCost = 1;
     private string _lastAmmoLogLine;
     private bool _itemCardVisible;
@@ -107,7 +108,14 @@ public sealed class InventoryUI : MonoBehaviour
     private void Update()
     {
         if (_player == null)
+        {
+            _findPlayerCooldown -= Time.deltaTime;
+            if (_findPlayerCooldown > 0f) return;
+            _findPlayerCooldown = 1f;
             _player = FindFirstObjectByType<Player>();
+            if (_player != null)
+                _player.OnEquippedWeaponChanged += OnPlayerEquippedWeaponChanged;
+        }
         if (_player == null)
             return;
 

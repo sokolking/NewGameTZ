@@ -267,8 +267,46 @@ public class BattleSignalRConnection : MonoBehaviour
                 msgIndex++;
                 var text = Encoding.UTF8.GetString(ms.ToArray());
                 EnqueueLog($"recv #{msgIndex} len={text.Length}");
-                var captured = text;
-                _mainThread.Enqueue(() => DispatchIncomingJson(captured, msgIndex));
+
+                // Fast-path lightweight messages on background thread to avoid main-thread JSON spike.
+                if (text.IndexOf("sessionRevoked", StringComparison.Ordinal) >= 0)
+                {
+                    _mainThread.Enqueue(() => SessionRevokedNavigation.GoToLogin());
+                    continue;
+                }
+                if (text.IndexOf(TypeSubmitAck, StringComparison.Ordinal) >= 0)
+                {
+                    var ack = JsonUtility.FromJson<WsSubmitAckMsg>(text);
+                    if (ack != null && ack.type == TypeSubmitAck)
+                    {
+                        bool ok = ack.ok;
+                        string err = ack.error;
+                        _mainThread.Enqueue(() =>
+                        {
+                            if (ok) FinishSubmitCallback(true, null);
+                            else FinishSubmitCallback(false, string.IsNullOrEmpty(err) ? Loc.T("net.rejected_by_server") : err);
+                        });
+                        continue;
+                    }
+                }
+                if (text.IndexOf("\"leaveAck\"", StringComparison.Ordinal) >= 0)
+                    continue;
+
+                // Heavy round-result: deserialize on background thread, dispatch parsed object to main thread.
+                BattleRoundWsPush push = null;
+                try
+                {
+                    push = JsonConvert.DeserializeObject<BattleRoundWsPush>(text, HopeBattleJson.DeserializeSettings);
+                }
+                catch
+                {
+                    push = JsonUtility.FromJson<BattleRoundWsPush>(text);
+                }
+                if (push?.turnResult == null) continue;
+
+                var capturedPush = push;
+                var capturedIdx = msgIndex;
+                _mainThread.Enqueue(() => DispatchParsedPush(capturedPush, capturedIdx));
             }
             catch (OperationCanceledException)
             {
@@ -285,49 +323,11 @@ public class BattleSignalRConnection : MonoBehaviour
         EnqueueLog($"ReceiveLoop exit: state={ws.State}, closeStatus={ws.CloseStatus}, closeDesc={ws.CloseStatusDescription}");
     }
 
-    private void DispatchIncomingJson(string json, int msgIndex)
+    private void DispatchParsedPush(BattleRoundWsPush push, int msgIndex)
     {
-        if (string.IsNullOrEmpty(json)) return;
-
-        if (json.IndexOf("sessionRevoked", StringComparison.Ordinal) >= 0)
-        {
-            SessionRevokedNavigation.GoToLogin();
-            return;
-        }
-
-        if (json.IndexOf(TypeSubmitAck, StringComparison.Ordinal) >= 0)
-        {
-            var ack = JsonUtility.FromJson<WsSubmitAckMsg>(json);
-            if (ack != null && ack.type == TypeSubmitAck)
-            {
-                if (ack.ok)
-                    FinishSubmitCallback(true, null);
-                else
-                    FinishSubmitCallback(false, string.IsNullOrEmpty(ack.error) ? Loc.T("net.rejected_by_server") : ack.error);
-                return;
-            }
-        }
-
-        if (json.IndexOf("\"leaveAck\"", StringComparison.Ordinal) >= 0)
-            return;
-
         if (_gameSession == null)
             _gameSession = FindFirstObjectByType<GameSession>();
         if (_gameSession == null) return;
-
-        BattleRoundWsPush push = null;
-        try
-        {
-            // JsonUtility не заполняет вложенные массивы/объекты в turnResult (executedActions и т.д.).
-            push = JsonConvert.DeserializeObject<BattleRoundWsPush>(json, HopeBattleJson.DeserializeSettings);
-        }
-        catch (Exception ex)
-        {
-            EnqueueLogWarn($"Round push Newtonsoft failed: {ex.Message}; fallback JsonUtility");
-            push = JsonUtility.FromJson<BattleRoundWsPush>(json);
-        }
-
-        if (push?.turnResult == null) return;
 
         _gameSession.ReplaceTurnHistoryIds(push.turnHistoryIds, push.currentTurnPointer);
         if (push.turnHistoryIds != null
@@ -343,7 +343,6 @@ public class BattleSignalRConnection : MonoBehaviour
             return;
 
         _gameSession.RegisterProcessedTurnResult(resolvedRound);
-        // Hide "round wait" as soon as the result arrives; planning stays blocked until resolve animations finish (GameSession).
         GameSession.OnWebSocketRoundPushReceived?.Invoke();
         _gameSession.ApplyTurnResultThenRoundState(push.turnResult, push.roundIndex, push.roundDeadlineUtcMs);
     }

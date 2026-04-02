@@ -221,7 +221,9 @@ public sealed class SessionWebSocketConnection : MonoBehaviour
 
     private void Update()
     {
-        while (_mainThread.TryDequeue(out var action))
+        // Process at most one action per frame to avoid blocking the main thread
+        // when a large message arrives (e.g. battle start payload).
+        if (_mainThread.TryDequeue(out var action))
         {
             try
             {
@@ -608,7 +610,7 @@ public sealed class SessionWebSocketConnection : MonoBehaviour
         }
     }
 
-    private static int SessionJsonInt(JToken? t, int defaultValue)
+    private static int SessionJsonInt(JToken t, int defaultValue)
     {
         if (t == null || t.Type == JTokenType.Null)
             return defaultValue;

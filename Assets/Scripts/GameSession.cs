@@ -3337,9 +3337,11 @@ public class GameSession : MonoBehaviour
     /// <summary>Сервер присылает p и факт попадания в executedActions; пишем в Unity Console на русском.</summary>
     private static void LogHitRollsFromTurnResult(TurnResultPayload result)
     {
+#if UNITY_EDITOR
         if (result?.results == null)
             return;
 
+        var sb = new System.Text.StringBuilder();
         foreach (var turnResult in result.results)
         {
             if (turnResult?.executedActions == null)
@@ -3357,11 +3359,15 @@ public class GameSession : MonoBehaviour
                 string targetLabel = string.IsNullOrEmpty(action.targetUnitId) ? "—" : action.targetUnitId;
                 double p = action.hitProbability.Value;
                 bool hit = action.hitSucceeded.Value;
-                Debug.Log(
+                sb.AppendLine(
                     $"[Combat] Раунд {result.roundIndex}, тик {action.tick}: стрелок {action.unitId} → {targetLabel} — " +
                     $"вероятность попадания {p * 100.0:F1} %, попадание: {(hit ? "да" : "нет")}, урон {action.damage}");
             }
         }
+
+        if (sb.Length > 0)
+            Debug.Log(sb.ToString());
+#endif
     }
 
     private void ShowDamagePopupForAction(TurnResultPayload result, BattleExecutedAction action)

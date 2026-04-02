@@ -37,6 +37,9 @@ public partial class BattleRoom
 
         int newMinC = oldMinC, newMaxC = oldMaxC, newMinR = oldMinR, newMaxR = oldMaxR;
 
+        GetPlayerZoneShrinkSideProtection(oldMinC, oldMaxC, oldMinR, oldMaxR,
+            out bool protectHorizLeft, out bool protectHorizRight, out bool protectVertTop, out bool protectVertBottom);
+
         if (doHorizontal && cfg.HorizontalShrinkAmount > 0)
         {
             int w = newMaxC - newMinC + 1;
@@ -45,6 +48,22 @@ public partial class BattleRoom
             int removeTotal = w - targetW;
             int leftRemove = removeTotal / 2;
             int rightRemove = removeTotal - leftRemove;
+            if (protectHorizLeft && protectHorizRight)
+            {
+                leftRemove = 0;
+                rightRemove = 0;
+            }
+            else if (protectHorizLeft)
+            {
+                leftRemove = 0;
+                rightRemove = removeTotal;
+            }
+            else if (protectHorizRight)
+            {
+                rightRemove = 0;
+                leftRemove = removeTotal;
+            }
+
             newMinC += leftRemove;
             newMaxC -= rightRemove;
         }
@@ -57,6 +76,22 @@ public partial class BattleRoom
             int removeTotal = h - targetH;
             int topRemove = removeTotal / 2;
             int bottomRemove = removeTotal - topRemove;
+            if (protectVertTop && protectVertBottom)
+            {
+                topRemove = 0;
+                bottomRemove = 0;
+            }
+            else if (protectVertTop)
+            {
+                topRemove = 0;
+                bottomRemove = removeTotal;
+            }
+            else if (protectVertBottom)
+            {
+                bottomRemove = 0;
+                topRemove = removeTotal;
+            }
+
             newMinR += topRemove;
             newMaxR -= bottomRemove;
         }
@@ -183,5 +218,33 @@ public partial class BattleRoom
         }
 
         return found;
+    }
+
+    /// <summary>
+    /// If a live player stands on an escape-border hex or on the inner edge of the active rectangle,
+    /// do not shrink from that side (avoids shoving them while fleeing). Symmetric shrink is skipped on an axis when both sides are protected.
+    /// </summary>
+    private void GetPlayerZoneShrinkSideProtection(
+        int oldMinC, int oldMaxC, int oldMinR, int oldMaxR,
+        out bool protectHorizLeft, out bool protectHorizRight, out bool protectVertTop, out bool protectVertBottom)
+    {
+        protectHorizLeft = protectHorizRight = protectVertTop = protectVertBottom = false;
+        foreach (var u in Units.Values)
+        {
+            if (u.CurrentHp <= 0 || u.UnitType != UnitType.Player)
+                continue;
+            int c = u.Col, r = u.Row;
+            bool onEscape = IsEscapeBorderHex(c, r);
+            bool inActive = IsInActiveZone(c, r);
+
+            if (inActive && c == oldMinC || onEscape && c == oldMinC - 1)
+                protectHorizLeft = true;
+            if (inActive && c == oldMaxC || onEscape && c == oldMaxC + 1)
+                protectHorizRight = true;
+            if (inActive && r == oldMinR || onEscape && r == oldMinR - 1)
+                protectVertTop = true;
+            if (inActive && r == oldMaxR || onEscape && r == oldMaxR + 1)
+                protectVertBottom = true;
+        }
     }
 }
